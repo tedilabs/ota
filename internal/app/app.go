@@ -118,6 +118,10 @@ type Model struct {
 
 	// paletteInput captures the `:` prompt buffer while OverlayPalette is open.
 	paletteInput string
+	// paletteSuggestionIdx points at the currently-highlighted entry in
+	// paletteSuggestions(). -1 means "no selection" (Enter applies the
+	// raw input). Tab / Shift-Tab cycle the index.
+	paletteSuggestionIdx int
 
 	// offline flags the transient statusbar state after a NetworkErrorMsg.
 	offline bool
@@ -193,6 +197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openCmdPaletteMsg:
 		m.overlay = OverlayPalette
 		m.paletteInput = ""
+		m.paletteSuggestionIdx = -1
 		return m, nil
 	case openHelpMsg:
 		m.overlay = OverlayHelp
@@ -523,19 +528,67 @@ func (m Model) renderFilterBox(tk shared.Tokens) string {
 }
 
 // renderPaletteBox builds the small framed input box that appears above
-// the body when : is open (issue #123). Mirrors k9s's command bar:
-// rounded border, accent prompt, blinking-style block cursor, plus the
-// :Esc cancel hint.
+// the body when : is open (issue #123). v0.1.5-4 added an inline
+// suggestion column under the prompt — Tab cycles, Enter accepts the
+// highlight (or the raw input when nothing is highlighted).
 func (m Model) renderPaletteBox(tk shared.Tokens) string {
 	const innerWidth = 60
 	prompt := tk.Accent.Render(":")
 	input := m.paletteInput
 	cursor := tk.RowHighlight.Render(" ")
-	// Pad so the box edge lines up consistently regardless of input length.
 	body := prompt + input + cursor
-	hint := tk.Muted.Render("<Tab> autocomplete · <Enter> run · <Esc> cancel")
-	box := lipglossModalBox(body, hint, innerWidth, tk)
-	return box
+
+	var b strings.Builder
+	b.WriteString(body)
+	if sugs := m.paletteSuggestions(); len(sugs) > 0 {
+		b.WriteByte('\n')
+		max := 6
+		if max > len(sugs) {
+			max = len(sugs)
+		}
+		for i := 0; i < max; i++ {
+			line := sugs[i]
+			if i == m.paletteSuggestionIdx {
+				line = tk.RowHighlight.Render("› " + line)
+			} else {
+				line = tk.Muted.Render("  " + line)
+			}
+			b.WriteString(line)
+			if i < max-1 {
+				b.WriteByte('\n')
+			}
+		}
+		if len(sugs) > max {
+			b.WriteByte('\n')
+			b.WriteString(tk.Muted.Render("  … " + itoaSimple(len(sugs)-max) + " more"))
+		}
+	}
+	hint := tk.Muted.Render("<Tab>/<Shift-Tab> cycle · <Enter> run · <Esc> cancel")
+	return lipglossModalBox(b.String(), hint, innerWidth, tk)
+}
+
+// itoaSimple is a tiny strconv shim local to app/ so renderPaletteBox
+// avoids pulling strconv into a file that doesn't otherwise need it.
+func itoaSimple(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 // lipglossModalBox renders a small two-line box with body on the first
@@ -721,11 +774,38 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		m.overlay = OverlayNone
 		m.paletteInput = ""
+		m.paletteSuggestionIdx = -1
+		return m, nil
+	case tea.KeyTab:
+		// Cycle forward through the suggestion list (issue #121).
+		sugs := m.paletteSuggestions()
+		if len(sugs) > 0 {
+			m.paletteSuggestionIdx = (m.paletteSuggestionIdx + 1) % len(sugs)
+		}
+		return m, nil
+	case tea.KeyShiftTab:
+		sugs := m.paletteSuggestions()
+		if len(sugs) > 0 {
+			if m.paletteSuggestionIdx <= 0 {
+				m.paletteSuggestionIdx = len(sugs) - 1
+			} else {
+				m.paletteSuggestionIdx--
+			}
+		}
 		return m, nil
 	case tea.KeyEnter:
-		cmd, target, arg, ok := resolvePaletteCommand(m.paletteInput)
+		// If a suggestion is highlighted, treat that as the input —
+		// operator typed `:us` + Tab + Enter and lands on `:users`.
+		input := m.paletteInput
+		if m.paletteSuggestionIdx >= 0 {
+			if sugs := m.paletteSuggestions(); m.paletteSuggestionIdx < len(sugs) {
+				input = sugs[m.paletteSuggestionIdx]
+			}
+		}
+		cmd, target, arg, ok := resolvePaletteCommand(input)
 		m.overlay = OverlayNone
 		m.paletteInput = ""
+		m.paletteSuggestionIdx = -1
 		if !ok {
 			return m, nil
 		}
@@ -735,8 +815,6 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case paletteCmdQuit:
 			return m, quitConfirmCmd()
 		case paletteCmdUnmask:
-			// Forward to the active screen so the detail model can flip
-			// the per-field unmask flag (issue #115).
 			if child, ok := m.screens[m.active]; ok {
 				updated, c := child.Update(UnmaskFieldMsg{Field: arg})
 				m.screens[m.active] = updated
@@ -754,12 +832,52 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if n := len(m.paletteInput); n > 0 {
 			m.paletteInput = m.paletteInput[:n-1]
 		}
+		m.paletteSuggestionIdx = -1
 		return m, nil
 	case tea.KeyRunes:
 		m.paletteInput += string(msg.Runes)
+		m.paletteSuggestionIdx = -1
 		return m, nil
 	}
 	return m, nil
+}
+
+// paletteSuggestions returns the autocomplete candidates for the current
+// paletteInput (issue #121). A 2-character prefix unlocks the list so a
+// typo on the first letter doesn't immediately constrain the operator.
+// Suggestions are de-duplicated and sorted alphabetically.
+func (m Model) paletteSuggestions() []string {
+	prefix := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(m.paletteInput), ":"))
+	if len(prefix) < 2 {
+		return nil
+	}
+	all := paletteCommandPool()
+	out := make([]string, 0, 8)
+	for _, c := range all {
+		if strings.HasPrefix(c, prefix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// paletteCommandPool returns every literal command name the palette
+// recognises today. Kept inline rather than reflected from screenFromName
+// so we can include verbs (`unmask`, `mask`, `quit`) that screenFromName
+// itself doesn't enumerate.
+func paletteCommandPool() []string {
+	return []string{
+		"users", "user", "u",
+		"groups", "group", "g",
+		"rules", "rule",
+		"grouprules", "grouprule",
+		"group-rules", "group-rule",
+		"group_rules", "group_rule", "gr",
+		"policies", "policy",
+		"logs", "log", "l",
+		"unmask", "mask",
+		"quit", "exit", "q",
+	}
 }
 
 func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
