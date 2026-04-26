@@ -183,6 +183,13 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Esc inside detail takes precedence over other keys so operators
+	// always have a way back to the list (TUI_DESIGN §3.6 / §3.6a Note).
+	if m.opened && km.Type == tea.KeyEsc {
+		m.opened = false
+		m.detail = domain.Policy{}
+		return m, nil
+	}
 	switch km.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
@@ -200,6 +207,12 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "k":
 			if m.cursor > 0 {
 				m.cursor--
+			}
+		case "d":
+			// `d` mirrors Enter — open detail for the highlighted row.
+			if m.cursor >= 0 && m.cursor < len(m.policies) {
+				m.detail = m.policies[m.cursor]
+				m.opened = true
 			}
 		}
 	}
