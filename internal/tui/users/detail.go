@@ -2,6 +2,7 @@ package users
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -208,8 +209,17 @@ func (m DetailModel) renderProfileTab() string {
 		b.WriteByte('\n')
 		b.WriteString(shared.SectionHeader("Custom fields", 56))
 		b.WriteByte('\n')
-		for k, v := range u.Profile.Extras {
-			b.WriteString(shared.KVRow(k, formatExtra(v), keyWidth))
+		// Sort keys so the order is stable across renders. Without this
+		// Go's map iteration randomises every keypress, which the user
+		// reported as "Pretty 뷰에서 무슨 키를 눌러도 custom field
+		// 섹션이 계속 움직임" (issue #108).
+		extraKeys := make([]string, 0, len(u.Profile.Extras))
+		for k := range u.Profile.Extras {
+			extraKeys = append(extraKeys, k)
+		}
+		sort.Strings(extraKeys)
+		for _, k := range extraKeys {
+			b.WriteString(shared.KVRow(k, formatExtra(u.Profile.Extras[k]), keyWidth))
 			b.WriteByte('\n')
 		}
 	}
