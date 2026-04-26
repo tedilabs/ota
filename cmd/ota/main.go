@@ -56,6 +56,7 @@ func run(args []string, stdout, stderr *os.File) int {
 		debugMode   = fs.Bool("debug", false, "enable debug logging to ~/.cache/ota/debug.log")
 		pollSec     = fs.Int("poll-interval", 0, "override Logs tail poll interval in seconds")
 		showVersion = fs.Bool("version", false, "print version and exit")
+		checkMode   = fs.Bool("check", false, "probe Okta API once and print a plain-text diagnostic (no TUI)")
 	)
 	if err := fs.Parse(args); err != nil {
 		// flag.ErrHelp is not an error — user asked for help.
@@ -69,6 +70,20 @@ func run(args []string, stdout, stderr *os.File) int {
 	if *showVersion {
 		fmt.Fprintf(stdout, "ota %s (commit %s, built %s)\n", version.Tag, version.Commit, version.BuildTime)
 		return 0
+	}
+
+	if *checkMode {
+		// Diagnostic short-circuit: no TUI, plain text. Exit 0/1 reflects
+		// whether the probe succeeded.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		return runCheck(ctx, WireInput{
+			ConfigPath: *configPath,
+			Profile:    *profile,
+			TokenEnv:   *tokenEnv,
+			Debug:      *debugMode,
+			PollSec:    *pollSec,
+		}, stdout, stderr)
 	}
 
 	// Pin the rendering profile up front so monochrome environments (NO_COLOR
