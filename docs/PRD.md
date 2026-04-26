@@ -761,6 +761,8 @@ Phase 7 QA Cycle 1~2 결과 출시 차단 0건 확인 후, 다음 항목을 v0.1
 - `:profile` 런타임 전환 미지원 (`--profile` 시작 옵션만)
 - `:ratelimit`/`:healthcheck` 모달은 부분 구현 또는 미지원 (v0.1.x/v0.2)
 
+**v0.1.1 plan (UX·시각 보강 패치, 2026-04-24 entry):** responsive layout fill (chrome가 `tea.WindowSizeMsg.Width` 100%를 채우고 컬럼이 비례 재계산되도록 수정 — §TUI_DESIGN 1.2.0 §15.0a), column sort cycle (Users/Groups/Rules에서 `Shift+S/N/L/C` 키로 정렬 토글, 헤더에 `↑/↓` 인디케이터 — §TUI_DESIGN §3.5), `d` detail shortcut (Enter alternative, 모든 속성 + raw JSON 노출 — §TUI_DESIGN §3.6 + §15.7), 팔레트 단·복수 alias (`:user/:user(s)`, `:group/:group(s)`, `:group-rule/:group-rule(s)` — §TUI_DESIGN §3.4). 기존 v0.1.0 known limitations 위 4개 항목과 별도 트랙으로, 신규 기능 도입 패치. PRD 자체는 본 §11.3.1 안내만으로 변경 — REQ 본문은 v0.2에서 정식 등재.
+
 ### 11.4. 기술 검증 필요 (Phase 3~4 — developer + test-engineer)
 
 - `teatest`로 TUI 메시지 주입·스냅샷 테스트 실전 적용 난이도
