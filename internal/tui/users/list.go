@@ -392,6 +392,9 @@ func (m ListModel) View() string {
 		b.WriteString("filter: " + m.filter)
 		b.WriteByte('\n')
 	}
+	// Header carries the same 2-cell cursor gutter every data row uses so
+	// column titles align with their values (issue #107).
+	b.WriteString("  ")
 	b.WriteString(m.renderUsersHeader(tk))
 	b.WriteByte('\n')
 

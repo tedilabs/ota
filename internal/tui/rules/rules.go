@@ -257,6 +257,8 @@ func (m ListModel) View() string {
 	if m.filtering {
 		b.WriteString("filter: " + m.filter + "\n")
 	}
+	// 2-cell cursor gutter on the header keeps it aligned with data rows.
+	b.WriteString("  ")
 	b.WriteString(m.formatRulesColumns(
 		rulesSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir),
 		rulesSortLabel("NAME", m.sortBy, SortName, m.sortDir),

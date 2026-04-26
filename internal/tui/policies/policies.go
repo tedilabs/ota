@@ -242,6 +242,8 @@ func (m ListModel) View() string {
 	b.WriteString(" of ")
 	b.WriteString(itoa(len(m.policies)))
 	b.WriteByte('\n')
+	// 2-cell cursor gutter on the header keeps it aligned with data rows.
+	b.WriteString("  ")
 	b.WriteString(m.formatPoliciesColumns("PRI", "STATUS", "NAME", "SYSTEM", "UPDATED"))
 	b.WriteByte('\n')
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(m.policies), shared.ListBodyRowBudget(m.height))

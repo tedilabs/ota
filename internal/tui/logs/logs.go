@@ -163,6 +163,8 @@ func (m SearchModel) View() string {
 	b.WriteString("System Logs  ")
 	b.WriteString(tailIndicator(m.tail, m.pollInterval, m.follow))
 	b.WriteByte('\n')
+	// 2-cell cursor gutter on the header keeps it aligned with data rows.
+	b.WriteString("  ")
 	b.WriteString(m.formatLogsColumns("WHEN", "SEV", "EVENTTYPE", "ACTOR", "OUTCOME", "IP"))
 	b.WriteByte('\n')
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(m.events), shared.ListBodyRowBudget(m.height))
