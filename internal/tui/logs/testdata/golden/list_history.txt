@@ -1,6 +1,6 @@
 System Logs  [TAIL OFF]
 WHEN          SEV       EVENTTYPE                 ACTOR               OUTCOME    IP             
-> 2h ago        [i] INFO  user.session.start        alice@acme.com      FAILURE    10.0.1.5       
+▸ 2h ago        [i] INFO  user.session.start        alice@acme.com      FAILURE    10.0.1.5       
   3h ago        [i] INFO  user.session.start        bob@acme.com        FAILURE    10.0.1.6       
   7h ago        [!] WARN  user.session.start        alice@acme.com      FAILURE    10.0.1.5       
   1d ago        [i] INFO  user.session.start        unknown@acme.com    FAILURE    10.0.1.7       

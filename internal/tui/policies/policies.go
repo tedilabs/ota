@@ -132,14 +132,16 @@ type policiesErrMsg struct{ err error }
 
 // ListModel renders policies of a single type (REQ-R04 AC-3).
 type ListModel struct {
-	deps       Deps
-	policyType domain.PolicyType
-	policies   []domain.Policy
-	cursor     int
-	opened     bool
-	detail     domain.Policy
-	lastErr    error
-	width      int
+	deps        Deps
+	policyType  domain.PolicyType
+	policies    []domain.Policy
+	cursor      int
+	opened      bool
+	detail      domain.Policy
+	lastErr     error
+	width       int
+	height      int
+	viewportTop int
 }
 
 // NewListModel constructs a ListModel for the given type.
@@ -165,6 +167,7 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case policiesLoadedMsg:
 		m.policies = msg.policies
@@ -228,10 +231,11 @@ func (m ListModel) View() string {
 	b.WriteByte('\n')
 	b.WriteString(m.formatPoliciesColumns("PRI", "STATUS", "NAME", "SYSTEM", "UPDATED"))
 	b.WriteByte('\n')
-	for i, p := range m.policies {
-		row := m.renderPolicyRow(p, now, tk)
+	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(m.policies), shared.ListBodyRowBudget(m.height))
+	for i := top; i < end; i++ {
+		row := m.renderPolicyRow(m.policies[i], now, tk)
 		if i == m.cursor {
-			row = "> " + row
+			row = tk.Accent.Render("▸ " + row)
 		} else {
 			row = "  " + row
 		}

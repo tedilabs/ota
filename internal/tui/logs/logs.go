@@ -53,6 +53,8 @@ type SearchModel struct {
 	detail       domain.LogEvent
 	lastErr      error
 	width        int
+	height       int
+	viewportTop  int
 }
 
 // NewSearchModel constructs a SearchModel with defaults (tail off, follow on,
@@ -86,6 +88,7 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case logsLoadedMsg:
 		m.events = msg.events
@@ -149,10 +152,11 @@ func (m SearchModel) View() string {
 	b.WriteByte('\n')
 	b.WriteString(m.formatLogsColumns("WHEN", "SEV", "EVENTTYPE", "ACTOR", "OUTCOME", "IP"))
 	b.WriteByte('\n')
-	for i, e := range m.events {
-		row := m.renderLogsRow(e, now, tk)
+	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(m.events), shared.ListBodyRowBudget(m.height))
+	for i := top; i < end; i++ {
+		row := m.renderLogsRow(m.events[i], now, tk)
 		if i == m.cursor {
-			row = "> " + row
+			row = tk.Accent.Render("▸ " + row)
 		} else {
 			row = "  " + row
 		}
