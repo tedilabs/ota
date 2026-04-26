@@ -92,6 +92,8 @@ type ListModel struct {
 	// SortNone / SortOff means render rows in fetch order.
 	sortBy  SortKey
 	sortDir SortDir
+	// ggChord captures the Vim `gg` two-press chord — see shared.GChord.
+	ggChord shared.GChord
 }
 
 // usersLoadedMsg delivers the result of the initial fetch.
@@ -276,6 +278,26 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+
+	// Vim navigation: `gg` jumps to top, `G` to bottom. Detected here
+	// because keys.Resolve binds them as a chord ("g g") that classify()
+	// can't represent as a single rune. Any non-`g` keypress resets the
+	// chord arming below.
+	if msg.Type == tea.KeyRunes && string(msg.Runes) == "g" {
+		if m.ggChord.Press(m.now()) {
+			m.cursor = 0
+			m.viewportTop = 0
+		}
+		return m, nil
+	}
+	if msg.Type == tea.KeyRunes && string(msg.Runes) == "G" {
+		m.ggChord.Reset()
+		if vis := m.visible(); len(vis) > 0 {
+			m.cursor = len(vis) - 1
+		}
+		return m, nil
+	}
+	m.ggChord.Reset()
 
 	switch m.classify(msg) {
 	case keys.IDSearchOpen:

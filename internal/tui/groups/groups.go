@@ -76,6 +76,7 @@ type ListModel struct {
 	// sortBy / sortDir track the active column sort cycle (TUI_DESIGN §3.5).
 	sortBy  SortKey
 	sortDir SortDir
+	ggChord shared.GChord
 }
 
 // GroupDetailTab indexes the Group Detail tab bar. v0.1.2 collapsed the
@@ -197,14 +198,31 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if msg.Type == tea.KeyRunes {
 		switch string(msg.Runes) {
+		case "g":
+			// `gg` chord (TUI_DESIGN §3.2). First `g` arms; second within
+			// the chord window jumps to the top.
+			if m.ggChord.Press(m.now()) {
+				m.cursor = 0
+				m.viewportTop = 0
+			}
+			return m, nil
+		case "G":
+			m.ggChord.Reset()
+			if vis := m.visible(); len(vis) > 0 {
+				m.cursor = len(vis) - 1
+			}
+			return m, nil
 		case "/":
+			m.ggChord.Reset()
 			m.filtering = true
 			m.filter = ""
 			return m, nil
 		case "j":
+			m.ggChord.Reset()
 			m.cursor++
 			return m, nil
 		case "k":
+			m.ggChord.Reset()
 			if m.cursor > 0 {
 				m.cursor--
 			}

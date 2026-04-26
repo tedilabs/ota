@@ -142,6 +142,7 @@ type ListModel struct {
 	width       int
 	height      int
 	viewportTop int
+	ggChord     shared.GChord
 }
 
 // NewListModel constructs a ListModel for the given type.
@@ -201,16 +202,28 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyRunes:
 		switch string(km.Runes) {
+		case "g":
+			if m.ggChord.Press(m.now()) {
+				m.cursor = 0
+				m.viewportTop = 0
+			}
+		case "G":
+			m.ggChord.Reset()
+			if n := len(m.policies); n > 0 {
+				m.cursor = n - 1
+			}
 		case "j":
+			m.ggChord.Reset()
 			if m.cursor < len(m.policies)-1 {
 				m.cursor++
 			}
 		case "k":
+			m.ggChord.Reset()
 			if m.cursor > 0 {
 				m.cursor--
 			}
 		case "d":
-			// `d` mirrors Enter — open detail for the highlighted row.
+			m.ggChord.Reset()
 			if m.cursor >= 0 && m.cursor < len(m.policies) {
 				m.detail = m.policies[m.cursor]
 				m.opened = true
@@ -219,6 +232,7 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
 
 // View renders SCR-041 (TUI_DESIGN §15.5 / §16.7) with responsive column drop
 // matching the other 4 list screens. Surfaces lastErr via the shared

@@ -55,6 +55,7 @@ type SearchModel struct {
 	width        int
 	height       int
 	viewportTop  int
+	ggChord      shared.GChord
 }
 
 // NewSearchModel constructs a SearchModel with defaults (tail off, follow on,
@@ -122,20 +123,34 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyRunes:
 		switch string(km.Runes) {
+		case "g":
+			if m.ggChord.Press(m.now()) {
+				m.cursor = 0
+				m.viewportTop = 0
+			}
+		case "G":
+			m.ggChord.Reset()
+			if n := len(m.events); n > 0 {
+				m.cursor = n - 1
+			}
 		case "s":
+			m.ggChord.Reset()
 			m.tail = !m.tail
 		case "f":
+			m.ggChord.Reset()
 			m.follow = !m.follow
 		case "j":
+			m.ggChord.Reset()
 			if m.cursor < len(m.events)-1 {
 				m.cursor++
 			}
 		case "k":
+			m.ggChord.Reset()
 			if m.cursor > 0 {
 				m.cursor--
 			}
 		case "d":
-			// `d` mirrors Enter — open detail for the highlighted row.
+			m.ggChord.Reset()
 			if m.cursor >= 0 && m.cursor < len(m.events) {
 				m.detail = m.events[m.cursor]
 				m.opened = true
