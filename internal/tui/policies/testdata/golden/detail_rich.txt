@@ -1,0 +1,12 @@
+Policy Detail
+  id:       00p_default
+  name:     Default Policy
+  type:     OKTA_SIGN_ON
+  priority: 1
+  status:   ACTIVE
+  [SYS]     system policy — cannot deactivate or delete
+
+Action summary:
+  Session: maxIdle / maxLifetime / requireFactor
+
+Press `r` to toggle raw JSON.

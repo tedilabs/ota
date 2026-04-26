@@ -1,0 +1,71 @@
+[
+  {
+    "id": "0pr_active",
+    "type": "group_rule",
+    "status": "ACTIVE",
+    "name": "Engineers to Eng group",
+    "created": "2024-01-10T10:00:00.000Z",
+    "lastUpdated": "2026-01-15T11:00:00.000Z",
+    "conditions": {
+      "people": {
+        "users": {"exclude": []},
+        "groups": {"exclude": []}
+      },
+      "expression": {
+        "value": "user.department == \"Engineering\"",
+        "type": "urn:okta:expression:1.0"
+      }
+    },
+    "actions": {
+      "assignUserToGroups": {
+        "groupIds": ["00g_engineering"]
+      }
+    }
+  },
+  {
+    "id": "0pr_inactive",
+    "type": "group_rule",
+    "status": "INACTIVE",
+    "name": "Sales to Sales group (paused)",
+    "created": "2024-02-01T10:00:00.000Z",
+    "lastUpdated": "2025-10-01T14:00:00.000Z",
+    "conditions": {
+      "people": {
+        "users": {"exclude": []},
+        "groups": {"exclude": []}
+      },
+      "expression": {
+        "value": "user.department == \"Sales\"",
+        "type": "urn:okta:expression:1.0"
+      }
+    },
+    "actions": {
+      "assignUserToGroups": {
+        "groupIds": ["00g_sales"]
+      }
+    }
+  },
+  {
+    "id": "0pr_invalid",
+    "type": "group_rule",
+    "status": "INVALID",
+    "name": "Broken rule referencing unknown attribute",
+    "created": "2025-03-15T10:00:00.000Z",
+    "lastUpdated": "2025-03-15T10:01:00.000Z",
+    "conditions": {
+      "people": {
+        "users": {"exclude": []},
+        "groups": {"exclude": []}
+      },
+      "expression": {
+        "value": "user.nonExistentCustomField == \"X\"",
+        "type": "urn:okta:expression:1.0"
+      }
+    },
+    "actions": {
+      "assignUserToGroups": {
+        "groupIds": ["00g_engineering"]
+      }
+    }
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "00p_idp_discovery_default",
+    "name": "Default IdP Discovery Policy",
+    "type": "IDP_DISCOVERY",
+    "priority": 1,
+    "status": "ACTIVE",
+    "system": true,
+    "created": "2022-01-01T00:00:00.000Z",
+    "lastUpdated": "2025-08-01T10:00:00.000Z",
+    "conditions": {},
+    "settings": {
+      "providers": [
+        {"type": "OKTA", "name": "Okta"}
+      ]
+    }
+  }
+]

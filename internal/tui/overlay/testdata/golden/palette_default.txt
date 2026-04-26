@@ -1,0 +1,27 @@
+╭──────────────────────────────────────────────────────────╮
+│ Command Palette                                          │
+├──────────────────────────────────────────────────────────┤
+│ :                                                        │
+│ Commands:                                                │
+│   :users                                                 │
+│   :groups                                                │
+│   :grouprules                                            │
+│   :policies                                              │
+│   :logs                                                  │
+│   :profile                                               │
+│   :search                                                │
+│   :filter                                                │
+│   :unmask                                                │
+│   :mask                                                  │
+│   :raw                                                   │
+│   :refresh                                               │
+│   :about                                                 │
+│   :ratelimit                                             │
+│   :errors                                                │
+│   :healthcheck                                           │
+│   :debug                                                 │
+│   :help                                                  │
+│   :quit                                                  │
+│                                                          │
+│ <Tab> complete · <Enter> run · <Esc> cancel              │
+╰──────────────────────────────────────────────────────────╯

@@ -1,0 +1,39 @@
+{
+  "name": "pagination_multi_page",
+  "description": "Link 헤더 기반 3페이지 순차 fetch. 마지막 페이지에는 next 없음.",
+  "req_id_coverage": ["REQ-R01 AC-4", "REQ-R02 AC-3"],
+  "steps": [
+    {
+      "request": {"method": "GET", "path": "/api/v1/users", "query": "limit=200"},
+      "response": {
+        "status": 200,
+        "headers": {
+          "Link": "<https://dev-example.okta.com/api/v1/users?after=p2&limit=200>; rel=\"next\"",
+          "X-Rate-Limit-Remaining": "598"
+        },
+        "body_fixture": "oktaapi/users/list_page1.json"
+      }
+    },
+    {
+      "request": {"method": "GET", "path": "/api/v1/users", "query": "after=p2&limit=200"},
+      "response": {
+        "status": 200,
+        "headers": {
+          "Link": "<https://dev-example.okta.com/api/v1/users?after=p3&limit=200>; rel=\"next\"",
+          "X-Rate-Limit-Remaining": "597"
+        },
+        "body_fixture": "oktaapi/users/list_page2.json"
+      }
+    },
+    {
+      "request": {"method": "GET", "path": "/api/v1/users", "query": "after=p3&limit=200"},
+      "response": {
+        "status": 200,
+        "headers": {
+          "X-Rate-Limit-Remaining": "596"
+        },
+        "body_fixture": "oktaapi/logs/empty.json"
+      }
+    }
+  ]
+}

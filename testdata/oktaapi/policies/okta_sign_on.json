@@ -1,0 +1,34 @@
+[
+  {
+    "id": "00p_signon_default",
+    "name": "Default Policy",
+    "type": "OKTA_SIGN_ON",
+    "priority": 1,
+    "status": "ACTIVE",
+    "system": true,
+    "created": "2020-01-01T00:00:00.000Z",
+    "lastUpdated": "2025-03-01T10:00:00.000Z",
+    "conditions": {
+      "people": {
+        "groups": {"include": ["00g_everyone"]}
+      }
+    },
+    "settings": {}
+  },
+  {
+    "id": "00p_signon_custom",
+    "name": "Admin High Assurance",
+    "type": "OKTA_SIGN_ON",
+    "priority": 0,
+    "status": "ACTIVE",
+    "system": false,
+    "created": "2024-05-01T10:00:00.000Z",
+    "lastUpdated": "2026-02-15T14:00:00.000Z",
+    "conditions": {
+      "people": {
+        "groups": {"include": ["00g_admins"]}
+      }
+    },
+    "settings": {}
+  }
+]

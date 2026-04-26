@@ -1,0 +1,67 @@
+[
+  {
+    "id": "00u_locked",
+    "status": "LOCKED_OUT",
+    "created": "2024-04-15T10:00:00.000Z",
+    "activated": "2024-04-15T10:05:00.000Z",
+    "lastLogin": "2026-04-20T08:00:00.000Z",
+    "lastUpdated": "2026-04-22T14:30:00.000Z",
+    "statusChanged": "2026-04-22T14:30:00.000Z",
+    "passwordChanged": "2025-09-01T12:00:00.000Z",
+    "type": {"id": "oty_default"},
+    "profile": {
+      "login": "dan@redacted.example.com",
+      "email": "dan@redacted.example.com",
+      "firstName": "Dan",
+      "lastName": "Evans",
+      "displayName": "Dan Evans",
+      "department": "Engineering"
+    },
+    "credentials": {
+      "provider": {"type": "OKTA", "name": "OKTA"}
+    }
+  },
+  {
+    "id": "00u_password_expired",
+    "status": "PASSWORD_EXPIRED",
+    "created": "2023-12-01T08:00:00.000Z",
+    "activated": "2023-12-01T08:05:00.000Z",
+    "lastLogin": "2026-04-10T08:00:00.000Z",
+    "lastUpdated": "2026-04-15T00:00:00.000Z",
+    "statusChanged": "2026-04-15T00:00:00.000Z",
+    "passwordChanged": "2025-04-15T00:00:00.000Z",
+    "type": {"id": "oty_default"},
+    "profile": {
+      "login": "eve@redacted.example.com",
+      "email": "eve@redacted.example.com",
+      "firstName": "Eve",
+      "lastName": "Frank",
+      "displayName": "Eve Frank",
+      "department": "HR"
+    },
+    "credentials": {
+      "provider": {"type": "OKTA", "name": "OKTA"}
+    }
+  },
+  {
+    "id": "00u_deprovisioned",
+    "status": "DEPROVISIONED",
+    "created": "2023-05-10T10:00:00.000Z",
+    "activated": "2023-05-10T10:05:00.000Z",
+    "lastLogin": "2025-08-20T09:00:00.000Z",
+    "lastUpdated": "2025-09-01T10:00:00.000Z",
+    "statusChanged": "2025-09-01T10:00:00.000Z",
+    "passwordChanged": "2024-05-10T10:00:00.000Z",
+    "type": {"id": "oty_default"},
+    "profile": {
+      "login": "frank@redacted.example.com",
+      "email": "frank@redacted.example.com",
+      "firstName": "Frank",
+      "lastName": "Gamma",
+      "displayName": "Frank Gamma"
+    },
+    "credentials": {
+      "provider": {"type": "OKTA", "name": "OKTA"}
+    }
+  }
+]

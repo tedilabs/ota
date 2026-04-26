@@ -1,0 +1,93 @@
+Phase 6d Fail-First Red log
+Date: 2026-04-24
+Author: go-test-engineer (Phase 6d-2)
+
+Scope: visual fidelity test infrastructure + spec lock-in tests for 17 packages.
+
+Files added:
+  internal/testfx/ansi.go            (StripANSI helper, charmbracelet/x/ansi-backed)
+  internal/testfx/profile.go         (PinTestEnvironment: NO_COLOR=1 + Ascii profile)
+  internal/testfx/golden.go          (AssertGolden + -update flag)
+  internal/testfx/ansi_test.go       (self-test: PASS)
+
+Tests added (per package):
+  internal/tui/users/golden_test.go            (4 golden Skip + 3 spec lock-in)
+  internal/tui/groups/golden_test.go           (3 golden Skip + 3 spec lock-in)
+  internal/tui/rules/golden_test.go            (2 golden Skip + 3 spec lock-in)
+  internal/tui/policies/golden_test.go         (4 golden Skip + 4 spec lock-in)
+  internal/tui/logs/golden_test.go             (4 golden Skip + 3 spec lock-in)
+  internal/tui/overlay/golden_test.go          (3 golden Skip + 3 spec lock-in)
+  internal/app/golden_test.go                  (1 golden Skip + 4 spec lock-in)
+
+Goldens seeded from TUI_DESIGN §16 (verbatim, NO_COLOR + box borders):
+  internal/tui/users/testdata/golden/list_default.txt        §16.1
+  internal/tui/users/testdata/golden/list_empty_filter.txt   §16.3
+  internal/tui/users/testdata/golden/list_error_403.txt      §16.4
+  internal/tui/users/testdata/golden/detail_profile.txt      §16.9
+  internal/tui/groups/testdata/golden/list_default.txt       §16.5
+  internal/tui/rules/testdata/golden/list_with_invalid.txt   §16.6
+  internal/tui/policies/testdata/golden/list_okta_sign_on.txt §16.7
+  internal/tui/logs/testdata/golden/list_history.txt          §16.8
+  internal/tui/overlay/testdata/golden/palette_default.txt    §16.10
+  internal/tui/overlay/testdata/golden/help_screen_users.txt  §16.11
+  internal/tui/overlay/testdata/golden/confirm_unmask.txt     §16.12
+
+Update mechanism: `go test -update ./internal/tui/...` rewrites every golden.
+
+Pre-existing tests (all PASS — regression baseline maintained):
+  ok  github.com/tedilabs/ota/internal/config
+  ok  github.com/tedilabs/ota/internal/domain
+  ok  github.com/tedilabs/ota/internal/keys
+  ok  github.com/tedilabs/ota/internal/logger
+  ok  github.com/tedilabs/ota/internal/mask
+  ok  github.com/tedilabs/ota/internal/okta
+  ok  github.com/tedilabs/ota/internal/okta/errormap
+  ok  github.com/tedilabs/ota/internal/okta/pagination
+  ok  github.com/tedilabs/ota/internal/okta/ratelimit
+  ok  github.com/tedilabs/ota/internal/security
+  ok  github.com/tedilabs/ota/internal/service
+  ok  github.com/tedilabs/ota/internal/testfx          (new)
+  ok  github.com/tedilabs/ota/internal/tui/overlay
+  ok  github.com/tedilabs/ota/internal/tui/policies
+  ok  github.com/tedilabs/ota/internal/tui/shared
+  All Test_*Flow_* / teatest scenarios still PASS.
+
+Fail-First Red (intentional — drives Phase 6d-3..6 implementation):
+  internal/app:
+    --- FAIL: Test_AppShell_Chrome_HasContextBar
+        View() lacks `[RL: ok]` — Phase 6d-3 chrome work owes the indicator.
+
+  internal/tui/users:
+    --- FAIL: Test_UsersList_HasColumnHeaders
+        Missing STATUS / LOGIN / LAST LOGIN headers — Phase 6d-4 list work.
+
+  internal/tui/groups:
+    --- FAIL: Test_GroupsList_HasColumnHeaders
+        Missing TYPE / NAME / DESCRIPTION / UPDATED headers — Phase 6d-4.
+    --- FAIL: Test_GroupsList_LargeBuiltinShowsBadges
+        Missing [SYS] / [LARGE] badges on built-in groups — Phase 6d-4.
+
+  internal/tui/rules:
+    --- FAIL: Test_RulesList_HasColumnHeaders
+        Missing STATUS / NAME / TARGETS / UPDATED headers — Phase 6d-4.
+    --- FAIL: Test_RulesList_InvalidBannerSummary
+        Missing inline "1 rule in INVALID state" banner — Phase 6d-4.
+
+  internal/tui/logs:
+    --- FAIL: Test_LogsList_HasColumnHeaders
+        Header row uses old "PUBLISHED / EVENT" labels; spec wants
+        WHEN / SEV / EVENTTYPE / ACTOR / OUTCOME / IP — Phase 6d-4 rename.
+
+Skipped (waiting on Phase 6d-3..6):
+  20 *Golden* tests across 7 packages. Each Skip carries a "blocked on Phase
+  6d-N" message naming the unblocking change. Once the developer ships, the
+  Skip line is removed and `go test -update` regenerates the golden against
+  the new View output.
+
+Verification protocol for the developer:
+  Phase 6d-3 done -> run `go test ./internal/app/... -run Test_AppShell_Chrome_HasContextBar`
+                    expects PASS (RL indicator visible).
+  Phase 6d-4 done -> run `go test ./internal/tui/...` expects all *HasColumnHeaders to PASS.
+  Phase 6d-5 done -> remove Skip from *DetailGolden_* tests + run -update.
+  Phase 6d-6 done -> remove Skip from Test_UsersListGolden_ErrorPanel /
+                    Test_AppShell_Chrome_RateLimitedBadge.

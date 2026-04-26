@@ -1,0 +1,26 @@
+[
+  {
+    "id": "00g_everyone",
+    "type": "BUILT_IN",
+    "objectClass": ["okta:user_group"],
+    "created": "2020-01-01T00:00:00.000Z",
+    "lastUpdated": "2020-01-01T00:00:00.000Z",
+    "lastMembershipUpdated": "2026-04-23T08:15:30.000Z",
+    "profile": {
+      "name": "Everyone",
+      "description": "All users in your organization"
+    }
+  },
+  {
+    "id": "00g_engineering",
+    "type": "OKTA_GROUP",
+    "objectClass": ["okta:user_group"],
+    "created": "2023-06-01T10:00:00.000Z",
+    "lastUpdated": "2026-04-01T09:00:00.000Z",
+    "lastMembershipUpdated": "2026-04-20T15:00:00.000Z",
+    "profile": {
+      "name": "Engineering",
+      "description": "All engineers (dynamic via Group Rule)"
+    }
+  }
+]

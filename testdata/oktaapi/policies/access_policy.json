@@ -1,0 +1,26 @@
+[
+  {
+    "id": "00p_access_app1",
+    "name": "Authentication Policy: Salesforce",
+    "type": "ACCESS_POLICY",
+    "priority": 1,
+    "status": "ACTIVE",
+    "system": false,
+    "created": "2024-03-01T10:00:00.000Z",
+    "lastUpdated": "2026-01-10T09:00:00.000Z",
+    "conditions": {},
+    "settings": {}
+  },
+  {
+    "id": "00p_access_app2",
+    "name": "Authentication Policy: Internal Wiki",
+    "type": "ACCESS_POLICY",
+    "priority": 2,
+    "status": "ACTIVE",
+    "system": false,
+    "created": "2024-04-15T10:00:00.000Z",
+    "lastUpdated": "2026-03-20T11:00:00.000Z",
+    "conditions": {},
+    "settings": {}
+  }
+]

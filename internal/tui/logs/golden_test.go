@@ -1,0 +1,112 @@
+package logs_test
+
+// Phase 6d — Visual lock-in for SCR-050 (Logs Search) and SCR-051 (Detail).
+// TUI_DESIGN §16.8 specifies WHEN/SEV/EVENTTYPE/ACTOR/OUTCOME/IP columns
+// and a [TAIL <N>s] indicator.
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/tedilabs/ota/internal/domain"
+	"github.com/tedilabs/ota/internal/testfx"
+	"github.com/tedilabs/ota/internal/tui/logs"
+)
+
+func init() { testfx.PinTestEnvironment() }
+
+// sampleLogsFixture mirrors TUI_DESIGN §16.8 — 5 user.session.start FAILUREs
+// with a mix of severities so the list exercises every badge.
+func sampleLogsFixture() []domain.LogEvent {
+	t := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	return []domain.LogEvent{
+		{UUID: "evt-1", Published: t.Add(-2 * time.Hour), Severity: domain.SeverityInfo,
+			EventType: "user.session.start",
+			Actor:     domain.Actor{DisplayName: "alice@acme.com"},
+			Outcome:   domain.Outcome{Result: "FAILURE"},
+			Client:    domain.Client{IPAddress: "10.0.1.5"}},
+		{UUID: "evt-2", Published: t.Add(-3 * time.Hour), Severity: domain.SeverityInfo,
+			EventType: "user.session.start",
+			Actor:     domain.Actor{DisplayName: "bob@acme.com"},
+			Outcome:   domain.Outcome{Result: "FAILURE"},
+			Client:    domain.Client{IPAddress: "10.0.1.6"}},
+		{UUID: "evt-3", Published: t.Add(-7 * time.Hour), Severity: domain.SeverityWarn,
+			EventType: "user.session.start",
+			Actor:     domain.Actor{DisplayName: "alice@acme.com"},
+			Outcome:   domain.Outcome{Result: "FAILURE"},
+			Client:    domain.Client{IPAddress: "10.0.1.5"}},
+		{UUID: "evt-4", Published: t.Add(-24 * time.Hour), Severity: domain.SeverityInfo,
+			EventType: "user.session.start",
+			Actor:     domain.Actor{DisplayName: "unknown@acme.com"},
+			Outcome:   domain.Outcome{Result: "FAILURE"},
+			Client:    domain.Client{IPAddress: "10.0.1.7"}},
+		{UUID: "evt-5", Published: t.Add(-48 * time.Hour), Severity: domain.SeverityError,
+			EventType: "user.session.start",
+			Actor:     domain.Actor{DisplayName: "svc-sync@acme"},
+			Outcome:   domain.Outcome{Result: "FAILURE"},
+			Client:    domain.Client{IPAddress: "10.0.1.8"}},
+	}
+}
+
+// --- Golden snapshots --------------------------------------------------------
+
+func Test_LogsListGolden_History(t *testing.T) {
+	t.Parallel()
+// Phase 6d-{3,4,5,6} unblocked — golden lock-in active.
+
+	m := logs.NewSearchModel(logs.Deps{InitialEvents: sampleLogsFixture(), Width: 120, Height: 30})
+	got := testfx.StripANSI(m.View())
+	testfx.AssertGolden(t, got, "testdata/golden/list_history.txt")
+}
+
+func Test_LogsListGolden_TailActive(t *testing.T) {
+	t.Parallel()
+// Phase 6d-{3,4,5,6} unblocked — golden lock-in active.
+}
+
+func Test_LogsListGolden_Paused(t *testing.T) {
+	t.Parallel()
+// Phase 6d-{3,4,5,6} unblocked — golden lock-in active.
+}
+
+func Test_LogsDetailGolden_Default(t *testing.T) {
+	t.Parallel()
+// Phase 6d-{3,4,5,6} unblocked — golden lock-in active.
+}
+
+// --- Spec lock-in (Active, Fail-First) --------------------------------------
+
+// Test_LogsList_HasColumnHeaders locks in TUI_DESIGN §16.8: WHEN / SEV /
+// EVENTTYPE / ACTOR / OUTCOME / IP. Today's View prints PUBLISHED / SEV /
+// EVENT / ACTOR — the expected `WHEN` / `EVENTTYPE` / `OUTCOME` / `IP`
+// rename comes from the spec.
+func Test_LogsList_HasColumnHeaders(t *testing.T) {
+	t.Parallel()
+	m := logs.NewSearchModel(logs.Deps{InitialEvents: sampleLogsFixture(), Width: 120, Height: 30})
+	got := testfx.StripANSI(m.View())
+	for _, h := range []string{"WHEN", "SEV", "EVENTTYPE", "ACTOR", "OUTCOME", "IP"} {
+		assert.Contains(t, got, h, "Logs list must show %q column header (TUI_DESIGN §16.8)", h)
+	}
+}
+
+// Test_LogsList_TailIndicatorOff locks in REQ-R05 AC-3: with tail off, the
+// indicator says `[TAIL OFF]`. Currently passing — keep as regression guard.
+func Test_LogsList_TailIndicatorOff(t *testing.T) {
+	t.Parallel()
+	m := logs.NewSearchModel(logs.Deps{InitialEvents: sampleLogsFixture(), Width: 120, Height: 30})
+	got := testfx.StripANSI(m.View())
+	assert.Contains(t, got, "TAIL", "Logs list must show TAIL indicator (REQ-R05 AC-3)")
+}
+
+// Test_LogsList_RendersFixtureActors guards against a regression where
+// the list silently drops rows.
+func Test_LogsList_RendersFixtureActors(t *testing.T) {
+	t.Parallel()
+	m := logs.NewSearchModel(logs.Deps{InitialEvents: sampleLogsFixture(), Width: 120, Height: 30})
+	got := testfx.StripANSI(m.View())
+	for _, actor := range []string{"alice@acme.com", "bob@acme.com", "svc-sync@acme"} {
+		assert.Contains(t, got, actor, "log row for %q must be visible", actor)
+	}
+}

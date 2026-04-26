@@ -1,0 +1,52 @@
+package config
+
+// Config is ota's top-level configuration (see docs/CONVENTIONS.md §7).
+type Config struct {
+	Profiles    map[string]Profile `koanf:"profiles"`
+	UI          UI                 `koanf:"ui"`
+	Keybindings map[string]string  `koanf:"keybindings"`
+	Logs        LogsConfig         `koanf:"logs"`
+	Debug       bool               `koanf:"debug"`
+}
+
+// Profile captures a single tenant profile. API token is never stored in the
+// file; only the env variable name is referenced (REQ-C05 AC-4).
+type Profile struct {
+	OrgURL           string `koanf:"org_url"`
+	APITokenEnv      string `koanf:"api_token_env"`
+	DefaultLogFilter string `koanf:"default_log_filter"`
+}
+
+// UI groups presentation-layer settings.
+type UI struct {
+	Theme       string      `koanf:"theme"` // dark | high_contrast | monochrome
+	PIIMasking  PIIMasking  `koanf:"pii_masking"`
+}
+
+// PIIMasking configures the mask layer (TUI_DESIGN §7.3).
+type PIIMasking struct {
+	Enabled              bool `koanf:"enabled"`
+	DefaultUnmaskOnCopy  bool `koanf:"default_unmask_on_copy"`
+	LogsActorEmail       bool `koanf:"logs_actor_email"` // reserved — Logs actor.alternateId masking
+}
+
+// LogsConfig carries Logs tail tuning.
+type LogsConfig struct {
+	PollIntervalSeconds int `koanf:"poll_interval_seconds"`
+}
+
+// Default returns the in-memory default Config used when no file is present.
+func Default() Config {
+	return Config{
+		Profiles: map[string]Profile{},
+		UI: UI{
+			Theme: "dark",
+			PIIMasking: PIIMasking{
+				Enabled: true,
+			},
+		},
+		Keybindings: map[string]string{},
+		Logs:        LogsConfig{PollIntervalSeconds: 7},
+		Debug:       false,
+	}
+}

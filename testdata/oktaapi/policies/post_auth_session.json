@@ -1,0 +1,20 @@
+[
+  {
+    "id": "00p_post_auth_default",
+    "name": "Default Post-Auth Session Policy",
+    "type": "POST_AUTH_SESSION",
+    "priority": 1,
+    "status": "ACTIVE",
+    "system": true,
+    "created": "2023-01-01T00:00:00.000Z",
+    "lastUpdated": "2025-07-01T10:00:00.000Z",
+    "conditions": {},
+    "settings": {
+      "session": {
+        "maxSessionIdleMinutes": 120,
+        "maxSessionLifetimeMinutes": 720,
+        "usePersistentCookie": false
+      }
+    }
+  }
+]

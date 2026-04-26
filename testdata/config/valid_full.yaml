@@ -1,0 +1,29 @@
+# Full valid ota config (all sections).
+profiles:
+  dev:
+    org_url: "https://dev-example.okta.com"
+    api_token_env: "OKTA_API_TOKEN"
+    default_log_filter: ""
+  prod:
+    org_url: "https://prod-example.okta.com"
+    api_token_env: "OKTA_PROD_API_TOKEN"
+    default_log_filter: "eventType sw \"user.session\""
+
+ui:
+  theme: "dark"
+  pii_masking:
+    enabled: true
+    default_unmask_on_copy: false
+    logs_actor_email: false
+
+keybindings:
+  nav.down: "j"
+  nav.up: "k"
+  app.quit: "q"
+  search.open: "/"
+  cmd.open: ":"
+
+logs:
+  poll_interval_seconds: 7
+
+debug: false

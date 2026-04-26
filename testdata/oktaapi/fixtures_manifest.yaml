@@ -1,0 +1,217 @@
+# fixtures manifest — TESTING §5.3
+#
+# 각 fixture의 출처·scrub 상태·용도를 기록. Phase 7 QA가 drift 추적 시 참조.
+# 모든 fixture는 합성 데이터. 실 tenant 기록 없음.
+
+fixtures:
+  - path: users/list_page1.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/users
+    scenario: users-list-basic
+    status_codes: [200]
+    pii_scrubbed: [emails, phones]
+    notes: |
+      3 users (ACTIVE, ACTIVE, SUSPENDED). Used by users_adapter list tests
+      and UsersListModel render snapshot tests.
+
+  - path: users/list_page2.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/users?after=<cursor>
+    scenario: users-list-pagination
+    status_codes: [200]
+    pii_scrubbed: [emails]
+    notes: |
+      3 users (LOCKED_OUT, PASSWORD_EXPIRED, DEPROVISIONED). Status color coverage.
+
+  - path: users/detail_active.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/users/{id}
+    scenario: users-detail-active
+    status_codes: [200]
+    pii_scrubbed: [emails, phones, custom_fields]
+
+  - path: users/factors_all_types.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/users/{id}/factors
+    scenario: users-factors-all-types
+    status_codes: [200]
+    pii_scrubbed: [phones, emails]
+    notes: |
+      Covers 7 factor types: push, sms, totp, webauthn, email, question, token:hardware.
+      EXPIRED + DISABLED states for warning color tests.
+
+  - path: users/groups_of_user.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/users/{id}/groups
+    scenario: users-groups-of-user
+    status_codes: [200]
+    pii_scrubbed: []
+
+  - path: groups/list_mixed.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/groups
+    scenario: groups-list-mixed
+    status_codes: [200]
+    pii_scrubbed: []
+    notes: BUILT_IN + OKTA_GROUP(static) + OKTA_GROUP(dynamic target) + APP_GROUP.
+
+  - path: grouprules/list_all_states.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/groups/rules
+    scenario: grouprules-list-all-states
+    status_codes: [200]
+    pii_scrubbed: []
+    notes: ACTIVE + INACTIVE + INVALID 상태 모두 포함.
+
+  - path: policies/okta_sign_on.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/policies?type=OKTA_SIGN_ON
+    scenario: policies-okta-sign-on
+    status_codes: [200]
+    pii_scrubbed: []
+    notes: system=true default + custom admin policy.
+
+  - path: policies/access_policy.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/policies?type=ACCESS_POLICY
+    scenario: policies-access-policy
+    status_codes: [200]
+    pii_scrubbed: []
+
+  - path: policies/password.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/policies?type=PASSWORD
+    scenario: policies-password
+    status_codes: [200]
+    pii_scrubbed: []
+
+  - path: policies/mfa_enroll.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/policies?type=MFA_ENROLL
+    scenario: policies-mfa-enroll
+    status_codes: [200]
+    pii_scrubbed: []
+
+  - path: policies/profile_enrollment.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/policies?type=PROFILE_ENROLLMENT
+    scenario: policies-profile-enrollment
+    status_codes: [200]
+    pii_scrubbed: []
+    notes: raw-only 타입. REQ-R04 AC-6 raw-view 렌더.
+
+  - path: policies/post_auth_session.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/policies?type=POST_AUTH_SESSION
+    scenario: policies-post-auth-session
+    status_codes: [200]
+    pii_scrubbed: []
+    notes: raw-only 타입.
+
+  - path: policies/idp_discovery.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/policies?type=IDP_DISCOVERY
+    scenario: policies-idp-discovery
+    status_codes: [200]
+    pii_scrubbed: []
+    notes: raw-only 타입.
+
+  - path: logs/tail_initial.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/logs
+    scenario: logs-tail-initial
+    status_codes: [200]
+    pii_scrubbed: [emails, ip_addresses]
+    notes: SUCCESS + FAILURE + group.rule.deactivate. REQ-R05 AC-1 컬럼 렌더 커버.
+
+  - path: logs/tail_poll_next.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/logs
+    scenario: logs-tail-poll-next
+    status_codes: [200]
+    pii_scrubbed: [emails, ip_addresses]
+    notes: tail 폴링 2번째 응답. since 재설정 후 새 이벤트 1개.
+
+  - path: logs/empty.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: GET /api/v1/logs
+    scenario: logs-empty
+    status_codes: [200]
+    pii_scrubbed: []
+    notes: 빈 결과. 페이지네이션 말단 테스트에도 재사용.
+
+  - path: errors/E0000001_validation.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: "*"
+    scenario: errors-e0000001
+    status_codes: [400]
+    pii_scrubbed: []
+    notes: REQ-U04 AC-3 errorCauses 필드별 표시.
+
+  - path: errors/E0000004_auth.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: "*"
+    scenario: errors-e0000004
+    status_codes: [401]
+
+  - path: errors/E0000006_forbidden.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: "*"
+    scenario: errors-e0000006
+    status_codes: [403]
+
+  - path: errors/E0000007_not_found.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: "*"
+    scenario: errors-e0000007
+    status_codes: [404]
+
+  - path: errors/E0000011_token_expired.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: "*"
+    scenario: errors-e0000011
+    status_codes: [401]
+
+  - path: errors/E0000022_delete_blocked.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: "*"
+    scenario: errors-e0000022
+    status_codes: [400]
+
+  - path: errors/E0000038_feature_disabled.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: "*"
+    scenario: errors-e0000038
+    status_codes: [400]
+
+  - path: errors/E0000047_rate_limit.json
+    captured_at: 2026-04-24T00:00:00Z
+    source: synthetic
+    endpoint: "*"
+    scenario: errors-e0000047
+    status_codes: [429]
+    notes: Retry-After 헤더 동반. REQ-E01 AC-2.

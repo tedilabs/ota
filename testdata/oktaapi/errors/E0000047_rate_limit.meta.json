@@ -1,0 +1,11 @@
+{
+  "status": 429,
+  "headers": {
+    "Content-Type": "application/json",
+    "Retry-After": "10",
+    "X-Rate-Limit-Limit": "600",
+    "X-Rate-Limit-Remaining": "0",
+    "X-Rate-Limit-Reset": "1745500010",
+    "X-Okta-Request-Id": "00000000-0000-0000-0000-000000000147"
+  }
+}

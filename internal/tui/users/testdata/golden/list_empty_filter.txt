@@ -1,0 +1,21 @@
+╭─ ota · acme.okta.com · prod                              [RL: ok]    UTC  v0.1.0 ─╮
+│ Users                                                  0 of 5 · q="zzznomatch"    │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                   │
+│   No users match your filter.                                                     │
+│                                                                                   │
+│   Try:                                                                            │
+│     /                                  clear filter                               │
+│     :search status eq "SUSPENDED"      switch to SCIM search                      │
+│                                                                                   │
+│     Note: `/` uses Okta `q` (free text). Use `:search` for fields.                │
+│     Note: recently created users may take minutes to appear in search             │
+│           (indexing lag — eventually consistent).                                 │
+│                                                                                   │
+│                                                                                   │
+│                                                                                   │
+│                                                                                   │
+│                                                                                   │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│ </> filter  <:search> SCIM  <?> help                                              │
+╰───────────────────────────────────────────────────────────────────────────────────╯

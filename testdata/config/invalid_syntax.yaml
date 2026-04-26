@@ -1,0 +1,5 @@
+# Invalid: YAML parse error on line 4 (missing quote on value).
+profiles:
+  dev:
+    org_url: "https://dev-example.okta.com
+    api_token_env: "OKTA_API_TOKEN"

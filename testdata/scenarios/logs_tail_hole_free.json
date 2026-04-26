@@ -1,0 +1,31 @@
+{
+  "name": "logs_tail_hole_free",
+  "description": "Tail 모드에서 429 감지 → since 유지 → 복구 후 동일 since로 재개. 데이터 구멍 없음. REQ-R05 AC-3.",
+  "req_id_coverage": ["REQ-R05 AC-3", "REQ-E01 AC-3"],
+  "steps": [
+    {
+      "request": {"method": "GET", "path": "/api/v1/logs", "query": "since=2026-04-24T12:25:00Z&sortOrder=ASCENDING&limit=1000"},
+      "response": {
+        "status": 200,
+        "headers": {"X-Rate-Limit-Limit": "120", "X-Rate-Limit-Remaining": "118"},
+        "body_fixture": "oktaapi/logs/tail_initial.json"
+      }
+    },
+    {
+      "request": {"method": "GET", "path": "/api/v1/logs", "query": "since=2026-04-24T12:30:30.301Z&sortOrder=ASCENDING&limit=1000"},
+      "response": {
+        "status": 429,
+        "headers": {"Retry-After": "1", "X-Rate-Limit-Limit": "120", "X-Rate-Limit-Remaining": "0"},
+        "body_fixture": "oktaapi/errors/E0000047_rate_limit.json"
+      }
+    },
+    {
+      "request": {"method": "GET", "path": "/api/v1/logs", "query": "since=2026-04-24T12:30:30.301Z&sortOrder=ASCENDING&limit=1000"},
+      "response": {
+        "status": 200,
+        "headers": {"X-Rate-Limit-Limit": "120", "X-Rate-Limit-Remaining": "117"},
+        "body_fixture": "oktaapi/logs/tail_poll_next.json"
+      }
+    }
+  ]
+}

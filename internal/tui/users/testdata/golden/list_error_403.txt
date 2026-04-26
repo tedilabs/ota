@@ -1,0 +1,21 @@
+╭─ ota · acme.okta.com · prod                              [RL: ok]    UTC  v0.1.0 ─╮
+│ Users                                                          (error)            │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                   │
+│   [X] Failed to load users                                                        │
+│                                                                                   │
+│       E0000006 · 403 · Insufficient permissions for /users                        │
+│       Token may be Read-Only + Admin role may lack user read scope.               │
+│                                                                                   │
+│   <R> retry     <:about> token info     <:errors> history                         │
+│                                                                                   │
+│                                                                                   │
+│                                                                                   │
+│                                                                                   │
+│                                                                                   │
+│                                                                                   │
+│                                                                                   │
+│                                                                                   │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│ <R> retry  <:about>  <:errors>  <?> help  <q> back                                │
+╰───────────────────────────────────────────────────────────────────────────────────╯

@@ -1,0 +1,5 @@
+# Minimum valid ota config (REQ-C01 AC-3)
+profiles:
+  dev:
+    org_url: "https://dev-example.okta.com"
+    api_token_env: "OKTA_API_TOKEN"

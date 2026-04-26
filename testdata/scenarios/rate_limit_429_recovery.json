@@ -1,0 +1,37 @@
+{
+  "name": "rate_limit_429_recovery",
+  "description": "429 → Retry-After 대기 → 재시도 성공. REQ-E01 AC-2 검증.",
+  "req_id_coverage": ["REQ-E01 AC-2", "REQ-E01 AC-3"],
+  "steps": [
+    {
+      "request": {"method": "GET", "path": "/api/v1/users", "query": "limit=200"},
+      "response": {
+        "status": 429,
+        "headers": {
+          "Content-Type": "application/json",
+          "Retry-After": "2",
+          "X-Rate-Limit-Limit": "600",
+          "X-Rate-Limit-Remaining": "0",
+          "X-Rate-Limit-Reset": "1745500002",
+          "X-Okta-Request-Id": "00000000-0000-0000-0000-000000000201"
+        },
+        "body_fixture": "oktaapi/errors/E0000047_rate_limit.json"
+      }
+    },
+    {
+      "request": {"method": "GET", "path": "/api/v1/users", "query": "limit=200"},
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Link": "<https://dev-example.okta.com/api/v1/users?limit=200>; rel=\"self\"",
+          "X-Rate-Limit-Limit": "600",
+          "X-Rate-Limit-Remaining": "599",
+          "X-Rate-Limit-Reset": "1745500010",
+          "X-Okta-Request-Id": "00000000-0000-0000-0000-000000000202"
+        },
+        "body_fixture": "oktaapi/users/list_page1.json"
+      }
+    }
+  ]
+}

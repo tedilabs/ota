@@ -1,0 +1,5 @@
+# Invalid: org_url uses http (REQ-C01 AC-1, CONVENTIONS §16: https only).
+profiles:
+  bad:
+    org_url: "http://insecure.okta.com"
+    api_token_env: "OKTA_API_TOKEN"

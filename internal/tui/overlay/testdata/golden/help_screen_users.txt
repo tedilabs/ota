@@ -1,0 +1,34 @@
+╭────────────────────────────────────────────────────────────────────╮
+│ Help · Users List                                                  │
+├────────────────────────────────────────────────────────────────────┤
+│ Press Esc to close                                                 │
+│                                                                    │
+│ :             open command palette                                 │
+│ /             incremental search                                   │
+│ ?             this help                                            │
+│ Esc           cancel current mode / close overlay                  │
+│ q             close screen (List → quit confirm)                   │
+│ Ctrl-c        soft quit (tail confirm)                             │
+│ Ctrl-l        force redraw                                         │
+│ j             cursor down                                          │
+│ k             cursor up                                            │
+│ gg / G        top / bottom                                         │
+│ Ctrl-d/u      half-page down / up                                  │
+│ Ctrl-f/b      page down / up                                       │
+│ Enter         select / open detail                                 │
+│ Tab           next tab                                             │
+│ Shift-Tab     previous tab                                         │
+│ R             refresh (cache invalidate)                           │
+│ r             toggle raw JSON (Policies / Logs)                    │
+│ y             yank selected (copy)                                 │
+│ yy            yank whole row                                       │
+│ yf            yank field under cursor                              │
+│ o             open in Admin Console (web)                          │
+│ e             expand detail field                                  │
+│ s             toggle tail (Logs)                                   │
+│ f             toggle auto-scroll follow (Logs)                     │
+│ n / N         search next / previous                               │
+│ :quit         quit ota                                             │
+│                                                                    │
+│ <Tab> tab · </> filter · <?> close                                 │
+╰────────────────────────────────────────────────────────────────────╯

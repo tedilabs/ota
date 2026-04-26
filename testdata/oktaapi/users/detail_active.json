@@ -1,0 +1,27 @@
+{
+  "id": "00u_active_alice",
+  "status": "ACTIVE",
+  "created": "2024-01-02T10:00:00.000Z",
+  "activated": "2024-01-03T11:00:00.000Z",
+  "lastLogin": "2026-04-23T08:15:30.000Z",
+  "lastUpdated": "2026-04-01T09:00:00.000Z",
+  "statusChanged": "2024-01-03T11:00:00.000Z",
+  "passwordChanged": "2025-11-10T14:22:00.000Z",
+  "type": {"id": "oty_default"},
+  "profile": {
+    "login": "alice@redacted.example.com",
+    "email": "alice@redacted.example.com",
+    "firstName": "Alice",
+    "lastName": "Smith",
+    "displayName": "Alice Smith",
+    "mobilePhone": "+1-555-000-0001",
+    "secondEmail": "alice.personal@redacted.example.com",
+    "department": "Engineering",
+    "title": "Senior SWE",
+    "employeeNumber": "EMP-REDACTED",
+    "managerId": "00u_manager_REDACTED"
+  },
+  "credentials": {
+    "provider": {"type": "OKTA", "name": "OKTA"}
+  }
+}

@@ -1,0 +1,15 @@
+Policy Detail
+  id:       00p_idp_disco
+  name:     Default IdP Discovery
+  type:     IDP_DISCOVERY
+  priority: 1
+  status:   ACTIVE
+
+Raw:
+  {
+    "id": "00p_idp_disco",
+    "name": "Default IdP Discovery",
+    "type": "IDP_DISCOVERY"
+  }
+
+Rich view not yet available for this type — raw JSON only.

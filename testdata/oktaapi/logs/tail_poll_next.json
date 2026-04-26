@@ -1,0 +1,25 @@
+[
+  {
+    "uuid": "00000000-0000-0000-0001-000000000004",
+    "published": "2026-04-24T12:30:45.400Z",
+    "eventType": "user.authentication.auth_via_mfa",
+    "version": "0",
+    "severity": "INFO",
+    "displayMessage": "Authentication of user via MFA",
+    "actor": {
+      "id": "00u_active_alice",
+      "type": "User",
+      "alternateId": "alice@redacted.example.com",
+      "displayName": "Alice Smith"
+    },
+    "client": {
+      "userAgent": {"browser": "CHROME", "os": "Mac OS X"},
+      "zone": "OFF_NETWORK",
+      "device": "Computer",
+      "ipAddress": "198.51.100.10"
+    },
+    "outcome": {"result": "SUCCESS"},
+    "target": [],
+    "authenticationContext": {"authenticationProvider": "OKTA_AUTHENTICATION_PROVIDER"}
+  }
+]

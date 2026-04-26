@@ -1,0 +1,23 @@
+{
+  "name": "users_eventually_consistent",
+  "description": "Users search 인덱싱 지연. 방금 Get 성공한 사용자가 search 결과에 없음. REQ-U04 AC-5.",
+  "req_id_coverage": ["REQ-U04 AC-5"],
+  "steps": [
+    {
+      "request": {"method": "GET", "path": "/api/v1/users/00u_active_alice"},
+      "response": {
+        "status": 200,
+        "headers": {"X-Rate-Limit-Remaining": "598"},
+        "body_fixture": "oktaapi/users/detail_active.json"
+      }
+    },
+    {
+      "request": {"method": "GET", "path": "/api/v1/users", "query": "search=profile.login eq \"alice@redacted.example.com\"&limit=200"},
+      "response": {
+        "status": 200,
+        "headers": {"X-Rate-Limit-Remaining": "597"},
+        "body_fixture": "oktaapi/logs/empty.json"
+      }
+    }
+  ]
+}

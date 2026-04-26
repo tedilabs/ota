@@ -1,0 +1,67 @@
+[
+  {
+    "uuid": "00000000-0000-0000-0001-000000000001",
+    "published": "2026-04-24T12:30:00.100Z",
+    "eventType": "user.session.start",
+    "version": "0",
+    "severity": "INFO",
+    "legacyEventType": "core.user_auth.login_success",
+    "displayMessage": "User login to Okta",
+    "actor": {
+      "id": "00u_active_alice",
+      "type": "User",
+      "alternateId": "alice@redacted.example.com",
+      "displayName": "Alice Smith"
+    },
+    "client": {
+      "userAgent": {"browser": "CHROME", "os": "Mac OS X", "rawUserAgent": "Mozilla/5.0"},
+      "zone": "OFF_NETWORK",
+      "device": "Computer",
+      "ipAddress": "198.51.100.10"
+    },
+    "outcome": {"result": "SUCCESS"},
+    "target": [],
+    "transaction": {"type": "WEB", "id": "tx_001"}
+  },
+  {
+    "uuid": "00000000-0000-0000-0001-000000000002",
+    "published": "2026-04-24T12:30:15.200Z",
+    "eventType": "user.session.start",
+    "version": "0",
+    "severity": "WARN",
+    "displayMessage": "User login to Okta",
+    "actor": {
+      "id": "00u_active_bob",
+      "type": "User",
+      "alternateId": "bob@redacted.example.com",
+      "displayName": "Bob Jones"
+    },
+    "client": {
+      "userAgent": {"browser": "FIREFOX", "os": "Linux"},
+      "zone": "OFF_NETWORK",
+      "device": "Computer",
+      "ipAddress": "198.51.100.11"
+    },
+    "outcome": {"result": "FAILURE", "reason": "INVALID_CREDENTIALS"},
+    "target": []
+  },
+  {
+    "uuid": "00000000-0000-0000-0001-000000000003",
+    "published": "2026-04-24T12:30:30.300Z",
+    "eventType": "group.rule.deactivate",
+    "version": "0",
+    "severity": "INFO",
+    "displayMessage": "Deactivate group rule",
+    "actor": {
+      "id": "00u_admin",
+      "type": "User",
+      "alternateId": "admin@redacted.example.com",
+      "displayName": "Admin Account"
+    },
+    "client": {},
+    "outcome": {"result": "SUCCESS"},
+    "target": [
+      {"id": "0pr_inactive", "type": "GroupRule", "displayName": "Sales to Sales group (paused)"}
+    ]
+  }
+]

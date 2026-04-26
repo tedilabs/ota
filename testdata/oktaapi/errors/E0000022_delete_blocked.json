@@ -1,0 +1,9 @@
+{
+  "errorCode": "E0000022",
+  "errorSummary": "The endpoint does not support the provided HTTP method",
+  "errorLink": "E0000022",
+  "errorId": "oae_delete_blocked_022",
+  "errorCauses": [
+    {"errorSummary": "Only DEPROVISIONED users can be deleted. Deactivate before deleting."}
+  ]
+}

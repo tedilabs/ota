@@ -1,0 +1,11 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json",
+    "Link": "<https://dev-example.okta.com/api/v1/users?after=00u_cursor_p2&limit=200>; rel=\"next\", <https://dev-example.okta.com/api/v1/users?limit=200>; rel=\"self\"",
+    "X-Rate-Limit-Limit": "600",
+    "X-Rate-Limit-Remaining": "598",
+    "X-Rate-Limit-Reset": "1745500000",
+    "X-Okta-Request-Id": "00000000-0000-0000-0000-000000000001"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "rate_limit_429_exhausted",
+  "description": "3회 연속 429 — 최대 재시도 후 ErrRateLimited 반환. REQ-E01 AC-2 final.",
+  "req_id_coverage": ["REQ-E01 AC-2"],
+  "steps": [
+    {
+      "request": {"method": "GET", "path": "/api/v1/users", "query": "limit=200"},
+      "response": {
+        "status": 429,
+        "headers": {"Retry-After": "1", "X-Rate-Limit-Remaining": "0"},
+        "body_fixture": "oktaapi/errors/E0000047_rate_limit.json"
+      }
+    },
+    {
+      "request": {"method": "GET", "path": "/api/v1/users", "query": "limit=200"},
+      "response": {
+        "status": 429,
+        "headers": {"Retry-After": "1", "X-Rate-Limit-Remaining": "0"},
+        "body_fixture": "oktaapi/errors/E0000047_rate_limit.json"
+      }
+    },
+    {
+      "request": {"method": "GET", "path": "/api/v1/users", "query": "limit=200"},
+      "response": {
+        "status": 429,
+        "headers": {"Retry-After": "1", "X-Rate-Limit-Remaining": "0"},
+        "body_fixture": "oktaapi/errors/E0000047_rate_limit.json"
+      }
+    }
+  ]
+}

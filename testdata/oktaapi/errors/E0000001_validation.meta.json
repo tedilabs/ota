@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Okta-Request-Id": "00000000-0000-0000-0000-000000000101"
+  }
+}

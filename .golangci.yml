@@ -1,0 +1,89 @@
+# ota linter configuration. See docs/CONVENTIONS.md §2 and docs/TECH_STACK.md §9.
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - gosec
+    - gocritic
+    - revive
+    - copyloopvar
+    - bodyclose
+    - contextcheck
+    - exhaustive
+    - nilerr
+    - prealloc
+    - tparallel
+    - depguard
+
+  settings:
+    depguard:
+      rules:
+        # Enforce Hexagonal boundaries: only internal/okta (and its subpackages)
+        # may import the Okta SDK. See docs/ARCHITECTURE.md §5.
+        sdk-isolation:
+          list-mode: lax
+          files:
+            - "**/internal/app/**"
+            - "**/internal/tui/**"
+            - "**/internal/service/**"
+            - "**/internal/domain/**"
+            - "**/internal/config/**"
+            - "**/internal/keys/**"
+            - "**/internal/mask/**"
+            - "**/internal/logger/**"
+            - "**/internal/cache/**"
+            - "**/internal/clock/**"
+            - "**/internal/version/**"
+          deny:
+            - pkg: "github.com/okta/okta-sdk-golang"
+              desc: >
+                The Okta SDK must be isolated in internal/okta/**. Consumer layers
+                depend on domain.*Port interfaces instead.
+
+        # internal/domain must remain pure (no third-party imports).
+        domain-purity:
+          list-mode: lax
+          files:
+            - "**/internal/domain/**"
+          deny:
+            - pkg: "github.com/"
+              desc: internal/domain must not import third-party packages.
+            - pkg: "gopkg.in/"
+              desc: internal/domain must not import third-party packages.
+
+        # Production binary must not import test fixtures or testfx helpers.
+        testfx-exclusion:
+          list-mode: lax
+          files:
+            - "**/cmd/ota/**"
+          deny:
+            - pkg: "github.com/tedilabs/ota/internal/okta/testfx"
+              desc: testfx is for tests only.
+
+  exclusions:
+    generated: lax
+    rules:
+      # Stub panics are intentional during Phase 5 (Fail-First). Remove this
+      # override once implementations land in Phase 6.
+      - linters:
+          - gocritic
+        text: "appendAssign|commentedOutCode"
+      # Tests may freely shadow err.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

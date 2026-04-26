@@ -1,0 +1,89 @@
+[
+  {
+    "id": "opf_push_001",
+    "factorType": "push",
+    "provider": "OKTA",
+    "vendorName": "OKTA",
+    "status": "ACTIVE",
+    "created": "2024-01-05T12:00:00.000Z",
+    "lastUpdated": "2026-04-20T10:00:00.000Z",
+    "profile": {
+      "name": "iPhone 15 Pro",
+      "deviceType": "SmartPhone_IPhone",
+      "platform": "IOS"
+    }
+  },
+  {
+    "id": "opf_sms_001",
+    "factorType": "sms",
+    "provider": "OKTA",
+    "vendorName": "OKTA",
+    "status": "ACTIVE",
+    "created": "2024-01-05T12:05:00.000Z",
+    "lastUpdated": "2026-04-20T10:00:00.000Z",
+    "profile": {
+      "phoneNumber": "+1-555-000-0001"
+    }
+  },
+  {
+    "id": "opf_totp_001",
+    "factorType": "token:software:totp",
+    "provider": "GOOGLE",
+    "vendorName": "GOOGLE",
+    "status": "ACTIVE",
+    "created": "2024-03-01T09:00:00.000Z",
+    "lastUpdated": "2024-03-01T09:00:00.000Z",
+    "profile": {
+      "credentialId": "alice@redacted.example.com"
+    }
+  },
+  {
+    "id": "opf_webauthn_001",
+    "factorType": "webauthn",
+    "provider": "FIDO",
+    "vendorName": "FIDO",
+    "status": "ACTIVE",
+    "created": "2025-01-10T14:00:00.000Z",
+    "lastUpdated": "2025-01-10T14:00:00.000Z",
+    "profile": {
+      "credentialId": "yubikey-5c-nfc",
+      "authenticatorName": "YubiKey 5C NFC"
+    }
+  },
+  {
+    "id": "opf_email_001",
+    "factorType": "email",
+    "provider": "OKTA",
+    "vendorName": "OKTA",
+    "status": "ACTIVE",
+    "created": "2024-01-02T10:00:00.000Z",
+    "lastUpdated": "2024-01-02T10:00:00.000Z",
+    "profile": {
+      "email": "alice@redacted.example.com"
+    }
+  },
+  {
+    "id": "opf_question_001",
+    "factorType": "question",
+    "provider": "OKTA",
+    "vendorName": "OKTA",
+    "status": "EXPIRED",
+    "created": "2024-01-02T10:00:00.000Z",
+    "lastUpdated": "2025-12-01T00:00:00.000Z",
+    "profile": {
+      "question": "favorite_security_question"
+    }
+  },
+  {
+    "id": "opf_token_hw_001",
+    "factorType": "token:hardware",
+    "provider": "YUBICO",
+    "vendorName": "YUBICO",
+    "status": "DISABLED",
+    "created": "2024-06-01T00:00:00.000Z",
+    "lastUpdated": "2026-01-15T10:00:00.000Z",
+    "profile": {
+      "credentialId": "hw-token-disabled"
+    }
+  }
+]

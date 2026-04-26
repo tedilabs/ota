@@ -1,0 +1,8 @@
+Select Policy Type:
+> OKTA_SIGN_ON
+  ACCESS_POLICY
+  PASSWORD
+  MFA_ENROLL
+  PROFILE_ENROLLMENT   (raw view)
+  POST_AUTH_SESSION   (raw view)
+  IDP_DISCOVERY   (raw view)

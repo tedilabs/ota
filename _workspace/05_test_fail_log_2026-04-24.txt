@@ -1,0 +1,207 @@
+================================================================================
+ ota Phase 5 — Fail-First Red Test Log
+================================================================================
+
+Date:          2026-04-24
+Owner:         test-engineer
+Methodology:   TESTING.md §7 + tdd-fail-first skill
+Purpose:       Phase 5 → Phase 6 전환 증거. 모든 신규 테스트가 처음에 실패했음을 보여준다.
+
+Format (각 엔트리):
+  ## REQ-<id> [AC-<n>] <요약>
+  ### <date> <time> (<Red|Red-2|Green|Refactor>)
+  $ <명령>
+  <go test 원문 출력>
+
+규칙:
+  - 각 REQ-ID는 최소 1번 Red 증거 필요
+  - Red → Green 사이에 구현 변경이 있어야 함
+  - Green이 첫 실행이면 Fail-First 위반 → Lock-in 테스트로 명시(TESTING §1.3)
+  - trivial pass (어디서나 `return nil` 유도) 금지 — 실패하는 assertion 명시
+
+================================================================================
+ Phase 5 착수 로그
+================================================================================
+
+## 2026-04-24 Phase 5 킥오프
+- team-lead 승인 수령
+- developer: go.mod + 스켈레톤 작성 진행 중 (tasks #17~#24)
+- test-engineer (나):
+  - testdata/oktaapi/ 엔드포인트별 fixture 작성 시작
+  - testdata/scenarios/ 8종 에러 + pagination + rate limit
+  - REQ 21개 테스트 파일 예약 (Port fake 수령 대기)
+- 의존 순서:
+  1. go.mod (developer) → (unblocks nothing yet)
+  2. internal/domain/{ports,errors,user,...}.go (developer) → service/domain unit 테스트 unblock
+  3. internal/okta/testfx/ (developer) → adapter integration 테스트 unblock
+  4. internal/clock, internal/tui/*/list.go Deps (developer) → teatest·시간 테스트 unblock
+
+================================================================================
+ Red 증거 (REQ-ID별로 아래에 append)
+================================================================================
+
+
+================================================================================
+ RED #1 — REQ-R01 / REQ-U04 / REQ-R04 / REQ-R05 / REQ-E01
+================================================================================
+
+## REQ-U04 AC-1/2, REQ-C04 AC-4, REQ-E01 AC-6, REQ-R01 AC-6 — UsersService 계약
+## REQ-R04 AC-2/3 — PoliciesService 타입 필수 + priority 정렬
+## REQ-R05 AC-2/3/4/5 — LogsService tail 동작
+
+### 2026-04-24 Red (컴파일 부재 — 구현 부재 증명)
+$ go test ./internal/service/...
+# github.com/tedilabs/ota/internal/service_test [github.com/tedilabs/ota/internal/service.test]
+internal/service/logs_service_test.go:24:18: undefined: service.NewLogsTail
+internal/service/logs_service_test.go:25:11: undefined: service.WithLogsTailNow
+internal/service/logs_service_test.go:42:18: undefined: service.NewLogsTail
+internal/service/logs_service_test.go:52:18: undefined: service.NewLogsTail
+internal/service/logs_service_test.go:67:18: undefined: service.NewLogsTail
+internal/service/logs_service_test.go:77:18: undefined: service.NewLogsTail
+internal/service/logs_service_test.go:94:11: svc.HistoryQuery undefined (type *service.LogsService has no field or method HistoryQuery)
+internal/service/logs_service_test.go:102:21: undefined: service.LogsPresets
+internal/service/policies_service_test.go:26:51: undefined: service.PoliciesQuery
+internal/service/policies_service_test.go:28:40: undefined: service.ErrPolicyTypeRequired
+internal/service/policies_service_test.go:28:40: too many errors
+FAIL	github.com/tedilabs/ota/internal/service [build failed]
+
+해석:
+- service.UsersService.Search / Get / Factors: 테스트가 요구하지만 구현 없음 (Phase 6 green 대상).
+- service.LogsTail, NewLogsTail, WithLogsTailNow: tail 동작 훅. 존재하지 않음.
+- service.LogsPresets: 5종 프리셋. 존재하지 않음.
+- service.ErrPolicyTypeRequired: type 미지정 센티넬. 존재하지 않음.
+
+Fail-First 확인: 위 테스트들은 Phase 6에서 실제 구현이 생긴 뒤에야 Green 가능.
+
+================================================================================
+ RED #2 — REQ-U04 / REQ-C04 / REQ-E01 (errormap · pagination · ratelimit)
+================================================================================
+
+## REQ-U04 AC-3, REQ-C04 AC-4, PRD §7.7 — errormap 매핑 (8종)
+## REQ-R01 AC-4, REQ-R02 AC-3, PRD §7.3 — Link 헤더 파서
+## REQ-E01 AC-4/5 — Rate Limit 모니터 (카테고리별 last-observed)
+
+### 2026-04-24 Red (panic("not implemented yet"))
+$ go test ./internal/okta/errormap/... ./internal/okta/pagination/... ./internal/okta/ratelimit/...
+--- FAIL: Test_ErrorMap_FromResponse_MapsAllKnownCodes
+panic: errormap.FromResponse: not implemented yet
+  at internal/okta/errormap/map.go:19
+FAIL	github.com/tedilabs/ota/internal/okta/errormap	1.248s
+
+--- FAIL: Test_LinkHeader_ParsesNextCursor
+panic: pagination.NextCursor: not implemented yet
+  at internal/okta/pagination/link.go:13
+FAIL	github.com/tedilabs/ota/internal/okta/pagination	0.478s
+
+--- FAIL: Test_Monitor_Observe_StoresPerCategory
+--- FAIL: Test_CategoryFromPath_ClassifiesCorrectly
+panic: ratelimit.CategoryFromPath: not implemented yet
+  at internal/okta/ratelimit/monitor.go:38
+FAIL	github.com/tedilabs/ota/internal/okta/ratelimit
+
+해석:
+- errormap.FromResponse: 8종 errorCode 매핑 테이블 테스트로 Phase 6 구현 유도.
+- pagination.NextCursor: 4개 케이스 (next+self, self only, empty, opaque cursor) 테이블 드리븐.
+- ratelimit.Monitor.Observe / CategoryFromPath / Snapshots: 카테고리별 저장 의미 테스트.
+- REQ-E01 AC-2의 Retry-After 파싱은 errormap E0000047 fixture에서 10s 검증.
+
+Fail-First 확인: 8종 errorCode · 4종 Link header 패턴 · 5종 category 분류 — 전부 구현자가
+무엇을 작성해야 하는지 실패 메시지로 명확히 드러냄.
+
+================================================================================
+ RED #3 — 통합 Red 실행 (go test ./... -short)
+================================================================================
+
+실행 시각: 2026-04-24 (Phase 5)
+Go: 1.26.2 / macOS darwin/arm64
+
+## 전체 패키지 결과 요약
+
+| 패키지 | 결과 | REQ 커버 | 실패 원인 |
+|-------|------|---------|----------|
+| internal/app             | FAIL (build) | REQ-U01/U02/U06/U07/E02/C04 | app.ResolveToken, app.ClassifyKey, app.KeyContextInputActive, app.QuitConfirmRequestMsg 미구현 |
+| internal/config          | FAIL (run)   | REQ-C01/C02/C05            | config.Load panic                         |
+| internal/domain          | PASS         | REQ-R01/R04/R03/U04/E01    | 도메인 타입 구조 검증 (Lock-in 테스트)       |
+| internal/keys            | FAIL (run)   | REQ-U01/C03                | keys.Resolve panic                        |
+| internal/logger          | FAIL (run)   | REQ-C05/O01                | logger.MaskAttr, logger.New panic         |
+| internal/mask            | FAIL (run)   | REQ-C05/R01 AC-6           | mask.Phone, mask.Email panic              |
+| internal/okta            | FAIL (run)   | REQ-R01/E01/R05            | okta.NewClient panic                      |
+| internal/okta/errormap   | FAIL (run)   | REQ-U04/C04/E01 (8 코드)   | errormap.FromResponse panic               |
+| internal/okta/pagination | FAIL (run)   | REQ-R01 AC-4/R02 AC-3      | pagination.NextCursor panic               |
+| internal/okta/ratelimit  | FAIL (run)   | REQ-E01 AC-4/5             | Monitor.Observe, CategoryFromPath panic   |
+| internal/security        | PASS         | REQ-C05/R01 AC-6 (peek)    | 리포지토리 상태 게이트 (Lock-in)           |
+| internal/service         | FAIL (build) | REQ-R01/R02/R03/R04/R05/U04 | service.UsersService.Search, PoliciesQuery, LogsTail, LogsPresets, ErrPolicyTypeRequired 미구현 |
+| internal/tui/users       | FAIL (run)   | REQ-R01/U03/U05            | users.NewListModel 미구현 (패키지는 비어있음) |
+
+## 대표 Red 샘플
+
+### internal/service (컴파일 부재)
+# github.com/tedilabs/ota/internal/service_test
+internal/service/logs_service_test.go:24:18: undefined: service.NewLogsTail
+internal/service/logs_service_test.go:25:11: undefined: service.WithLogsTailNow
+internal/service/policies_service_test.go:26:51: undefined: service.PoliciesQuery
+internal/service/policies_service_test.go:28:40: undefined: service.ErrPolicyTypeRequired
+internal/service/rules_service_test.go:23:15: undefined: service.NewRulesService
+
+### internal/app (컴파일 부재)
+# github.com/tedilabs/ota/internal/app_test
+internal/app/auth_test.go:20:27: undefined: app.ResolveToken
+internal/app/keymap_test.go:36:17: undefined: app.ClassifyKey
+
+### internal/okta/errormap (panic 실행 실패)
+--- FAIL: Test_ErrorMap_FromResponse_MapsAllKnownCodes
+panic: errormap.FromResponse: not implemented yet
+
+### internal/okta/pagination (panic)
+--- FAIL: Test_LinkHeader_ParsesNextCursor/next_and_self
+panic: pagination.NextCursor: not implemented yet
+
+### internal/okta/ratelimit (panic)
+--- FAIL: Test_CategoryFromPath_ClassifiesCorrectly
+panic: ratelimit.CategoryFromPath: not implemented yet
+
+### internal/config (panic)
+--- FAIL: Test_ConfigLoad_ExplicitPathOverrideSucceeds
+panic: config.Load: not implemented yet
+
+### internal/keys (panic)
+--- FAIL: Test_KeysResolve_Defaults_IncludeVimAndArrows
+panic: keys.Resolve: not implemented yet
+
+### internal/mask (panic)
+--- FAIL: Test_Mask_Phone_KeepsLastFourDigits/+1-555-123-4567
+panic: mask.Phone: not implemented yet
+
+### internal/logger (panic)
+--- FAIL: Test_Logger_MaskAttr_ReplacesAuthorizationValueWithAsterisks
+panic: logger.MaskAttr: not implemented yet
+
+### internal/tui/users (컴파일 부재 — 패키지 자체 stub 미작성)
+cannot find package "github.com/tedilabs/ota/internal/tui/users"
+
+## PASS 테스트 분류
+
+- internal/domain: 도메인 타입 관계/enum 값 구조 검증. 이미 stub에 타입이 올바르게 정의되어
+  있어 최초부터 통과. TESTING §1.3에 따라 Lock-in 테스트로 분류 — 파일 상단 주석에 명시 필요
+  (TODO Phase 6 초반 리팩터).
+- internal/security: peek test. 리포지토리 상태 게이트이므로 최초 통과가 정상 (TESTING §11).
+
+## Fail-First 충족 여부
+
+- **PRD REQ-ID 21개 전부 ≥1 실패 테스트 존재:** 확인됨.
+- **trivial pass 없음:** 도메인/보안 PASS 두 케이스는 Lock-in 유형으로 명시됨.
+- **로그 증거:** 본 파일 + /tmp/red_all.txt에 원문 캡처.
+
+## Phase 6 진입 체크리스트 (developer)
+
+1. `mask.Phone`, `mask.Email`, `logger.MaskAttr`, `logger.New` — 순수 유틸부터
+2. `keys.Resolve`, `keys.ResolvedMap.Reverse`
+3. `config.Load`, `config.Validate`
+4. `pagination.NextCursor`, `ratelimit.CategoryFromPath`, `ratelimit.Monitor.*`
+5. `errormap.FromResponse` (8 케이스 + errorCauses + Retry-After)
+6. `okta.NewClient`, `UsersAdapter.*`, `LogsAdapter.*`
+7. `service.*Service` + `LogsTail`, `LogsPresets`, `RulesService`
+8. `app.ResolveToken`, `app.ClassifyKey{InContext}`, `app.QuitConfirmRequestMsg` 발행 로직
+9. `internal/tui/users/list.go` (Deps 구조 + NewListModel + Update/View)
+
+위 순서로 하면 각 단계가 아래 단계의 테스트를 열어 준다.

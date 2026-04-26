@@ -1,0 +1,21 @@
+# Build artifacts
+/bin/
+/ota
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local overrides — NEVER commit tokens
+*.local.yaml
+*.token
+*.secret
+tenant.yaml
+.env
+.env.*

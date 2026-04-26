@@ -1,0 +1,9 @@
+{
+  "errorCode": "E0000001",
+  "errorSummary": "Api validation failed: login",
+  "errorLink": "E0000001",
+  "errorId": "oae_validation_001",
+  "errorCauses": [
+    {"errorSummary": "login: An object with this field already exists in the current organization"}
+  ]
+}
