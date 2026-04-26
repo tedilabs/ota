@@ -1,0 +1,300 @@
+ok  	github.com/tedilabs/ota/cmd/ota	1.511s
+--- FAIL: Test_Palette_SwitchScreenMsg_GroupRuleHyphen (0.00s)
+    palette_aliases_test.go:126: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/palette_aliases_test.go:126
+        	Error:      	Not equal: 
+        	            	expected: "grouprules"
+        	            	actual  : "users"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-grouprules
+        	            	+users
+        	Test:       	Test_Palette_SwitchScreenMsg_GroupRuleHyphen
+        	Messages:   	SwitchScreenMsg{Target:"group-rule"} must resolve to ScreenRules (TUI_DESIGN §3.4 v1.2.0)
+--- FAIL: Test_Palette_UserAliases (0.00s)
+    --- FAIL: Test_Palette_UserAliases/user (0.00s)
+        palette_aliases_test.go:43: 
+            	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/palette_aliases_test.go:43
+            	Error:      	Not equal: 
+            	            	expected: "users"
+            	            	actual  : "groups"
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1 +1 @@
+            	            	-users
+            	            	+groups
+            	Test:       	Test_Palette_UserAliases/user
+            	Messages:   	palette alias "user" must resolve to ScreenUsers (TUI_DESIGN §3.4 v1.2.0)
+--- FAIL: Test_Palette_SwitchScreenMsg_UserSingular (0.00s)
+    palette_aliases_test.go:114: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/palette_aliases_test.go:114
+        	Error:      	Not equal: 
+        	            	expected: "users"
+        	            	actual  : "groups"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-users
+        	            	+groups
+        	Test:       	Test_Palette_SwitchScreenMsg_UserSingular
+        	Messages:   	SwitchScreenMsg{Target:"user"} must resolve to ScreenUsers (TUI_DESIGN §3.4 v1.2.0)
+--- FAIL: Test_Palette_GroupAliases (0.00s)
+    --- FAIL: Test_Palette_GroupAliases/group (0.00s)
+        palette_aliases_test.go:58: 
+            	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/palette_aliases_test.go:58
+            	Error:      	Not equal: 
+            	            	expected: "groups"
+            	            	actual  : "users"
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1 +1 @@
+            	            	-groups
+            	            	+users
+            	Test:       	Test_Palette_GroupAliases/group
+            	Messages:   	palette alias "group" must resolve to ScreenGroups (TUI_DESIGN §3.4 v1.2.0)
+--- FAIL: Test_Palette_GroupRuleAliases (0.00s)
+    --- FAIL: Test_Palette_GroupRuleAliases/group-rules (0.00s)
+        palette_aliases_test.go:77: 
+            	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/palette_aliases_test.go:77
+            	Error:      	Not equal: 
+            	            	expected: "grouprules"
+            	            	actual  : "users"
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1 +1 @@
+            	            	-grouprules
+            	            	+users
+            	Test:       	Test_Palette_GroupRuleAliases/group-rules
+            	Messages:   	palette alias "group-rules" must resolve to ScreenRules (TUI_DESIGN §3.4 v1.2.0)
+    --- FAIL: Test_Palette_GroupRuleAliases/group-rule (0.00s)
+        palette_aliases_test.go:77: 
+            	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/palette_aliases_test.go:77
+            	Error:      	Not equal: 
+            	            	expected: "grouprules"
+            	            	actual  : "users"
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1 +1 @@
+            	            	-grouprules
+            	            	+users
+            	Test:       	Test_Palette_GroupRuleAliases/group-rule
+            	Messages:   	palette alias "group-rule" must resolve to ScreenRules (TUI_DESIGN §3.4 v1.2.0)
+    --- FAIL: Test_Palette_GroupRuleAliases/grouprule (0.00s)
+        palette_aliases_test.go:77: 
+            	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/palette_aliases_test.go:77
+            	Error:      	Not equal: 
+            	            	expected: "grouprules"
+            	            	actual  : "users"
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1 +1 @@
+            	            	-grouprules
+            	            	+users
+            	Test:       	Test_Palette_GroupRuleAliases/grouprule
+            	Messages:   	palette alias "grouprule" must resolve to ScreenRules (TUI_DESIGN §3.4 v1.2.0)
+--- FAIL: Test_AppShell_Chrome_FillsTerminalWidth_220 (0.00s)
+    responsive_test.go:64: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/responsive_test.go:64
+        	Error:      	Not equal: 
+        	            	expected: 220
+        	            	actual  : 200
+        	Test:       	Test_AppShell_Chrome_FillsTerminalWidth_220
+        	Messages:   	width=220 must render a 220-cell chrome (no 200 cap, TUI_DESIGN §15.0a v1.2.0). got=200
+FAIL
+FAIL	github.com/tedilabs/ota/internal/app	0.903s
+?   	github.com/tedilabs/ota/internal/clock	[no test files]
+ok  	github.com/tedilabs/ota/internal/config	4.859s
+ok  	github.com/tedilabs/ota/internal/domain	5.551s
+ok  	github.com/tedilabs/ota/internal/keys	5.115s
+ok  	github.com/tedilabs/ota/internal/logger	3.596s
+ok  	github.com/tedilabs/ota/internal/mask	4.441s
+ok  	github.com/tedilabs/ota/internal/okta	4.346s
+ok  	github.com/tedilabs/ota/internal/okta/errormap	4.015s
+ok  	github.com/tedilabs/ota/internal/okta/pagination	3.169s
+ok  	github.com/tedilabs/ota/internal/okta/ratelimit	6.813s
+?   	github.com/tedilabs/ota/internal/okta/testfx	[no test files]
+ok  	github.com/tedilabs/ota/internal/security	2.771s
+ok  	github.com/tedilabs/ota/internal/service	5.979s
+?   	github.com/tedilabs/ota/internal/service/fakes	[no test files]
+ok  	github.com/tedilabs/ota/internal/testfx	7.221s
+--- FAIL: Test_GroupsList_DKey_OpensDetail (0.00s)
+    dkey_test.go:36: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/groups/dkey_test.go:36
+        	Error:      	"Groups  3 of 3\nTYPE  NAME                      DESCRIPTION                      UPDATED  TAGS        \n> [O]   Engineering               All engineers                        —  [RULE]      \n  [A]   Jira Users                Synced from Atlassian                —              \n  [B]   Everyone                  All organization members             —  [SYS][LARGE]\n" does not contain "Group Detail"
+        	Test:       	Test_GroupsList_DKey_OpensDetail
+        	Messages:   	after `d`, View must render the Group Detail surface (TUI_DESIGN §3.6)
+--- FAIL: Test_GroupsList_SortByName_AscOrder (0.00s)
+    sort_test.go:83: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/groups/sort_test.go:83
+        	Error:      	"288" is not less than "199"
+        	Test:       	Test_GroupsList_SortByName_AscOrder
+        	Messages:   	asc by NAME: Everyone before Jira Users
+--- FAIL: Test_GroupsList_SortByName_CyclesAscDescOff (0.00s)
+    sort_test.go:45: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/groups/sort_test.go:45
+        	Error:      	"TYPE  NAME                      DESCRIPTION                      UPDATED  TAGS        " does not contain "NAME↑"
+        	Test:       	Test_GroupsList_SortByName_CyclesAscDescOff
+        	Messages:   	after 1×Shift+N, NAME header must carry asc indicator
+    sort_test.go:52: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/groups/sort_test.go:52
+        	Error:      	"TYPE  NAME                      DESCRIPTION                      UPDATED  TAGS        " does not contain "NAME↓"
+        	Test:       	Test_GroupsList_SortByName_CyclesAscDescOff
+        	Messages:   	after 2×Shift+N, NAME header must carry desc indicator
+FAIL
+FAIL	github.com/tedilabs/ota/internal/tui/groups	6.702s
+ok  	github.com/tedilabs/ota/internal/tui/logs	6.424s
+--- FAIL: Test_HelpGolden_ScreenUsers (0.00s)
+    golden_test.go:34: AssertGolden: testdata/golden/help_screen_users.txt mismatch.
+        
+        --- want ---
+        ╭────────────────────────────────────────────────────────────────────╮
+        │ Help · Users List                                                  │
+        ├────────────────────────────────────────────────────────────────────┤
+        │ Press Esc to close                                                 │
+        │                                                                    │
+        │ :             open command palette                                 │
+        │ /             incremental search                                   │
+        │ ?             this help                                            │
+        │ Esc           cancel current mode / close overlay                  │
+        │ q             close screen (List → quit confirm)                   │
+        │ Ctrl-c        soft quit (tail confirm)                             │
+        │ Ctrl-l        force redraw                                         │
+        │ j             cursor down                                          │
+        │ k             cursor up                                            │
+        │ gg / G        top / bottom                                         │
+        │ Ctrl-d/u      half-page down / up                                  │
+        │ Ctrl-f/b      page down / up                                       │
+        │ Enter         select / open detail                                 │
+        │ Tab           next tab                                             │
+        │ Shift-Tab     previous tab                                         │
+        │ R             refresh (cache invalidate)                           │
+        │ r             toggle raw JSON (Policies / Logs)                    │
+        │ y             yank selected (copy)                                 │
+        │ yy            yank whole row                                       │
+        │ yf            yank field under cursor                              │
+        │ o             open in Admin Console (web)                          │
+        │ e             expand detail field                                  │
+        │ s             toggle tail (Logs)                                   │
+        │ f             toggle auto-scroll follow (Logs)                     │
+        │ n / N         search next / previous                               │
+        │ :quit         quit ota                                             │
+        │                                                                    │
+        │ <Tab> tab · </> filter · <?> close                                 │
+        ╰────────────────────────────────────────────────────────────────────╯
+        --- got ---
+        ╭────────────────────────────────────────────────────────────────────╮
+        │ Help · Users List                                                  │
+        ├────────────────────────────────────────────────────────────────────┤
+        │ Press Esc to close                                                 │
+        │                                                                    │
+        │ :             open command palette                                 │
+        │ /             incremental search                                   │
+        │ ?             this help                                            │
+        │ Esc           cancel current mode / close overlay                  │
+        │ q             close screen (List → quit confirm)                   │
+        │ Ctrl-c        soft quit (tail confirm)                             │
+        │ Ctrl-l        force redraw                                         │
+        │ j             cursor down                                          │
+        │ k             cursor up                                            │
+        │ gg / G        top / bottom                                         │
+        │ Ctrl-d/u      half-page down / up                                  │
+        │ Ctrl-f/b      page down / up                                       │
+        │ Enter         select / open detail                                 │
+        │ Tab           next tab                                             │
+        │ Shift-Tab     previous tab                                         │
+        │ R             refresh (cache invalidate)                           │
+        │ r             toggle raw JSON (Policies / Logs)                    │
+        │ y             yank selected (copy)                                 │
+        │ yy            yank whole row                                       │
+        │ yf            yank field under cursor                              │
+        │ o             open in Admin Console (web)                          │
+        │ e             expand detail field                                  │
+        │ s             toggle tail (Logs)                                   │
+        │ f             toggle auto-scroll follow (Logs)                     │
+        │ d             open detail (all attributes)                         │
+        │ Shift+S/N/L/C sort by Status / Name / Last Login / Created         │
+        │ :quit         quit ota                                             │
+        │                                                                    │
+        │ <Tab> tab · </> filter · <?> close                                 │
+        ╰────────────────────────────────────────────────────────────────────╯
+        --- diff hint ---
+        line 30:
+          want: "│ n / N         search next / previous                               │"
+          got:  "│ d             open detail (all attributes)                         │"
+FAIL
+FAIL	github.com/tedilabs/ota/internal/tui/overlay	5.982s
+ok  	github.com/tedilabs/ota/internal/tui/policies	6.877s
+--- FAIL: Test_RulesList_DKey_OpensDetail (0.00s)
+    dkey_test.go:32: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/rules/dkey_test.go:32
+        	Error:      	"Group Rules  3 of 3\nSTATUS          NAME                            TARGETS                    UPDATED\n> [+] ACTIVE      Engineers to Eng                00g_eng                        —\n  [-] INACTIVE    Legacy Eng Mapping              00g_eng                        —\n  [!] INVALID     Broken Dept Rule                00g_sales                      —\n\n[!] 1 rule in INVALID state — expression cannot be evaluated by Okta.\n    Open the rule to view why and what to fix.\n" does not contain "Group Rule Detail"
+        	Test:       	Test_RulesList_DKey_OpensDetail
+        	Messages:   	after `d`, View must render the Group Rule Detail surface (TUI_DESIGN §3.6)
+--- FAIL: Test_RulesList_SortByStatus_CyclesAscDescOff (0.00s)
+    sort_test.go:42: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/rules/sort_test.go:42
+        	Error:      	"STATUS          NAME                            TARGETS                    UPDATED" does not contain "STATUS↑"
+        	Test:       	Test_RulesList_SortByStatus_CyclesAscDescOff
+        	Messages:   	after 1×Shift+S, STATUS header must carry asc indicator
+    sort_test.go:48: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/rules/sort_test.go:48
+        	Error:      	"STATUS          NAME                            TARGETS                    UPDATED" does not contain "STATUS↓"
+        	Test:       	Test_RulesList_SortByStatus_CyclesAscDescOff
+        	Messages:   	after 2×Shift+S, STATUS header must carry desc indicator
+FAIL
+FAIL	github.com/tedilabs/ota/internal/tui/rules	5.069s
+ok  	github.com/tedilabs/ota/internal/tui/shared	6.093s
+--- FAIL: Test_UsersList_DKey_OpensDetailView (0.00s)
+    dkey_test.go:102: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/users/dkey_test.go:102
+        	Error:      	Expected value not to be nil.
+        	Test:       	Test_UsersList_DKey_OpensDetailView
+        	Messages:   	`d` must emit a Cmd
+--- FAIL: Test_UsersList_DKey_EmitsOpenCmd (0.00s)
+    dkey_test.go:52: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/users/dkey_test.go:52
+        	Error:      	Expected value not to be nil.
+        	Test:       	Test_UsersList_DKey_EmitsOpenCmd
+        	Messages:   	pressing `d` with a selected row must emit a Cmd to fetch detail (TUI_DESIGN §3.6)
+--- FAIL: Test_UsersList_SortByLastLogin_PressKey (0.00s)
+    sort_test.go:124: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/users/sort_test.go:124
+        	Error:      	"STATUS          LOGIN                         DISPLAY NAME        LAST LOGIN   CHANGED" does not contain "LAST LOGIN↑"
+        	Test:       	Test_UsersList_SortByLastLogin_PressKey
+        	Messages:   	Shift+L must sort by LAST LOGIN asc and place ↑ on the header
+--- FAIL: Test_UsersList_SortByStatus_CyclesAscDescOff (0.00s)
+    sort_test.go:70: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/users/sort_test.go:70
+        	Error:      	"STATUS          LOGIN                         DISPLAY NAME        LAST LOGIN   CHANGED" does not contain "STATUS↑"
+        	Test:       	Test_UsersList_SortByStatus_CyclesAscDescOff
+        	Messages:   	after 1×Shift+S, STATUS header must carry asc indicator (↑)
+    sort_test.go:77: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/users/sort_test.go:77
+        	Error:      	"STATUS          LOGIN                         DISPLAY NAME        LAST LOGIN   CHANGED" does not contain "STATUS↓"
+        	Test:       	Test_UsersList_SortByStatus_CyclesAscDescOff
+        	Messages:   	after 2×Shift+S, STATUS header must carry desc indicator (↓)
+--- FAIL: Test_UsersList_SortByLogin_NamePressKey (0.00s)
+    sort_test.go:105: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/users/sort_test.go:105
+        	Error:      	"STATUS          LOGIN                         DISPLAY NAME        LAST LOGIN   CHANGED" does not contain "LOGIN↑"
+        	Test:       	Test_UsersList_SortByLogin_NamePressKey
+        	Messages:   	Shift+N must sort by LOGIN asc and place ↑ on the header
+FAIL
+FAIL	github.com/tedilabs/ota/internal/tui/users	5.123s
+?   	github.com/tedilabs/ota/internal/version	[no test files]
+FAIL
