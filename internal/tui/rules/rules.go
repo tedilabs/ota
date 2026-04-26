@@ -282,8 +282,8 @@ func (m ListModel) View() string {
 	// 2-cell cursor gutter on the header keeps it aligned with data rows.
 	b.WriteString("  ")
 	b.WriteString(m.formatRulesColumns(
-		rulesSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir),
-		rulesSortLabel("NAME", m.sortBy, SortName, m.sortDir),
+		rulesSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
+		rulesSortLabel("NAME", m.sortBy, SortName, m.sortDir, tk),
 		"TARGETS",
 		"UPDATED",
 	))
@@ -493,15 +493,15 @@ func ruleStatusRank(s domain.GroupRuleStatus) int {
 }
 
 // rulesSortLabel appends "↑" / "↓" to title when the active key matches.
-func rulesSortLabel(title string, active, key SortKey, dir SortDir) string {
+func rulesSortLabel(title string, active, key SortKey, dir SortDir, tk shared.Tokens) string {
 	if active != key || dir == SortOff {
 		return title
 	}
 	switch dir {
 	case SortAsc:
-		return title + "↑"
+		return title + shared.SortGlyph("asc", tk)
 	case SortDesc:
-		return title + "↓"
+		return title + shared.SortGlyph("desc", tk)
 	}
 	return title
 }

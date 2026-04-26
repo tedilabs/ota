@@ -307,7 +307,7 @@ func (m ListModel) View() string {
 	b.WriteString("  ")
 	b.WriteString(m.formatGroupsColumns(
 		"TYPE",
-		groupsSortLabel("NAME", m.sortBy, SortName, m.sortDir),
+		groupsSortLabel("NAME", m.sortBy, SortName, m.sortDir, tk),
 		"DESCRIPTION",
 		"UPDATED",
 		"TAGS",
@@ -476,16 +476,17 @@ func sortGroupsByKey(xs []domain.Group, key SortKey, dir SortDir) {
 	})
 }
 
-// groupsSortLabel appends "↑" / "↓" to title when the active key matches.
-func groupsSortLabel(title string, active, key SortKey, dir SortDir) string {
+// groupsSortLabel appends a coloured ↑ / ↓ to title when the active key
+// matches. asc → green, desc → red (issue #118).
+func groupsSortLabel(title string, active, key SortKey, dir SortDir, tk shared.Tokens) string {
 	if active != key || dir == SortOff {
 		return title
 	}
 	switch dir {
 	case SortAsc:
-		return title + "↑"
+		return title + shared.SortGlyph("asc", tk)
 	case SortDesc:
-		return title + "↓"
+		return title + shared.SortGlyph("desc", tk)
 	}
 	return title
 }

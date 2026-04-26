@@ -585,30 +585,32 @@ func (m ListModel) contextLine(visible []domain.User) string {
 //
 // The active sort column carries an `↑` (asc) or `↓` (desc) indicator
 // appended to its label per §15.2 v1.2.0.
-func (m ListModel) renderUsersHeader(_ shared.Tokens) string {
+func (m ListModel) renderUsersHeader(tk shared.Tokens) string {
 	return m.formatUsersColumns(
-		usersSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir),
-		usersSortLabel("LOGIN", m.sortBy, SortName, m.sortDir),
+		usersSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
+		usersSortLabel("LOGIN", m.sortBy, SortName, m.sortDir, tk),
 		"TITLE",
 		"DIVISION",
 		"EMPLOYEE#",
 		"NICKNAME",
-		usersSortLabel("LAST LOGIN", m.sortBy, SortLastLogin, m.sortDir),
-		usersSortLabel("CHANGED", m.sortBy, SortCreated, m.sortDir),
+		usersSortLabel("LAST LOGIN", m.sortBy, SortLastLogin, m.sortDir, tk),
+		usersSortLabel("CHANGED", m.sortBy, SortCreated, m.sortDir, tk),
 	)
 }
 
-// usersSortLabel appends "↑" / "↓" to title when active is the same key as
-// the column. SortNone / SortOff renders the label unchanged.
-func usersSortLabel(title string, active, key SortKey, dir SortDir) string {
+// usersSortLabel appends a coloured ↑ / ↓ to title when this column is
+// the active sort column. The glyph is green for asc, red for desc
+// (issue #118) so operators spot the active column at a glance.
+// SortNone / SortOff renders the label unchanged.
+func usersSortLabel(title string, active, key SortKey, dir SortDir, tk shared.Tokens) string {
 	if active != key || dir == SortOff {
 		return title
 	}
 	switch dir {
 	case SortAsc:
-		return title + "↑"
+		return title + shared.SortGlyph("asc", tk)
 	case SortDesc:
-		return title + "↓"
+		return title + shared.SortGlyph("desc", tk)
 	}
 	return title
 }
