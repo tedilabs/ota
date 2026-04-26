@@ -14,6 +14,7 @@ import (
 	"github.com/tedilabs/ota/internal/service"
 	"github.com/tedilabs/ota/internal/tui/groups"
 	"github.com/tedilabs/ota/internal/tui/logs"
+	"github.com/tedilabs/ota/internal/tui/overlay"
 	"github.com/tedilabs/ota/internal/tui/policies"
 	"github.com/tedilabs/ota/internal/tui/rules"
 	"github.com/tedilabs/ota/internal/tui/shared"
@@ -120,6 +121,11 @@ type Model struct {
 	// offline flags the transient statusbar state after a NetworkErrorMsg.
 	offline bool
 
+	// helpModel is the screen-aware Help overlay. Non-nil only while
+	// overlay == OverlayHelp; instantiated by openHelpMsg using the active
+	// screen so `?` shows the keys that actually do something here.
+	helpModel *overlay.HelpModel
+
 	// width / height track the current terminal size, updated via
 	// tea.WindowSizeMsg. The chrome renders 100% to width (TUI_DESIGN
 	// §15.0a v1.2.0): widths >= 80 pass through unchanged so wide
@@ -189,6 +195,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case openHelpMsg:
 		m.overlay = OverlayHelp
+		h := overlay.NewHelpModelFor(m.active.String())
+		m.helpModel = &h
 		return m, nil
 	case QuitConfirmRequestMsg:
 		m.overlay = OverlayQuitConfirm
@@ -349,7 +357,15 @@ func clampBodyLines(h int) int {
 
 // composeBody returns the active child Screen's View output, or a loading
 // placeholder when no child is registered.
+//
+// When the Help overlay is open, its modal box replaces the body content so
+// the user sees the actual key reference instead of just a footer hint.
+// renderOverlayPanel handles the smaller Palette / QuitConfirm overlays
+// which compose alongside the screen.
 func (m Model) composeBody() string {
+	if m.overlay == OverlayHelp && m.helpModel != nil {
+		return m.helpModel.View()
+	}
 	if child, ok := m.screens[m.active]; ok {
 		return child.View()
 	}
@@ -447,7 +463,8 @@ func (m Model) renderOverlayPanel(tk shared.Tokens) string {
 	case OverlayPalette:
 		return tk.Accent.Render(":") + m.paletteInput + tk.Muted.Render("  <Esc> cancel")
 	case OverlayHelp:
-		return tk.Header.Render("? Help") + tk.Muted.Render("  press <Esc> to close")
+		// Body composition has already replaced the screen with the modal.
+		return ""
 	case OverlayQuitConfirm:
 		return tk.Danger.Render("Quit ota?") + tk.Muted.Render("  (y/N)")
 	}
@@ -631,6 +648,29 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Help overlay: Esc closes, every other key is forwarded to the
+	// HelpModel so its internal `/` filter and Tab cycling work.
+	if m.overlay == OverlayHelp {
+		if msg.Type == tea.KeyEsc {
+			m.overlay = OverlayNone
+			m.helpModel = nil
+			return m, nil
+		}
+		// `?` toggles closed too, matching the README cheat sheet.
+		if msg.Type == tea.KeyRunes && string(msg.Runes) == "?" {
+			m.overlay = OverlayNone
+			m.helpModel = nil
+			return m, nil
+		}
+		if m.helpModel != nil {
+			updated, cmd := m.helpModel.Update(msg)
+			if hm, ok := updated.(overlay.HelpModel); ok {
+				m.helpModel = &hm
+			}
+			return m, cmd
+		}
+		return m, nil
+	}
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.overlay = OverlayNone

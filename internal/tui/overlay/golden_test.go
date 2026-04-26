@@ -56,13 +56,60 @@ func Test_Palette_HasCorePaletteCommands(t *testing.T) {
 }
 
 // Test_Help_HasCoreNavigationKeys locks in TUI_DESIGN §16.11: the help
-// overlay lists every core key (j/k/Enter/Tab/q/?/:/etc.).
+// overlay lists every core key (j/k/Esc/q/?/:/etc.).
 func Test_Help_HasCoreNavigationKeys(t *testing.T) {
 	t.Parallel()
 	got := testfx.StripANSI(overlay.NewHelpModel().View())
-	for _, key := range []string{"j", "k", "Enter", "Esc", ":", "/", "?", "q", "Ctrl-d/u"} {
+	for _, key := range []string{"j", "k", "Esc", ":", "/", "?", "q", "Ctrl-d/u"} {
 		assert.Contains(t, got, key, "help overlay must list %q key hint (TUI_DESIGN §16.11)", key)
 	}
+}
+
+// Test_HelpForUsers_ShowsSortKeys verifies the Users-screen help advertises
+// the Shift+S/N/L/C sort cycle bindings introduced in v0.1.1.
+func Test_HelpForUsers_ShowsSortKeys(t *testing.T) {
+	t.Parallel()
+	got := testfx.StripANSI(overlay.NewHelpModelFor("users").View())
+	assert.Contains(t, got, "Help · Users List")
+	for _, key := range []string{"Shift+S", "Shift+N", "Shift+L", "Shift+C"} {
+		assert.Contains(t, got, key, "Users help must advertise %q sort key", key)
+	}
+	assert.Contains(t, got, "Enter / d")
+}
+
+// Test_HelpForLogs_ShowsTailKeys verifies the Logs help advertises tail (s)
+// and follow (f) — keys that would be no-ops on Users / Groups / Rules.
+func Test_HelpForLogs_ShowsTailKeys(t *testing.T) {
+	t.Parallel()
+	got := testfx.StripANSI(overlay.NewHelpModelFor("logs").View())
+	assert.Contains(t, got, "Help · System Logs")
+	for _, line := range []string{"toggle tail mode", "toggle auto-follow"} {
+		assert.Contains(t, got, line, "Logs help must mention %q", line)
+	}
+}
+
+// Test_HelpForGroups_OmitsUsersOnlySortKeys ensures we don't leak
+// Users-only sort keys (Shift+L / Shift+C) into the Groups help — they
+// would do nothing on Groups and confuse operators.
+func Test_HelpForGroups_OmitsUsersOnlySortKeys(t *testing.T) {
+	t.Parallel()
+	got := testfx.StripANSI(overlay.NewHelpModelFor("groups").View())
+	assert.Contains(t, got, "Help · Groups List")
+	assert.Contains(t, got, "Shift+N", "Groups help must advertise Shift+N (sort by NAME)")
+	assert.NotContains(t, got, "Shift+L",
+		"Groups help must NOT mention Shift+L — Last Login is a Users-only column")
+	assert.NotContains(t, got, "Shift+C",
+		"Groups help must NOT mention Shift+C — CREATED is a Users-only column")
+}
+
+// Test_HelpForRules_HighlightsInvalidStatus locks in the rule-specific
+// language so operators understand the operational rank ordering.
+func Test_HelpForRules_HighlightsInvalidStatus(t *testing.T) {
+	t.Parallel()
+	got := testfx.StripANSI(overlay.NewHelpModelFor("rules").View())
+	assert.Contains(t, got, "Help · Group Rules List")
+	assert.Contains(t, got, "INVALID first",
+		"Rules help must call out INVALID-first sort rank (TUI_DESIGN §3.5a)")
 }
 
 // Test_Confirm_HasYNHint locks in SCR-903: the confirm dialog explicitly

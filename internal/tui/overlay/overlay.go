@@ -79,6 +79,7 @@ func (m CmdPaletteModel) Buffer() string { return m.buffer }
 // HelpModel renders a two-column key reference (TUI_DESIGN §3) with an
 // optional inline `/` filter (REQ-U06 AC-2).
 type HelpModel struct {
+	screen    string
 	entries   []helpEntry
 	filter    string
 	filtering bool
@@ -88,9 +89,25 @@ type helpEntry struct {
 	key, desc string
 }
 
-// NewHelpModel constructs the default help overlay with TUI_DESIGN §3 entries.
+// NewHelpModel constructs the default (Users-screen) help overlay with
+// TUI_DESIGN §3 entries.
 func NewHelpModel() HelpModel {
-	return HelpModel{entries: defaultHelpEntries()}
+	return NewHelpModelFor("users")
+}
+
+// NewHelpModelFor constructs a help overlay scoped to the named screen, so
+// `?` shows only the keys that actually do something on the current view —
+// e.g. `s` for the Logs tail toggle is hidden on the Users screen.
+//
+// Recognised screen names (matching internal/app Screen.String() output):
+// "users", "groups", "rules", "policies", "logs", "user-detail",
+// "group-detail", "rule-detail", "policy-detail", "log-detail". Unknown
+// names fall back to the global entries only.
+func NewHelpModelFor(screen string) HelpModel {
+	return HelpModel{
+		screen:  screen,
+		entries: helpEntriesForScreen(screen),
+	}
 }
 
 // Init implements tea.Model.
@@ -152,18 +169,59 @@ func (m HelpModel) View() string {
 		}
 		body.WriteString(padRight(e.key, 14) + e.desc + "\n")
 	}
-	body.WriteString("\n<Tab> tab · </> filter · <?> close")
-	return shared.Modal("Help · Users List", body.String(), 70)
+	body.WriteString("\n<Esc> close · </> filter")
+	return shared.Modal(helpTitle(m.screen), body.String(), 70)
 }
 
-func defaultHelpEntries() []helpEntry {
+// helpTitle returns the modal heading for a screen name. Unknown names get
+// the bare "Help" label so the overlay still has a recognisable header.
+func helpTitle(screen string) string {
+	switch screen {
+	case "users":
+		return "Help · Users List"
+	case "user-detail":
+		return "Help · User Detail"
+	case "groups":
+		return "Help · Groups List"
+	case "group-detail":
+		return "Help · Group Detail"
+	case "rules":
+		return "Help · Group Rules List"
+	case "rule-detail":
+		return "Help · Group Rule Detail"
+	case "policies":
+		return "Help · Policies"
+	case "policy-detail":
+		return "Help · Policy Detail"
+	case "logs":
+		return "Help · System Logs"
+	case "log-detail":
+		return "Help · Log Event"
+	default:
+		return "Help"
+	}
+}
+
+// helpEntriesForScreen returns the (Global ∪ ScreenSpecific) help table for
+// the named screen. Keeps the help short, screen-relevant, and free of keys
+// that would be a no-op on the current view (e.g. `s` tail-toggle outside
+// Logs, `Shift+L` outside Users).
+func helpEntriesForScreen(screen string) []helpEntry {
+	out := append([]helpEntry{}, globalHelpEntries()...)
+	out = append(out, screenSpecificHelpEntries(screen)...)
+	return out
+}
+
+// globalHelpEntries are surfaced on every screen. Notation matches the
+// README key cheat sheet ("Ctrl-d/u", "gg / G") for cross-doc consistency.
+func globalHelpEntries() []helpEntry {
 	// Order mirrors TUI_DESIGN §3 tables.
 	return []helpEntry{
 		{":", "open command palette"},
-		{"/", "incremental search"},
+		{"/", "incremental search (lists)"},
 		{"?", "this help"},
-		{"Esc", "cancel current mode / close overlay"},
-		{"q", "close screen (List → quit confirm)"},
+		{"Esc", "cancel mode / close overlay"},
+		{"q", "close screen / quit (with confirm)"},
 		{"Ctrl-c", "soft quit (tail confirm)"},
 		{"Ctrl-l", "force redraw"},
 		{"j", "cursor down"},
@@ -171,21 +229,59 @@ func defaultHelpEntries() []helpEntry {
 		{"gg / G", "top / bottom"},
 		{"Ctrl-d/u", "half-page down / up"},
 		{"Ctrl-f/b", "page down / up"},
-		{"Enter", "select / open detail"},
-		{"Tab", "next tab"},
-		{"Shift-Tab", "previous tab"},
 		{"R", "refresh (cache invalidate)"},
-		{"r", "toggle raw JSON (Policies / Logs)"},
-		{"y", "yank selected (copy)"},
-		{"yy", "yank whole row"},
-		{"yf", "yank field under cursor"},
-		{"o", "open in Admin Console (web)"},
-		{"e", "expand detail field"},
-		{"s", "toggle tail (Logs)"},
-		{"f", "toggle auto-scroll follow (Logs)"},
-		{"d", "open detail (all attributes)"},
-		{"Shift+S/N/L/C", "sort by Status / Name / Last Login / Created"},
 		{":quit", "quit ota"},
+	}
+}
+
+// screenSpecificHelpEntries are appended after the global ones for screens
+// that bind extra keys.
+func screenSpecificHelpEntries(screen string) []helpEntry {
+	switch screen {
+	case "users":
+		return []helpEntry{
+			{"Enter / d", "open detail (all attributes)"},
+			{"Shift+S", "sort by STATUS"},
+			{"Shift+N", "sort by NAME (login)"},
+			{"Shift+L", "sort by LAST LOGIN"},
+			{"Shift+C", "sort by CREATED / CHANGED"},
+		}
+	case "groups":
+		return []helpEntry{
+			{"Enter / d", "open detail (all attributes)"},
+			{"Shift+N", "sort by NAME"},
+		}
+	case "rules":
+		return []helpEntry{
+			{"Enter / d", "open detail (all attributes)"},
+			{"Shift+S", "sort by STATUS (INVALID first)"},
+			{"Shift+N", "sort by NAME"},
+		}
+	case "policies":
+		return []helpEntry{
+			{"Enter", "drill into policy type"},
+			{"r", "toggle rich ↔ raw JSON"},
+		}
+	case "logs":
+		return []helpEntry{
+			{"Enter", "open log event detail"},
+			{"s", "toggle tail mode"},
+			{"f", "toggle auto-follow"},
+			{"r", "toggle rich ↔ raw JSON"},
+		}
+	case "user-detail", "group-detail", "rule-detail":
+		return []helpEntry{
+			{"Tab / Shift-Tab", "cycle detail tabs"},
+			{"r", "jump to / from [Raw] tab"},
+			{"Esc", "back to list"},
+		}
+	case "policy-detail", "log-detail":
+		return []helpEntry{
+			{"r", "toggle rich ↔ raw JSON"},
+			{"Esc", "back to list"},
+		}
+	default:
+		return nil
 	}
 }
 

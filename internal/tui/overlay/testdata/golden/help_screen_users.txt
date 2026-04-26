@@ -4,10 +4,10 @@
 │ Press Esc to close                                                 │
 │                                                                    │
 │ :             open command palette                                 │
-│ /             incremental search                                   │
+│ /             incremental search (lists)                           │
 │ ?             this help                                            │
-│ Esc           cancel current mode / close overlay                  │
-│ q             close screen (List → quit confirm)                   │
+│ Esc           cancel mode / close overlay                          │
+│ q             close screen / quit (with confirm)                   │
 │ Ctrl-c        soft quit (tail confirm)                             │
 │ Ctrl-l        force redraw                                         │
 │ j             cursor down                                          │
@@ -15,21 +15,13 @@
 │ gg / G        top / bottom                                         │
 │ Ctrl-d/u      half-page down / up                                  │
 │ Ctrl-f/b      page down / up                                       │
-│ Enter         select / open detail                                 │
-│ Tab           next tab                                             │
-│ Shift-Tab     previous tab                                         │
 │ R             refresh (cache invalidate)                           │
-│ r             toggle raw JSON (Policies / Logs)                    │
-│ y             yank selected (copy)                                 │
-│ yy            yank whole row                                       │
-│ yf            yank field under cursor                              │
-│ o             open in Admin Console (web)                          │
-│ e             expand detail field                                  │
-│ s             toggle tail (Logs)                                   │
-│ f             toggle auto-scroll follow (Logs)                     │
-│ d             open detail (all attributes)                         │
-│ Shift+S/N/L/C sort by Status / Name / Last Login / Created         │
 │ :quit         quit ota                                             │
+│ Enter / d     open detail (all attributes)                         │
+│ Shift+S       sort by STATUS                                       │
+│ Shift+N       sort by NAME (login)                                 │
+│ Shift+L       sort by LAST LOGIN                                   │
+│ Shift+C       sort by CREATED / CHANGED                            │
 │                                                                    │
-│ <Tab> tab · </> filter · <?> close                                 │
+│ <Esc> close · </> filter                                           │
 ╰────────────────────────────────────────────────────────────────────╯
