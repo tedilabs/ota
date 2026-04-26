@@ -103,7 +103,12 @@ var ruleDetailTabCount = RuleDetailTab(len(ruleDetailTabLabels))
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
-	return ListModel{deps: deps, rules: deps.InitialRules, width: deps.Width}
+	return ListModel{
+		deps:   deps,
+		rules:  deps.InitialRules,
+		width:  deps.Width,
+		height: deps.Height,
+	}
 }
 
 // Init fetches the rules list on entry.

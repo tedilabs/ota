@@ -151,6 +151,7 @@ func NewListModel(deps Deps, t domain.PolicyType) ListModel {
 		policyType: t,
 		policies:   deps.InitialPolicies,
 		width:      deps.Width,
+		height:     deps.Height,
 	}
 }
 

@@ -71,6 +71,7 @@ func NewSearchModel(deps Deps) SearchModel {
 		follow:       true,
 		pollInterval: interval,
 		width:        deps.Width,
+		height:       deps.Height,
 	}
 }
 

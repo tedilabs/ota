@@ -103,7 +103,12 @@ type groupsErrMsg struct{ err error }
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
-	return ListModel{deps: deps, groups: deps.InitialGroups, width: deps.Width}
+	return ListModel{
+		deps:   deps,
+		groups: deps.InitialGroups,
+		width:  deps.Width,
+		height: deps.Height,
+	}
 }
 
 // Init fetches the groups list on entry (REQ-R02 AC-1).

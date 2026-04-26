@@ -528,8 +528,10 @@ func (m Model) ensureScreen(s Screen) (Model, tea.Cmd) {
 }
 
 // buildScreen instantiates a child Screen Model with Deps resolved from the
-// App Shell. Returns (nil, nil) for screens that should be activated only via
-// drill-down messages (detail views).
+// App Shell. Width / Height are forwarded so the freshly-built screen
+// already knows the terminal size on its first frame — without this the
+// chrome's top border scrolls off the moment the operator switches to a
+// resource via :cmd (issue #113).
 func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 	switch s {
 	case ScreenUsers:
@@ -538,6 +540,8 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			Clock:  m.deps.Clock,
 			Logger: m.deps.Logger,
 			Keys:   m.deps.Keys,
+			Width:  m.width,
+			Height: m.height,
 		})
 		return mdl, mdl.Init()
 	case ScreenGroups:
@@ -546,6 +550,8 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			Clock:  m.deps.Clock,
 			Logger: m.deps.Logger,
 			Keys:   m.deps.Keys,
+			Width:  m.width,
+			Height: m.height,
 		})
 		return mdl, mdl.Init()
 	case ScreenRules:
@@ -555,6 +561,8 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			Clock:  m.deps.Clock,
 			Logger: m.deps.Logger,
 			Keys:   m.deps.Keys,
+			Width:  m.width,
+			Height: m.height,
 		})
 		return mdl, mdl.Init()
 	case ScreenPolicies:
@@ -563,6 +571,8 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			Clock:  m.deps.Clock,
 			Logger: m.deps.Logger,
 			Keys:   m.deps.Keys,
+			Width:  m.width,
+			Height: m.height,
 		})
 		return mdl, mdl.Init()
 	case ScreenLogs:
@@ -578,6 +588,8 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			Clock:   m.deps.Clock,
 			Logger:  m.deps.Logger,
 			Keys:    m.deps.Keys,
+			Width:   m.width,
+			Height:  m.height,
 		})
 		return mdl, mdl.Init()
 	}
