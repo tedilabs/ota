@@ -112,6 +112,57 @@ func Test_AppShell_QuestionMarkToggle(t *testing.T) {
 		"second `?` must close the modal")
 }
 
+// Test_AppShell_EscReachesChild_ClosesDetail covers the user-reported gap
+// "Detail View에서 이전 화면으로 넘어올 방법이 없는거 같아." App Shell used
+// to swallow Esc with `case tea.KeyEsc: return m, nil` before the child
+// could see it, so the detail-close handler in Users/Groups/Rules never
+// fired. Esc now falls through to child delegation; this test pins it.
+func Test_AppShell_EscReachesChild_ClosesDetail(t *testing.T) {
+	t.Parallel()
+
+	port := &seededUsersPort{users: testUsersForKeyTest()}
+	keymap, _, err := keys.Resolve(nil)
+	require.NoError(t, err)
+
+	m := app.New(app.Deps{
+		Keys:      keymap,
+		Clock:     clock.Real(),
+		Profile:   "test",
+		OrgURL:    "https://acme.okta.com",
+		UsersPort: port,
+	})
+
+	// Boot: load users.
+	if init := m.Init(); init != nil {
+		if msg := init(); msg != nil {
+			updated, _ := m.Update(msg)
+			m = updated.(app.Model)
+		}
+	}
+
+	// Press `d` to open detail. d → openUserCmd → userOpenedMsg.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(app.Model)
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			updated, _ = m.Update(msg)
+			m = updated.(app.Model)
+		}
+	}
+	require.Contains(t, m.View(), "User Detail",
+		"precondition: detail view active after `d`")
+
+	// Now press Esc — must close detail and return to the list rendering.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(app.Model)
+
+	view := m.View()
+	assert.NotContains(t, view, "User Detail",
+		"Esc must reach the child Users screen and close detail mode")
+	assert.Contains(t, view, "alice@acme.com",
+		"after closing detail, the list rendering must surface again")
+}
+
 // Test_AppShell_KeysReachActiveChild guards the App Shell key-delegation
 // path. The user reported "Shift+S 같은 단축키가 아무런 변화도 안 일으킨다."
 // — the root cause was handleKey() returning (m, nil) for any rune outside

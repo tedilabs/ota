@@ -599,9 +599,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		return m, quitConfirmCmd()
-	case tea.KeyEsc:
-		// No-op at top level when no overlay is open.
-		return m, nil
+	// NOTE: Esc is intentionally NOT handled here. Each child Screen owns
+	// what Esc means in its current context — closing detail mode, ending
+	// `/` filtering, exiting visual selection, etc. The bottom delegation
+	// block forwards it to the active child.
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
 		case ":":
