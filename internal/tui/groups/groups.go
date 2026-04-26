@@ -108,6 +108,17 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
 	}
+	// Detail mode: Esc returns to the list; other keys are forwarded to the
+	// inline detail surface (currently a no-op until the Raw tab toggle in
+	// v0.1.1-5b lands).
+	if m.opened {
+		if msg.Type == tea.KeyEsc {
+			m.opened = false
+			m.detail = domain.Group{}
+			return m, nil
+		}
+		return m, nil
+	}
 	if m.filtering {
 		switch msg.Type {
 		case tea.KeyEnter:
@@ -148,6 +159,15 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// §3.5a — Groups: Shift+N sorts by NAME. Other Shift chords are
 			// no-ops on Groups (S / L / C have no matching column).
 			m.cycleSort(SortName)
+			return m, nil
+		case "d":
+			// §3.6 — `d` opens the inline detail surface. Mirrors Enter.
+			sel := m.selected()
+			if sel == nil {
+				return m, nil
+			}
+			m.detail = *sel
+			m.opened = true
 			return m, nil
 		}
 	}

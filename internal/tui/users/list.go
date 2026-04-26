@@ -108,10 +108,12 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case userOpenedMsg:
 		m.detailUser = msg.user
 		m.opened = true
-		// MVP: opening the detail view also ends the list program for tests
-		// that use teatest.FinalOutput. The App Shell will replace this with
-		// a proper screen transition when the router is wired in v0.2.
-		return m, tea.Quit
+		// v0.1.1: detail mode is rendered inline by the same ListModel — see
+		// View()'s `m.opened` branch. The earlier tea.Quit shortcut, used by
+		// teatest harnesses to drain final output, is gone now that operators
+		// can press `d` repeatedly and Esc back to the list. v0.2 will replace
+		// this with App Shell OpenResourceMsg routing.
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -119,6 +121,25 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Ctrl-c: hard quit. Mirrors groups/rules — when ListModel runs as the
+	// teatest root (no App Shell wrapping it) Ctrl-c is the only way to
+	// drain teatest's FinalOutput. The App Shell intercepts Ctrl-c earlier
+	// in production and routes it to the QuitConfirm overlay.
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
+	}
+	// Detail mode: Esc returns to the list; other keys are forwarded to the
+	// inline detail surface (currently a no-op until the Raw tab toggle in
+	// v0.1.1-5b lands).
+	if m.opened {
+		if msg.Type == tea.KeyEsc {
+			m.opened = false
+			m.detailUser = domain.User{}
+			return m, nil
+		}
+		return m, nil
+	}
+
 	if m.filtering {
 		switch msg.Type {
 		case tea.KeyEnter:
@@ -154,7 +175,11 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor--
 		}
 		return m, nil
-	case keys.IDNavSelect:
+	case keys.IDNavSelect, keys.IDActionDetail:
+		// `Enter` and `d` share the inline detail flow (TUI_DESIGN §3.6).
+		// Both fetch the full user and surface the detail view; v0.1.1
+		// keeps the routing inside ListModel (Option A) — App Shell-level
+		// OpenResourceMsg routing arrives in v0.2.
 		sel := m.selected()
 		if sel == nil {
 			return m, nil

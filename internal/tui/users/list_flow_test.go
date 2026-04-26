@@ -73,6 +73,10 @@ func Test_UsersListFlow_FilterAlice_OpensDetail(t *testing.T) {
 
 	// Enter로 상세 전환.
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	// v0.1.1: detail-on-Enter no longer ends the program (the inline detail
+	// view stays open for `d`/Esc cycling). Send Ctrl-c so teatest's
+	// FinalOutput drains.
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 
 	// 최종 출력을 수집.
 	out, err := io.ReadAll(tm.FinalOutput(t, teatest.WithFinalTimeout(3*time.Second)))
