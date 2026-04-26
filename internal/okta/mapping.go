@@ -31,14 +31,18 @@ type wireUser struct {
 }
 
 type wireUserProfile struct {
-	Login       string `json:"login"`
-	Email       string `json:"email"`
-	FirstName   string `json:"firstName"`
-	LastName    string `json:"lastName"`
-	DisplayName string `json:"displayName"`
-	MobilePhone string `json:"mobilePhone"`
-	SecondEmail string `json:"secondEmail"`
-	Department  string `json:"department"`
+	Login          string `json:"login"`
+	Email          string `json:"email"`
+	FirstName      string `json:"firstName"`
+	LastName       string `json:"lastName"`
+	DisplayName    string `json:"displayName"`
+	NickName       string `json:"nickName"`
+	Title          string `json:"title"`
+	Division       string `json:"division"`
+	Department     string `json:"department"`
+	EmployeeNumber string `json:"employeeNumber"`
+	MobilePhone    string `json:"mobilePhone"`
+	SecondEmail    string `json:"secondEmail"`
 }
 
 func mapUser(wu *wireUser) domain.User {
@@ -51,7 +55,8 @@ func mapUser(wu *wireUser) domain.User {
 			for k, v := range generic {
 				switch k {
 				case "login", "email", "firstName", "lastName", "displayName",
-					"mobilePhone", "secondEmail", "department":
+					"nickName", "title", "division", "department", "employeeNumber",
+					"mobilePhone", "secondEmail":
 				default:
 					extras[k] = v
 				}
@@ -68,15 +73,19 @@ func mapUser(wu *wireUser) domain.User {
 		StatusChanged:   parseOktaTimePtr(wu.StatusChanged),
 		PasswordChanged: parseOktaTimePtr(wu.PasswordChanged),
 		Profile: domain.UserProfile{
-			Login:       prof.Login,
-			Email:       prof.Email,
-			FirstName:   prof.FirstName,
-			LastName:    prof.LastName,
-			DisplayName: prof.DisplayName,
-			MobilePhone: prof.MobilePhone,
-			SecondEmail: prof.SecondEmail,
-			Department:  prof.Department,
-			Extras:      extras,
+			Login:          prof.Login,
+			Email:          prof.Email,
+			FirstName:      prof.FirstName,
+			LastName:       prof.LastName,
+			DisplayName:    prof.DisplayName,
+			NickName:       prof.NickName,
+			Title:          prof.Title,
+			Division:       prof.Division,
+			Department:     prof.Department,
+			EmployeeNumber: prof.EmployeeNumber,
+			MobilePhone:    prof.MobilePhone,
+			SecondEmail:    prof.SecondEmail,
+			Extras:         extras,
 		},
 		Credentials: domain.UserCredentials{
 			Provider:     wu.Credentials.Provider.Name,

@@ -517,18 +517,27 @@ func (m ListModel) contextLine(visible []domain.User) string {
 	return "Users  " + count
 }
 
-// renderUsersHeader returns the column header row, width-aware (TUI_DESIGN
-// §15.0a / §15.2). DEPARTMENT only appears at W' >= 130 (§15.0a.2). The
-// active sort column carries an `↑` (asc) or `↓` (desc) indicator appended
-// to its label per §15.2 v1.2.0.
+// renderUsersHeader returns the column header row, width-aware
+// (TUI_DESIGN §15.0a / §15.2 v1.3). v0.1.3 columns:
+//
+//	STATUS · LOGIN · TITLE · DIVISION · EMPLOYEE# · NICKNAME ·
+//	LAST LOGIN · CHANGED
+//
+// DISPLAY NAME and DEPARTMENT moved out of the default row at the user's
+// request — they're still on the Pretty / JSON / YAML detail tabs.
+//
+// The active sort column carries an `↑` (asc) or `↓` (desc) indicator
+// appended to its label per §15.2 v1.2.0.
 func (m ListModel) renderUsersHeader(_ shared.Tokens) string {
 	return m.formatUsersColumns(
 		usersSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir),
 		usersSortLabel("LOGIN", m.sortBy, SortName, m.sortDir),
-		"DISPLAY NAME",
+		"TITLE",
+		"DIVISION",
+		"EMPLOYEE#",
+		"NICKNAME",
 		usersSortLabel("LAST LOGIN", m.sortBy, SortLastLogin, m.sortDir),
 		usersSortLabel("CHANGED", m.sortBy, SortCreated, m.sortDir),
-		"DEPARTMENT",
 	)
 }
 
@@ -550,36 +559,51 @@ func usersSortLabel(title string, active, key SortKey, dir SortDir) string {
 // renderUsersRow formats a single User row, width-aware.
 func (m ListModel) renderUsersRow(u domain.User, now time.Time, tk shared.Tokens) string {
 	status := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
-	display := strings.TrimSpace(u.Profile.FirstName + " " + u.Profile.LastName)
-	if display == "" {
-		display = u.Profile.DisplayName
-	}
 	last := shared.RelativeTime(u.LastLogin, now)
 	changed := shared.RelativeTime(u.StatusChanged, now)
-	department := u.Profile.Department
-	if department == "" {
-		department = "—"
+	dash := func(s string) string {
+		if s == "" {
+			return "—"
+		}
+		return s
 	}
-	return m.formatUsersColumns(status, u.Profile.Login, display, last, changed, department)
+	return m.formatUsersColumns(
+		status,
+		u.Profile.Login,
+		dash(u.Profile.Title),
+		dash(u.Profile.Division),
+		dash(u.Profile.EmployeeNumber),
+		dash(u.Profile.NickName),
+		last,
+		changed,
+	)
 }
 
-// usersColumnSpecs returns the §15.0a.2 column definitions in declaration
-// order: STATUS, LOGIN, DISPLAY NAME, LAST LOGIN, CHANGED, DEPARTMENT.
-// DropPriority follows the §15.0a.5 scenario table:
-//   - LAST LOGIN drops first (priority 1)
-//   - CHANGED drops next (priority 2)
-//   - DISPLAY NAME drops last (priority 3)
-//   - STATUS / LOGIN / DEPARTMENT are essentials at their applicable widths
-//     (DEPARTMENT is gated by the W' < 130 visibility floor in §15.0a.2 —
-//     see formatUsersColumns).
+// usersColumnSpecs returns the v0.1.3 column definitions:
+//
+//	STATUS, LOGIN, TITLE, DIVISION, EMPLOYEE#, NICKNAME, LAST LOGIN, CHANGED
+//
+// Drop priority (lowest = drops first) keeps the user-requested fields
+// visible as long as possible while still degrading gracefully on narrow
+// terminals:
+//
+//	1  CHANGED
+//	2  LAST LOGIN
+//	3  NICKNAME
+//	4  EMPLOYEE#
+//	5  DIVISION
+//	6  TITLE
+//	0  STATUS, LOGIN — never dropped (essentials)
 func usersColumnSpecs() []shared.ColumnSpec {
 	return []shared.ColumnSpec{
 		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 14, DropPriority: 0},
-		{Title: "LOGIN", Kind: shared.ColumnFixed, Min: 22, DropPriority: 0},
-		{Title: "DISPLAY NAME", Kind: shared.ColumnFlex, Min: 14, Weight: 2, DropPriority: 3},
-		{Title: "LAST LOGIN", Kind: shared.ColumnFixed, Min: 10, DropPriority: 1, AlignRight: true},
-		{Title: "CHANGED", Kind: shared.ColumnFlex, Min: 8, Weight: 1, DropPriority: 2, AlignRight: true},
-		{Title: "DEPARTMENT", Kind: shared.ColumnFlex, Min: 12, Weight: 1, DropPriority: 4},
+		{Title: "LOGIN", Kind: shared.ColumnFlex, Min: 22, Weight: 3, DropPriority: 0},
+		{Title: "TITLE", Kind: shared.ColumnFlex, Min: 14, Weight: 2, DropPriority: 6},
+		{Title: "DIVISION", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 5},
+		{Title: "EMPLOYEE#", Kind: shared.ColumnFixed, Min: 10, DropPriority: 4},
+		{Title: "NICKNAME", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 3},
+		{Title: "LAST LOGIN", Kind: shared.ColumnFixed, Min: 10, DropPriority: 2, AlignRight: true},
+		{Title: "CHANGED", Kind: shared.ColumnFixed, Min: 8, DropPriority: 1, AlignRight: true},
 	}
 }
 
@@ -597,15 +621,7 @@ func (m ListModel) formatUsersColumns(cells ...string) string {
 	if i := usersSortColumnIdx(m.sortBy); i >= 0 && m.sortDir != SortOff {
 		specs[i].Min++
 	}
-	innerWidth := m.usersInnerWidth()
-	// §15.0a.2 — DEPARTMENT only appears once W' >= 130. We model that as a
-	// late-stage drop by raising its DropPriority effective threshold here.
-	if innerWidth < 130 {
-		specs[len(specs)-1].DropPriority = 0 // ensure pickDropCandidate returns it first
-		// then explicitly hide it via a sentinel that LayoutColumns won't see.
-		specs = specs[:len(specs)-1]
-	}
-	widths := shared.LayoutColumns(specs, innerWidth, 2)
+	widths := shared.LayoutColumns(specs, m.usersInnerWidth(), 2)
 
 	full := make([]string, len(specs))
 	for i := range specs {
@@ -619,7 +635,10 @@ func (m ListModel) formatUsersColumns(cells ...string) string {
 }
 
 // usersSortColumnIdx maps a SortKey to its index in usersColumnSpecs.
-// Returns -1 when the key has no matching column (e.g., SortNone).
+// Updated for the v0.1.3 column order:
+//
+//	0 STATUS · 1 LOGIN · 2 TITLE · 3 DIVISION · 4 EMPLOYEE# · 5 NICKNAME ·
+//	6 LAST LOGIN · 7 CHANGED
 func usersSortColumnIdx(k SortKey) int {
 	switch k {
 	case SortStatus:
@@ -627,9 +646,9 @@ func usersSortColumnIdx(k SortKey) int {
 	case SortName:
 		return 1
 	case SortLastLogin:
-		return 3
+		return 6
 	case SortCreated:
-		return 4
+		return 7
 	}
 	return -1
 }
