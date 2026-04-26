@@ -146,9 +146,10 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the help modal — a RoundedBorder box with a 2-column key
-// reference (TUI_DESIGN §15.9 / §16.11). The optional `/` filter narrows the
-// list in place.
+// View renders the help modal — a RoundedBorder box grouped into the
+// k9s-style sections Resource / General / Navigation (issue #120). The
+// optional `/` filter narrows the list in place; section headers are
+// dropped when their group has no matching rows.
 func (m HelpModel) View() string {
 	var body strings.Builder
 	header := "Press Esc to close"
@@ -160,15 +161,37 @@ func (m HelpModel) View() string {
 	body.WriteString(header + "\n\n")
 
 	needle := strings.ToLower(m.filter)
-	for _, e := range m.entries {
-		if needle != "" {
-			blob := strings.ToLower(e.key + " " + e.desc)
-			if !strings.Contains(blob, needle) {
-				continue
+	matches := func(e helpEntry) bool {
+		if needle == "" {
+			return true
+		}
+		return strings.Contains(strings.ToLower(e.key+" "+e.desc), needle)
+	}
+	writeGroup := func(title string, entries []helpEntry, first *bool) {
+		var rows []helpEntry
+		for _, e := range entries {
+			if matches(e) {
+				rows = append(rows, e)
 			}
 		}
-		body.WriteString(padRight(e.key, 14) + e.desc + "\n")
+		if len(rows) == 0 {
+			return
+		}
+		if !*first {
+			body.WriteByte('\n')
+		}
+		body.WriteString("── " + title + " ──\n")
+		for _, e := range rows {
+			body.WriteString(padRight(e.key, 16) + e.desc + "\n")
+		}
+		*first = false
 	}
+
+	first := true
+	writeGroup("Resource", screenSpecificHelpEntries(m.screen), &first)
+	writeGroup("General", generalHelpEntries(), &first)
+	writeGroup("Navigation", navigationHelpEntries(), &first)
+
 	body.WriteString("\n<Esc> close · </> filter")
 	return shared.Modal(helpTitle(m.screen), body.String(), 70)
 }
@@ -202,20 +225,20 @@ func helpTitle(screen string) string {
 	}
 }
 
-// helpEntriesForScreen returns the (Global ∪ ScreenSpecific) help table for
-// the named screen. Keeps the help short, screen-relevant, and free of keys
-// that would be a no-op on the current view (e.g. `s` tail-toggle outside
-// Logs, `Shift+L` outside Users).
+// helpEntriesForScreen returns the (Resource ∪ General ∪ Navigation)
+// help rows for the named screen. Order matches the View() rendering so
+// substring filters on the flat list still hit the same entries.
 func helpEntriesForScreen(screen string) []helpEntry {
-	out := append([]helpEntry{}, globalHelpEntries()...)
-	out = append(out, screenSpecificHelpEntries(screen)...)
+	out := append([]helpEntry{}, screenSpecificHelpEntries(screen)...)
+	out = append(out, generalHelpEntries()...)
+	out = append(out, navigationHelpEntries()...)
 	return out
 }
 
-// globalHelpEntries are surfaced on every screen. Notation matches the
-// README key cheat sheet ("Ctrl-d/u", "gg / G") for cross-doc consistency.
-func globalHelpEntries() []helpEntry {
-	// Order mirrors TUI_DESIGN §3 tables.
+// generalHelpEntries are the app-wide commands surfaced on every screen.
+// k9s slots these into a "General" section so the screen-specific (Resource)
+// and motion (Navigation) keys read at a glance (issue #120).
+func generalHelpEntries() []helpEntry {
 	return []helpEntry{
 		{":", "open command palette"},
 		{"/", "incremental search (lists)"},
@@ -224,13 +247,19 @@ func globalHelpEntries() []helpEntry {
 		{"q", "close screen / quit (with confirm)"},
 		{"Ctrl-c", "soft quit (tail confirm)"},
 		{"Ctrl-l", "force redraw"},
-		{"j", "cursor down"},
-		{"k", "cursor up"},
-		{"gg / G", "top / bottom"},
-		{"Ctrl-d/u", "half-page down / up"},
-		{"Ctrl-f/b", "page down / up"},
 		{"R", "refresh (cache invalidate)"},
 		{":quit", "quit ota"},
+	}
+}
+
+// navigationHelpEntries lists the motion keys — Vim cursor + page nav.
+// Wired in v0.1.5-2 (Ctrl-f/b/d/u page nav).
+func navigationHelpEntries() []helpEntry {
+	return []helpEntry{
+		{"j / k", "cursor down / up"},
+		{"gg / G", "top / bottom"},
+		{"Ctrl-d / Ctrl-u", "half-page down / up"},
+		{"Ctrl-f / Ctrl-b", "page down / up"},
 	}
 }
 

@@ -3,25 +3,29 @@
 ├────────────────────────────────────────────────────────────────────┤
 │ Press Esc to close                                                 │
 │                                                                    │
-│ :             open command palette                                 │
-│ /             incremental search (lists)                           │
-│ ?             this help                                            │
-│ Esc           cancel mode / close overlay                          │
-│ q             close screen / quit (with confirm)                   │
-│ Ctrl-c        soft quit (tail confirm)                             │
-│ Ctrl-l        force redraw                                         │
-│ j             cursor down                                          │
-│ k             cursor up                                            │
-│ gg / G        top / bottom                                         │
-│ Ctrl-d/u      half-page down / up                                  │
-│ Ctrl-f/b      page down / up                                       │
-│ R             refresh (cache invalidate)                           │
-│ :quit         quit ota                                             │
-│ Enter / d     open detail (all attributes)                         │
-│ Shift+S       sort by STATUS                                       │
-│ Shift+N       sort by NAME (login)                                 │
-│ Shift+L       sort by LAST LOGIN                                   │
-│ Shift+C       sort by CREATED / CHANGED                            │
+│ ── Resource ──                                                     │
+│ Enter / d       open detail (all attributes)                       │
+│ Shift+S         sort by STATUS                                     │
+│ Shift+N         sort by NAME (login)                               │
+│ Shift+L         sort by LAST LOGIN                                 │
+│ Shift+C         sort by CREATED / CHANGED                          │
+│                                                                    │
+│ ── General ──                                                      │
+│ :               open command palette                               │
+│ /               incremental search (lists)                         │
+│ ?               this help                                          │
+│ Esc             cancel mode / close overlay                        │
+│ q               close screen / quit (with confirm)                 │
+│ Ctrl-c          soft quit (tail confirm)                           │
+│ Ctrl-l          force redraw                                       │
+│ R               refresh (cache invalidate)                         │
+│ :quit           quit ota                                           │
+│                                                                    │
+│ ── Navigation ──                                                   │
+│ j / k           cursor down / up                                   │
+│ gg / G          top / bottom                                       │
+│ Ctrl-d / Ctrl-u half-page down / up                                │
+│ Ctrl-f / Ctrl-b page down / up                                     │
 │                                                                    │
 │ <Esc> close · </> filter                                           │
 ╰────────────────────────────────────────────────────────────────────╯

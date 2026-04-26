@@ -56,12 +56,18 @@ func Test_Palette_HasCorePaletteCommands(t *testing.T) {
 }
 
 // Test_Help_HasCoreNavigationKeys locks in TUI_DESIGN §16.11: the help
-// overlay lists every core key (j/k/Esc/q/?/:/etc.).
+// overlay lists every core key. v0.1.5-3 grouped the rows into
+// k9s-style sections (Resource / General / Navigation) and the
+// half-page row was renamed "Ctrl-d / Ctrl-u" to match the README
+// notation, so the substring expectation is updated to match.
 func Test_Help_HasCoreNavigationKeys(t *testing.T) {
 	t.Parallel()
 	got := testfx.StripANSI(overlay.NewHelpModel().View())
-	for _, key := range []string{"j", "k", "Esc", ":", "/", "?", "q", "Ctrl-d/u"} {
+	for _, key := range []string{"j", "k", "Esc", ":", "/", "?", "q", "Ctrl-d / Ctrl-u"} {
 		assert.Contains(t, got, key, "help overlay must list %q key hint (TUI_DESIGN §16.11)", key)
+	}
+	for _, section := range []string{"── Resource ──", "── General ──", "── Navigation ──"} {
+		assert.Contains(t, got, section, "help overlay must group entries under %q (issue #120)", section)
 	}
 }
 
