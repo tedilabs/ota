@@ -9,21 +9,26 @@ import (
 // Tokens collects every Lip Gloss style used across screens so theme changes
 // happen in one place (TUI_DESIGN §6.1).
 type Tokens struct {
-	BG          lipgloss.Style
-	FG          lipgloss.Style
-	Muted       lipgloss.Style
-	Header      lipgloss.Style
-	Accent      lipgloss.Style
-	Primary     lipgloss.Style
-	Success     lipgloss.Style
-	Warning     lipgloss.Style
-	Danger      lipgloss.Style
-	Info        lipgloss.Style
-	Magenta     lipgloss.Style
-	BadgeSys    lipgloss.Style
-	BadgeRule   lipgloss.Style
-	BadgeLarge  lipgloss.Style
-	BadgeUnmask lipgloss.Style
+	BG           lipgloss.Style
+	FG           lipgloss.Style
+	Muted        lipgloss.Style
+	Header       lipgloss.Style
+	Accent       lipgloss.Style
+	Primary      lipgloss.Style
+	Success      lipgloss.Style
+	Warning      lipgloss.Style
+	Danger       lipgloss.Style
+	Info         lipgloss.Style
+	Magenta      lipgloss.Style
+	BadgeSys     lipgloss.Style
+	BadgeRule    lipgloss.Style
+	BadgeLarge   lipgloss.Style
+	BadgeUnmask  lipgloss.Style
+	// RowHighlight is the cursor-row style: a subtle background tint plus
+	// the foreground accent, so the active row reads at-a-glance even when
+	// the operator's focus is elsewhere on the screen. Mono falls back to
+	// reverse-video for the same purpose (issue #112).
+	RowHighlight lipgloss.Style
 }
 
 // MonochromeEnabled reports whether ota should render without colour. Set by
@@ -51,6 +56,10 @@ func Dark() Tokens {
 		BadgeRule:   lipgloss.NewStyle().Background(lipgloss.Color("#a3be8c")).Foreground(lipgloss.Color("#000000")),
 		BadgeLarge:  lipgloss.NewStyle().Background(lipgloss.Color("#ebcb8b")).Foreground(lipgloss.Color("#000000")),
 		BadgeUnmask: lipgloss.NewStyle().Background(lipgloss.Color("#bf616a")).Foreground(lipgloss.Color("#ffffff")).Bold(true),
+		RowHighlight: lipgloss.NewStyle().
+			Background(lipgloss.Color("#2e3440")).
+			Foreground(lipgloss.Color("#88c0d0")).
+			Bold(true),
 	}
 }
 
@@ -78,9 +87,10 @@ func Monochrome() Tokens {
 		Danger:      plain.Bold(true),
 		Info:        plain,
 		Magenta:     plain,
-		BadgeSys:    plain.Reverse(true),
-		BadgeRule:   plain.Reverse(true),
-		BadgeLarge:  plain.Reverse(true),
-		BadgeUnmask: plain.Reverse(true).Bold(true),
+		BadgeSys:     plain.Reverse(true),
+		BadgeRule:    plain.Reverse(true),
+		BadgeLarge:   plain.Reverse(true),
+		BadgeUnmask:  plain.Reverse(true).Bold(true),
+		RowHighlight: plain.Reverse(true).Bold(true),
 	}
 }

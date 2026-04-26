@@ -461,8 +461,11 @@ func (m ListModel) renderDetailWithCursor() string {
 		b.WriteByte('\n')
 	}
 	// Highlight cursor / Visual range with style only — no character prefix
-	// so columns stay aligned with the surrounding lines (issue #106).
-	cursorStyle := tk.Accent.Bold(true)
+	// so columns stay aligned with the surrounding lines (issue #106). The
+	// shared RowHighlight token adds a background tint over the bold accent
+	// so the cursor row reads at-a-glance even from the corner of the eye
+	// (issue #112).
+	cursorStyle := tk.RowHighlight
 	for i, line := range lines {
 		switch {
 		case i < headerLines:
