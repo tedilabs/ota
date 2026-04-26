@@ -53,6 +53,11 @@ type ChromeInput struct {
 	// "staging".  Doubles as the env classifier.
 	Profile string
 
+	// Principal is the authenticated Okta user (issue #124). Pulled from
+	// /api/v1/users/me on boot; rendered on the second header line so
+	// operators see whose token ota is using before they take any action.
+	Principal string
+
 	// Version string — e.g., "v0.1.0".
 	Version string
 
@@ -130,7 +135,24 @@ func RenderChrome(in ChromeInput) string {
 			counterLine = "q=\"" + in.Filter + "\""
 		}
 	}
-	contextBar := joinLR(resStyled, tk.Muted.Render(counterLine), contentWidth)
+	// Left-hand of the ContextBar is the resource label (+ optional
+	// counter / active filter). The counter slot is empty for the
+	// initial v0.1.x lineup — child screens render their own header
+	// inside the body — but we still glue any non-empty counter on so
+	// the slot is available without changing this signature.
+	leftCtx := resStyled
+	if counterLine != "" {
+		leftCtx = resStyled + "  " + tk.Muted.Render(counterLine)
+	}
+	// Right-side of the ContextBar: profile + (when known) the
+	// authenticated Okta principal so the operator can see whose token
+	// is in flight (issue #124). Falls back to profile only when the
+	// /me lookup hasn't completed yet.
+	rightCtx := tk.Muted.Render("profile=" + in.Profile)
+	if in.Principal != "" {
+		rightCtx = tk.Muted.Render("as ") + tk.Accent.Render(in.Principal) + tk.Muted.Render("  profile="+in.Profile)
+	}
+	contextBar := joinLR(leftCtx, rightCtx, contentWidth)
 
 	// ---- Body -----------------------------------------------------------
 	bodyLines := splitLinesPadded(in.Body, contentWidth)

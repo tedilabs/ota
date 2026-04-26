@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -131,6 +132,15 @@ type Model struct {
 	// screen so `?` shows the keys that actually do something here.
 	helpModel *overlay.HelpModel
 
+	// principalLogin is the authenticated Okta user (issue #124). Empty
+	// until the /api/v1/users/me probe completes; once populated it
+	// renders next to the profile label in the chrome ContextBar.
+	principalLogin string
+	// principalRequested guards the one-shot /me probe so we never fire
+	// it more than once per session (the call is rate-limit-priced and
+	// the chrome only needs a single answer).
+	principalRequested bool
+
 	// width / height track the current terminal size, updated via
 	// tea.WindowSizeMsg. The chrome renders 100% to width (TUI_DESIGN
 	// §15.0a v1.2.0): widths >= 80 pass through unchanged so wide
@@ -157,12 +167,51 @@ func New(deps Deps) Model {
 }
 
 // Init implements tea.Model. Returns the active child's Init Cmd so its
-// first fetch (e.g., fetchUsersCmd) starts immediately.
+// first fetch (e.g., fetchUsersCmd) starts immediately. The /me probe
+// for the chrome's principal slot is kicked off lazily from Update on
+// the first incoming message — keeping Init a single Cmd so the App
+// Shell stays trivially testable via `init()` → `Update(msg)` round
+// trips (no tea.Batch fan-out required).
 func (m Model) Init() tea.Cmd {
 	if child, ok := m.screens[m.active]; ok {
 		return child.Init()
 	}
 	return nil
+}
+
+// kickPrincipalFetch returns the /me probe Cmd the first time it's
+// invoked (mutating m so the caller persists the latch flag) and nil
+// thereafter. Returns nil when no UsersPort is wired so chrome-only
+// tests stay free of background fetches.
+func (m *Model) kickPrincipalFetch() tea.Cmd {
+	if m.principalRequested || m.deps.UsersPort == nil {
+		return nil
+	}
+	m.principalRequested = true
+	return fetchPrincipalCmd(m.deps.UsersPort)
+}
+
+// principalLoadedMsg carries the authenticated principal's login back
+// into Update so the chrome ContextBar can render it.
+type principalLoadedMsg struct{ Login string }
+
+// fetchPrincipalCmd issues GET /api/v1/users/me through the existing
+// UsersPort.Get path — Okta accepts "me" as an alias for the token's
+// owner — and converts the result into principalLoadedMsg. Failures are
+// silenced (the chrome simply omits the principal segment).
+func fetchPrincipalCmd(port domain.UsersPort) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		u, err := port.Get(ctx, "me")
+		if err != nil {
+			return principalLoadedMsg{}
+		}
+		login := u.Profile.Login
+		if login == "" {
+			login = u.ID
+		}
+		return principalLoadedMsg{Login: login}
+	}
 }
 
 // Update implements tea.Model. Handles global shortcuts (`:`, `?`, Ctrl-c),
@@ -180,7 +229,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, _ := child.Update(msg)
 			m.screens[s] = updated
 		}
-		return m, nil
+		// Bubbletea always emits an initial WindowSizeMsg at startup so
+		// this is the natural place to kick off the one-shot /me probe
+		// (issue #124). Returning the Cmd here keeps Init free of
+		// tea.Batch, which keeps the App Shell test helpers
+		// (`init() → cmd() → Update(msg)`) trivially correct.
+		return m, m.kickPrincipalFetch()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case ErrorMsg:
@@ -193,6 +247,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, refreshActiveCmd()
 	case OfflineStateMsg:
 		m.offline = msg.Offline
+		return m, nil
+	case principalLoadedMsg:
+		m.principalLogin = msg.Login
 		return m, nil
 	case openCmdPaletteMsg:
 		m.overlay = OverlayPalette
@@ -321,6 +378,7 @@ func (m Model) View() string {
 		Brand:     "ota",
 		Tenant:    tenantFromOrgURL(m.deps.OrgURL),
 		Profile:   m.profileLabel(),
+		Principal: m.principalLogin,
 		Version:   version.Tag,
 		Timezone:  "UTC",
 		RateLimit: m.rateLimitState(),
@@ -417,12 +475,11 @@ func (m Model) resourceLabel() string {
 	return m.active.String()
 }
 
-// counterLabel returns the right side of the ContextBar — "profile=<name>"
-// for now, until child screens publish their own counts via a future port.
+// counterLabel returns the optional "N of M" slot rendered next to the
+// resource label on the ContextBar. Child screens already render their
+// own counter inside the body for v0.1.x, so the slot stays empty by
+// default and the chrome reserves it for future cross-screen counters.
 func (m Model) counterLabel() string {
-	if m.deps.Profile != "" {
-		return "profile=" + m.deps.Profile
-	}
 	return ""
 }
 
