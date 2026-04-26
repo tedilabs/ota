@@ -36,6 +36,11 @@ func (p *detailFixturePort) ListGroups(_ context.Context, _ string) ([]domain.Gr
 func (p *detailFixturePort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
 	return nil, nil
 }
+func (p *detailFixturePort) ResetPassword(_ context.Context, _ string, _ bool) (string, error) {
+	return "", nil
+}
+func (p *detailFixturePort) Unlock(_ context.Context, _ string) error       { return nil }
+func (p *detailFixturePort) ResetFactors(_ context.Context, _ string) error { return nil }
 
 // detailHarness opens an inline Detail surface for a single seeded user
 // so the keyboard-driven Visual / yank test below stays focused on the

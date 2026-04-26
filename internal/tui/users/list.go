@@ -1048,6 +1048,22 @@ func (m ListModel) selected() *domain.User {
 	return &vs[m.cursor]
 }
 
+// SelectedUser surfaces the active user (the open detail target while
+// `m.opened` is true, otherwise the cursor row) so the App Shell can
+// hand it to lifecycle confirmation modals (issue #125). Implements
+// the app.SelectedUserStater interface.
+func (m ListModel) SelectedUser() (domain.User, bool) {
+	if m.opened {
+		if m.detailUser.ID != "" {
+			return m.detailUser, true
+		}
+	}
+	if u := m.selected(); u != nil {
+		return *u, true
+	}
+	return domain.User{}, false
+}
+
 // fetchUsersCmd drains the Port.List iterator and emits usersLoadedMsg, or
 // usersErrMsg on failure (TUI_DESIGN §17 / Phase 6d-6 spec).
 func fetchUsersCmd(port domain.UsersPort) tea.Cmd {

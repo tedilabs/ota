@@ -121,4 +121,58 @@ func buildUsersQuery(q domain.UsersQuery) string {
 	return "?" + v.Encode()
 }
 
+// ResetPassword issues POST /api/v1/users/{id}/lifecycle/reset_password
+// (Okta Lifecycle API — issue #125). When sendEmail=true the operator
+// flow ends with the user receiving a reset email; when false the
+// response carries a one-time `resetPasswordUrl` the operator can
+// share manually. Returns "" when sendEmail=true.
+func (a *UsersAdapter) ResetPassword(ctx context.Context, userID string, sendEmail bool) (string, error) {
+	q := url.Values{}
+	q.Set("sendEmail", strconv.FormatBool(sendEmail))
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) +
+		"/lifecycle/reset_password?" + q.Encode())
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return "", err
+	}
+	defer drainAndClose(resp)
+	if sendEmail {
+		return "", nil
+	}
+	var body struct {
+		ResetPasswordURL string `json:"resetPasswordUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("okta: decode reset_password: %w", err)
+	}
+	return body.ResetPasswordURL, nil
+}
+
+// Unlock issues POST /api/v1/users/{id}/lifecycle/unlock — clears the
+// LOCKED_OUT state. Okta returns 200 even when the user is already
+// unlocked, so callers don't need to special-case the response.
+func (a *UsersAdapter) Unlock(ctx context.Context, userID string) error {
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) + "/lifecycle/unlock")
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
+// ResetFactors issues POST /api/v1/users/{id}/lifecycle/reset_factors
+// — removes every enrolled MFA factor on the user, forcing
+// re-enrollment on next sign-in. Destructive: the App Shell wraps
+// this call in a confirmation modal.
+func (a *UsersAdapter) ResetFactors(ctx context.Context, userID string) error {
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) + "/lifecycle/reset_factors")
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
 var _ domain.UsersPort = (*UsersAdapter)(nil)

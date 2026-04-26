@@ -18,6 +18,22 @@ type UsersPort interface {
 	Get(ctx context.Context, idOrLogin string) (User, error)
 	ListGroups(ctx context.Context, userID string) ([]Group, error)
 	ListFactors(ctx context.Context, userID string) ([]Factor, error)
+
+	// Lifecycle operations (issue #125). These are the first WRITE ops
+	// in ota — they alter the user's auth state in the upstream Okta
+	// tenant, so the TUI surfaces them behind a confirmation modal and
+	// always logs an audit line via the toast bar.
+	//
+	// ResetPassword sends the standard reset-password email when
+	// sendEmail is true; when false it returns a one-time
+	// resetPasswordUrl the operator can hand out manually.
+	ResetPassword(ctx context.Context, userID string, sendEmail bool) (string, error)
+	// Unlock clears the LOCKED_OUT state. No-op (returns nil) on users
+	// already in another state — Okta accepts the call and returns 200.
+	Unlock(ctx context.Context, userID string) error
+	// ResetFactors removes every enrolled MFA factor on the user, so
+	// next sign-in forces re-enrollment. Destructive.
+	ResetFactors(ctx context.Context, userID string) error
 }
 
 // GroupsPort is the outbound boundary for Okta Groups.

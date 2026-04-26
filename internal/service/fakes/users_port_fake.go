@@ -11,10 +11,13 @@ import (
 type UsersPortFake struct {
 	t *testing.T
 
-	ListFunc         func(ctx context.Context, q domain.UsersQuery) (domain.Iterator[domain.User], error)
-	GetFunc          func(ctx context.Context, idOrLogin string) (domain.User, error)
-	ListGroupsFunc   func(ctx context.Context, userID string) ([]domain.Group, error)
-	ListFactorsFunc  func(ctx context.Context, userID string) ([]domain.Factor, error)
+	ListFunc          func(ctx context.Context, q domain.UsersQuery) (domain.Iterator[domain.User], error)
+	GetFunc           func(ctx context.Context, idOrLogin string) (domain.User, error)
+	ListGroupsFunc    func(ctx context.Context, userID string) ([]domain.Group, error)
+	ListFactorsFunc   func(ctx context.Context, userID string) ([]domain.Factor, error)
+	ResetPasswordFunc func(ctx context.Context, userID string, sendEmail bool) (string, error)
+	UnlockFunc        func(ctx context.Context, userID string) error
+	ResetFactorsFunc  func(ctx context.Context, userID string) error
 }
 
 // NewUsersPort returns a fake UsersPort wired to t so unexpected calls fail
@@ -54,4 +57,28 @@ func (f *UsersPortFake) ListFactors(ctx context.Context, userID string) ([]domai
 		f.t.Fatalf("UsersPortFake.ListFactors called but ListFactorsFunc is not set")
 	}
 	return f.ListFactorsFunc(ctx, userID)
+}
+
+func (f *UsersPortFake) ResetPassword(ctx context.Context, userID string, sendEmail bool) (string, error) {
+	f.t.Helper()
+	if f.ResetPasswordFunc == nil {
+		f.t.Fatalf("UsersPortFake.ResetPassword called but ResetPasswordFunc is not set")
+	}
+	return f.ResetPasswordFunc(ctx, userID, sendEmail)
+}
+
+func (f *UsersPortFake) Unlock(ctx context.Context, userID string) error {
+	f.t.Helper()
+	if f.UnlockFunc == nil {
+		f.t.Fatalf("UsersPortFake.Unlock called but UnlockFunc is not set")
+	}
+	return f.UnlockFunc(ctx, userID)
+}
+
+func (f *UsersPortFake) ResetFactors(ctx context.Context, userID string) error {
+	f.t.Helper()
+	if f.ResetFactorsFunc == nil {
+		f.t.Fatalf("UsersPortFake.ResetFactors called but ResetFactorsFunc is not set")
+	}
+	return f.ResetFactorsFunc(ctx, userID)
 }

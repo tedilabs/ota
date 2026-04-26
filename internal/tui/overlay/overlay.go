@@ -275,6 +275,9 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"Shift+N", "sort by NAME (login)"},
 			{"Shift+L", "sort by LAST LOGIN"},
 			{"Shift+C", "sort by CREATED / CHANGED"},
+			{":reset-password", "send reset-password email"},
+			{":unlock", "clear LOCKED_OUT state"},
+			{":reset-mfa", "remove enrolled MFA factors"},
 		}
 	case "groups":
 		return []helpEntry{

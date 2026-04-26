@@ -45,6 +45,11 @@ func (p *principalUsersPort) ListGroups(_ context.Context, _ string) ([]domain.G
 func (p *principalUsersPort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
 	return nil, nil
 }
+func (p *principalUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (string, error) {
+	return "", nil
+}
+func (p *principalUsersPort) Unlock(_ context.Context, _ string) error       { return nil }
+func (p *principalUsersPort) ResetFactors(_ context.Context, _ string) error { return nil }
 
 type emptyUsersIter struct{}
 

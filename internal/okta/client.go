@@ -1,6 +1,7 @@
 package okta
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -159,6 +160,57 @@ func (c *Client) doGet(ctx context.Context, urlStr string) (*http.Response, erro
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			rle := errormap.FromResponse(resp) // consumes body
+			if attempt < c.maxRetries {
+				var detail *domain.RateLimitedError
+				if errors.As(rle, &detail) && detail.RetryAfter > 0 {
+					if err := c.sleepRespectingCtx(ctx, detail.RetryAfter); err != nil {
+						return nil, err
+					}
+				}
+				lastErr = rle
+				continue
+			}
+			return nil, rle
+		}
+
+		if resp.StatusCode >= 400 {
+			return nil, errormap.FromResponse(resp)
+		}
+		return resp, nil
+	}
+	return nil, lastErr
+}
+
+// doPost performs a POST with a JSON body (body == nil → empty body).
+// Same auth, rate-limit observation, and 429 retry semantics as doGet.
+// Caller owns the returned response body and MUST close it.
+func (c *Client) doPost(ctx context.Context, urlStr string, body []byte) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		var rdr io.Reader
+		if len(body) > 0 {
+			rdr = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, rdr)
+		if err != nil {
+			return nil, fmt.Errorf("okta: build request: %w", err)
+		}
+		req.Header.Set("Authorization", "SSWS "+c.token.reveal())
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", c.ua)
+		if len(body) > 0 {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("okta: %w", errors.Join(domain.ErrNetwork, err))
+		}
+
+		c.monitor.Observe(resp)
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			rle := errormap.FromResponse(resp)
 			if attempt < c.maxRetries {
 				var detail *domain.RateLimitedError
 				if errors.As(rle, &detail) && detail.RetryAfter > 0 {

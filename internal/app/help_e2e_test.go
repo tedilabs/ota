@@ -235,6 +235,12 @@ func (p *seededUsersPort) ListFactors(_ context.Context, _ string) ([]domain.Fac
 	return nil, nil
 }
 
+func (p *seededUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (string, error) {
+	return "", nil
+}
+func (p *seededUsersPort) Unlock(_ context.Context, _ string) error       { return nil }
+func (p *seededUsersPort) ResetFactors(_ context.Context, _ string) error { return nil }
+
 type seededUsersIter struct{ remaining []domain.User }
 
 func (it *seededUsersIter) Next(_ context.Context) (domain.User, bool, error) {

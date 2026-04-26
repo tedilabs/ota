@@ -79,7 +79,38 @@ const (
 	OverlayPalette
 	OverlayHelp
 	OverlayQuitConfirm
+	// OverlayActionConfirm — destructive Users lifecycle action gate
+	// (issue #125). Holds m.pendingAction until y / Esc / n.
+	OverlayActionConfirm
 )
+
+// UserActionKind classifies the Users lifecycle action a confirmation
+// modal is gating. Matches the three ports added in issue #125 —
+// password reset, unlock, MFA factor reset.
+type UserActionKind int
+
+const (
+	UserActionNone UserActionKind = iota
+	UserActionResetPassword
+	UserActionUnlock
+	UserActionResetFactors
+)
+
+// pendingUserAction is the (kind, target) pair the App Shell keeps in
+// flight while OverlayActionConfirm is open. Reset back to its zero
+// value when the operator confirms or cancels.
+type pendingUserAction struct {
+	Kind UserActionKind
+	User domain.User
+}
+
+// SelectedUserStater is implemented by screens that can surface the
+// "currently active" user — Users list cursor row, or the open detail
+// target. The App Shell reads from it to populate the lifecycle
+// confirmation modal (issue #125).
+type SelectedUserStater interface {
+	SelectedUser() (domain.User, bool)
+}
 
 // Deps bundles the App Shell's runtime dependencies.
 type Deps struct {
@@ -140,6 +171,12 @@ type Model struct {
 	// it more than once per session (the call is rate-limit-priced and
 	// the chrome only needs a single answer).
 	principalRequested bool
+
+	// pendingAction holds the Users lifecycle action (issue #125) the
+	// operator just queued through `:reset-password` / `:unlock` /
+	// `:reset-factors` while the confirmation modal is open. Cleared
+	// when the modal closes either way.
+	pendingAction pendingUserAction
 
 	// width / height track the current terminal size, updated via
 	// tea.WindowSizeMsg. The chrome renders 100% to width (TUI_DESIGN
@@ -544,6 +581,14 @@ func (m Model) renderOverlayPanel(tk shared.Tokens) string {
 		return ""
 	case OverlayQuitConfirm:
 		return tk.Danger.Render("Quit ota?") + tk.Muted.Render("  (y/N)")
+	case OverlayActionConfirm:
+		label := userActionLabel(m.pendingAction.Kind)
+		login := m.pendingAction.User.Profile.Login
+		if login == "" {
+			login = m.pendingAction.User.ID
+		}
+		return tk.Danger.Render(label+" for ") + tk.Accent.Render(login) +
+			tk.Danger.Render("?") + tk.Muted.Render("  (y/N)")
 	}
 	return ""
 }
@@ -793,7 +838,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay == OverlayPalette {
 		return m.handlePaletteKey(msg)
 	}
-	if m.overlay == OverlayHelp || m.overlay == OverlayQuitConfirm {
+	if m.overlay == OverlayHelp || m.overlay == OverlayQuitConfirm || m.overlay == OverlayActionConfirm {
 		return m.handleOverlayKey(msg)
 	}
 
@@ -883,6 +928,12 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.screens[m.active] = updated
 				return m, c
 			}
+		case paletteCmdResetPassword:
+			return m.openActionConfirm(UserActionResetPassword)
+		case paletteCmdUnlock:
+			return m.openActionConfirm(UserActionUnlock)
+		case paletteCmdResetFactors:
+			return m.openActionConfirm(UserActionResetFactors)
 		}
 		return m, nil
 	case tea.KeyBackspace:
@@ -933,6 +984,7 @@ func paletteCommandPool() []string {
 		"policies", "policy",
 		"logs", "log", "l",
 		"unmask", "mask",
+		"reset-password", "unlock", "reset-mfa",
 		"quit", "exit", "q",
 	}
 }
@@ -974,6 +1026,18 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.overlay = OverlayNone
 		}
 	}
+	if m.overlay == OverlayActionConfirm && msg.Type == tea.KeyRunes {
+		switch string(msg.Runes) {
+		case "y", "Y":
+			action := m.pendingAction
+			m.pendingAction = pendingUserAction{}
+			m.overlay = OverlayNone
+			return m, runUserActionCmd(m.deps.UsersPort, action)
+		case "n", "N":
+			m.pendingAction = pendingUserAction{}
+			m.overlay = OverlayNone
+		}
+	}
 	return m, nil
 }
 
@@ -987,6 +1051,11 @@ const (
 	paletteCmdQuit
 	paletteCmdUnmask
 	paletteCmdMask
+	// Users lifecycle actions (issue #125). Each opens a confirmation
+	// modal targeting the active screen's selected user.
+	paletteCmdResetPassword
+	paletteCmdUnlock
+	paletteCmdResetFactors
 )
 
 // UnmaskFieldMsg / MaskAllMsg are re-exported from the shared msgs
@@ -1022,6 +1091,12 @@ func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, arg 
 			return paletteCmdNone, 0, "", false
 		}
 		return paletteCmdUnmask, 0, rest, true
+	case "reset-password", "reset_password", "resetpassword":
+		return paletteCmdResetPassword, 0, "", true
+	case "unlock":
+		return paletteCmdUnlock, 0, "", true
+	case "reset-mfa", "reset-factors", "reset_mfa", "reset_factors", "resetfactors":
+		return paletteCmdResetFactors, 0, "", true
 	}
 	if s, found := screenFromName(strings.ToLower(cmd)); found {
 		return paletteCmdScreen, s, "", true
@@ -1031,6 +1106,87 @@ func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, arg 
 		return paletteCmdScreen, ScreenPolicies, "", true
 	}
 	return paletteCmdNone, 0, "", false
+}
+
+// openActionConfirm queues a Users lifecycle action (issue #125) for
+// confirmation. Looks up the active screen's selected user, falls back
+// to a transient toast when none is available (e.g., the operator
+// fired the command from a non-Users screen).
+func (m Model) openActionConfirm(kind UserActionKind) (tea.Model, tea.Cmd) {
+	child, ok := m.screens[m.active]
+	if !ok {
+		return m, toastCmdInfo("no active screen")
+	}
+	stater, ok := child.(SelectedUserStater)
+	if !ok {
+		return m, toastCmdInfo("action not available on this screen")
+	}
+	user, ok := stater.SelectedUser()
+	if !ok {
+		return m, toastCmdInfo("no user selected")
+	}
+	m.pendingAction = pendingUserAction{Kind: kind, User: user}
+	m.overlay = OverlayActionConfirm
+	return m, nil
+}
+
+// userActionLabel returns a human-readable label for the action kind,
+// rendered in the confirmation modal and the post-action toast.
+func userActionLabel(k UserActionKind) string {
+	switch k {
+	case UserActionResetPassword:
+		return "Reset password"
+	case UserActionUnlock:
+		return "Unlock account"
+	case UserActionResetFactors:
+		return "Reset MFA factors"
+	}
+	return ""
+}
+
+// runUserActionCmd dispatches the active pendingAction against the
+// UsersPort and emits a toast with the result. The Cmd returns nil
+// when called without a wired UsersPort so tests can drive the flow
+// without a network round-trip.
+func runUserActionCmd(port domain.UsersPort, action pendingUserAction) tea.Cmd {
+	if port == nil {
+		return toastCmdInfo("UsersPort not wired — action skipped")
+	}
+	return func() tea.Msg {
+		ctx := context.Background()
+		login := action.User.Profile.Login
+		if login == "" {
+			login = action.User.ID
+		}
+		switch action.Kind {
+		case UserActionResetPassword:
+			if _, err := port.ResetPassword(ctx, action.User.ID, true); err != nil {
+				return toastErr("reset password failed: " + err.Error())
+			}
+			return toastInfo("reset password email sent to " + login)
+		case UserActionUnlock:
+			if err := port.Unlock(ctx, action.User.ID); err != nil {
+				return toastErr("unlock failed: " + err.Error())
+			}
+			return toastInfo("unlocked " + login)
+		case UserActionResetFactors:
+			if err := port.ResetFactors(ctx, action.User.ID); err != nil {
+				return toastErr("reset MFA failed: " + err.Error())
+			}
+			return toastInfo("MFA factors reset for " + login)
+		}
+		return nil
+	}
+}
+
+func toastInfo(text string) ToastMsg {
+	return ToastMsg{Text: text, Level: ToastSuccess, Until: time.Now().Add(3 * time.Second)}
+}
+func toastErr(text string) ToastMsg {
+	return ToastMsg{Text: text, Level: ToastError, Until: time.Now().Add(5 * time.Second)}
+}
+func toastCmdInfo(text string) tea.Cmd {
+	return func() tea.Msg { return toastInfo(text) }
 }
 
 // --- Cmd factories -------------------------------------------------------
