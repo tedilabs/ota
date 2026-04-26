@@ -59,7 +59,13 @@ type ListModel struct {
 	filtering  bool // `/` prompt open
 	opened     bool // detail view active
 	detailUser domain.User
-	lastErr    error
+	// detailTab tracks the active Detail tab while m.opened is true.
+	// Profile (DetailTabProfile) is the entry tab per TUI_DESIGN §3.6.
+	detailTab DetailTab
+	// detailRawReturn is the tab to fall back to when the operator
+	// presses `r` while already on Raw — see TUI_DESIGN §3.6 r-toggle.
+	detailRawReturn DetailTab
+	lastErr         error
 	// width is the most recent terminal width seen via WindowSizeMsg. Drives
 	// responsive column drop per TUI_DESIGN §15.2.
 	width int
@@ -128,13 +134,33 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
 	}
-	// Detail mode: Esc returns to the list; other keys are forwarded to the
-	// inline detail surface (currently a no-op until the Raw tab toggle in
-	// v0.1.1-5b lands).
+	// Detail mode (TUI_DESIGN §3.6): Esc returns to the list; Tab /
+	// Shift-Tab cycle through tabs; `r` toggles the Raw tab against the
+	// last-visited non-Raw tab so a second press returns the operator to
+	// where they came from.
 	if m.opened {
-		if msg.Type == tea.KeyEsc {
+		switch msg.Type {
+		case tea.KeyEsc:
 			m.opened = false
 			m.detailUser = domain.User{}
+			m.detailTab = DetailTabProfile
+			m.detailRawReturn = DetailTabProfile
+			return m, nil
+		case tea.KeyTab:
+			m.detailTab = (m.detailTab + 1) % detailTabCount
+			return m, nil
+		case tea.KeyShiftTab:
+			m.detailTab = (m.detailTab + detailTabCount - 1) % detailTabCount
+			return m, nil
+		case tea.KeyRunes:
+			if string(msg.Runes) == "r" {
+				if m.detailTab == DetailTabRaw {
+					m.detailTab = m.detailRawReturn
+				} else {
+					m.detailRawReturn = m.detailTab
+					m.detailTab = DetailTabRaw
+				}
+			}
 			return m, nil
 		}
 		return m, nil
@@ -258,7 +284,9 @@ func (m ListModel) classify(msg tea.KeyMsg) keys.ID {
 //	...
 func (m ListModel) View() string {
 	if m.opened {
-		return "User Detail\n" + m.detailUser.Profile.Login + "\n"
+		// Delegate to DetailModel so the tab bar / Profile / Raw rendering
+		// lives next to its data; ListModel only keeps the active-tab cursor.
+		return NewDetailModel(m.deps, m.detailUser).WithActiveTab(m.detailTab).View()
 	}
 
 	if m.lastErr != nil {

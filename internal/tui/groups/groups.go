@@ -4,6 +4,7 @@ package groups
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sort"
 	"strings"
@@ -62,12 +63,31 @@ type ListModel struct {
 	filtering bool
 	opened    bool
 	detail    domain.Group
-	lastErr   error
-	width     int
+	// detailTab tracks the active Detail tab while m.opened is true
+	// (TUI_DESIGN §15.7 v1.2.0).
+	detailTab GroupDetailTab
+	// detailRawReturn is the tab `r` jumped from (Raw toggle target).
+	detailRawReturn GroupDetailTab
+	lastErr         error
+	width           int
 	// sortBy / sortDir track the active column sort cycle (TUI_DESIGN §3.5).
 	sortBy  SortKey
 	sortDir SortDir
 }
+
+// GroupDetailTab indexes the Group Detail tab bar (TUI_DESIGN §15.7 v1.2.0).
+type GroupDetailTab int
+
+const (
+	GroupDetailTabProfile GroupDetailTab = iota
+	GroupDetailTabMembers
+	GroupDetailTabApps
+	GroupDetailTabRules
+	GroupDetailTabRaw
+)
+
+var groupDetailTabLabels = []string{"Profile", "Members", "Apps", "Rules", "Raw"}
+var groupDetailTabCount = GroupDetailTab(len(groupDetailTabLabels))
 
 // groupsErrMsg surfaces a fetch failure to View() (TUI_DESIGN §17).
 type groupsErrMsg struct{ err error }
@@ -108,13 +128,32 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
 	}
-	// Detail mode: Esc returns to the list; other keys are forwarded to the
-	// inline detail surface (currently a no-op until the Raw tab toggle in
-	// v0.1.1-5b lands).
+	// Detail mode (TUI_DESIGN §3.6 + §15.7): Esc returns to the list; Tab /
+	// Shift-Tab cycle through tabs; `r` toggles the Raw tab against the
+	// last-visited non-Raw tab.
 	if m.opened {
-		if msg.Type == tea.KeyEsc {
+		switch msg.Type {
+		case tea.KeyEsc:
 			m.opened = false
 			m.detail = domain.Group{}
+			m.detailTab = GroupDetailTabProfile
+			m.detailRawReturn = GroupDetailTabProfile
+			return m, nil
+		case tea.KeyTab:
+			m.detailTab = (m.detailTab + 1) % groupDetailTabCount
+			return m, nil
+		case tea.KeyShiftTab:
+			m.detailTab = (m.detailTab + groupDetailTabCount - 1) % groupDetailTabCount
+			return m, nil
+		case tea.KeyRunes:
+			if string(msg.Runes) == "r" {
+				if m.detailTab == GroupDetailTabRaw {
+					m.detailTab = m.detailRawReturn
+				} else {
+					m.detailRawReturn = m.detailTab
+					m.detailTab = GroupDetailTabRaw
+				}
+			}
 			return m, nil
 		}
 		return m, nil
@@ -211,7 +250,7 @@ func (m *ListModel) cycleSort(target SortKey) {
 // Shell.
 func (m ListModel) View() string {
 	if m.opened {
-		return renderGroupDetail(m.detail)
+		return renderGroupDetailTabbed(m.detail, m.detailTab)
 	}
 	if m.lastErr != nil {
 		return "Groups  (error)\n" + shared.ErrorPanel("groups", m.lastErr)
@@ -443,7 +482,85 @@ func (m DetailModel) Init() tea.Cmd { return nil }
 func (m DetailModel) Update(_ tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
 
 // View renders the group detail with profile + type + membership hint.
-func (m DetailModel) View() string { return renderGroupDetail(m.group) }
+func (m DetailModel) View() string { return renderGroupDetailTabbed(m.group, GroupDetailTabProfile) }
+
+// renderGroupDetailTabbed wraps the legacy single-surface view with a
+// §15.7 v1.2.0 tab bar. The Profile tab body remains the v0.1.0 layout;
+// the Raw tab serialises domain.Group as JSON. Other tabs (Members /
+// Apps / Rules) surface a placeholder note until v0.2 fills them.
+func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab) string {
+	var b strings.Builder
+	b.WriteString("Group Detail\n")
+	b.WriteString(renderGroupTabBar(active))
+	b.WriteByte('\n')
+	b.WriteString(strings.Repeat("─", 78))
+	b.WriteByte('\n')
+	switch active {
+	case GroupDetailTabRaw:
+		b.WriteString(renderGroupRawTab(g))
+	default:
+		b.WriteString(renderGroupDetail(g))
+	}
+	return b.String()
+}
+
+func renderGroupTabBar(active GroupDetailTab) string {
+	var parts []string
+	for i, label := range groupDetailTabLabels {
+		if GroupDetailTab(i) == active {
+			parts = append(parts, "["+label+"]")
+		} else {
+			parts = append(parts, "[ "+label+" ]")
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// renderGroupRawTab returns the §15.7 v1.2.0 Raw JSON tab content.
+// Groups carry no PII so no mask wrapping is needed; the marshal is
+// straight from the domain projection.
+func renderGroupRawTab(g domain.Group) string {
+	out := groupJSONShape{
+		ID:              g.ID,
+		Type:            string(g.Type),
+		DynamicTargeted: g.DynamicTargeted,
+		Profile: groupProfileShape{
+			Name:        g.Profile.Name,
+			Description: g.Profile.Description,
+		},
+		Created:     formatJSONTime(g.Created),
+		LastUpdated: formatJSONTime(g.LastUpdated),
+	}
+	buf, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "(raw render error: " + err.Error() + ")\n"
+	}
+	return string(buf) + "\n"
+}
+
+// groupJSONShape is a stable projection of domain.Group used by the Raw
+// tab. Field order is fixed so the golden file doesn't depend on Go map
+// iteration order.
+type groupJSONShape struct {
+	ID              string            `json:"id"`
+	Type            string            `json:"type"`
+	DynamicTargeted bool              `json:"dynamicTargeted"`
+	Profile         groupProfileShape `json:"profile"`
+	Created         string            `json:"created,omitempty"`
+	LastUpdated     string            `json:"lastUpdated,omitempty"`
+}
+
+type groupProfileShape struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+func formatJSONTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
 
 func renderGroupDetail(g domain.Group) string {
 	var b strings.Builder

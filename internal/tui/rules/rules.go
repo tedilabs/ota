@@ -5,6 +5,7 @@ package rules
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -66,12 +67,31 @@ type ListModel struct {
 	filtering bool
 	opened    bool
 	detail    domain.GroupRule
-	lastErr   error
-	width     int
+	// detailTab tracks the active Detail tab while m.opened is true
+	// (TUI_DESIGN §15.7 v1.2.0).
+	detailTab RuleDetailTab
+	// detailRawReturn is the tab `r` jumped from (Raw toggle target).
+	detailRawReturn RuleDetailTab
+	lastErr         error
+	width           int
 	// sortBy / sortDir track the active column sort cycle (TUI_DESIGN §3.5).
 	sortBy  SortKey
 	sortDir SortDir
 }
+
+// RuleDetailTab indexes the Group Rule Detail tab bar (TUI_DESIGN §15.7
+// v1.2.0). 4 tabs: Profile / Conditions / Targets / Raw.
+type RuleDetailTab int
+
+const (
+	RuleDetailTabProfile RuleDetailTab = iota
+	RuleDetailTabConditions
+	RuleDetailTabTargets
+	RuleDetailTabRaw
+)
+
+var ruleDetailTabLabels = []string{"Profile", "Conditions", "Targets", "Raw"}
+var ruleDetailTabCount = RuleDetailTab(len(ruleDetailTabLabels))
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
@@ -109,13 +129,32 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
 	}
-	// Detail mode: Esc returns to the list; other keys are forwarded to the
-	// inline detail surface (currently a no-op until the Raw tab toggle in
-	// v0.1.1-5b lands).
+	// Detail mode (TUI_DESIGN §3.6 + §15.7): Esc returns to the list; Tab /
+	// Shift-Tab cycle through tabs; `r` toggles the Raw tab against the
+	// last-visited non-Raw tab.
 	if m.opened {
-		if msg.Type == tea.KeyEsc {
+		switch msg.Type {
+		case tea.KeyEsc:
 			m.opened = false
 			m.detail = domain.GroupRule{}
+			m.detailTab = RuleDetailTabProfile
+			m.detailRawReturn = RuleDetailTabProfile
+			return m, nil
+		case tea.KeyTab:
+			m.detailTab = (m.detailTab + 1) % ruleDetailTabCount
+			return m, nil
+		case tea.KeyShiftTab:
+			m.detailTab = (m.detailTab + ruleDetailTabCount - 1) % ruleDetailTabCount
+			return m, nil
+		case tea.KeyRunes:
+			if string(msg.Runes) == "r" {
+				if m.detailTab == RuleDetailTabRaw {
+					m.detailTab = m.detailRawReturn
+				} else {
+					m.detailRawReturn = m.detailTab
+					m.detailTab = RuleDetailTabRaw
+				}
+			}
 			return m, nil
 		}
 		return m, nil
@@ -191,7 +230,7 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // summarizes the count (REQ-R03 AC-3).
 func (m ListModel) View() string {
 	if m.opened {
-		return renderRuleDetail(m.detail)
+		return renderRuleDetailTabbed(m.detail, m.detailTab)
 	}
 	if m.lastErr != nil {
 		return "Group Rules  (error)\n" + shared.ErrorPanel("group rules", m.lastErr)
@@ -474,7 +513,74 @@ func (m DetailModel) Update(_ tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
 
 // View renders the rule detail with the expression in a monospace block and
 // a deactivation warning (REQ-R03 AC-5).
-func (m DetailModel) View() string { return renderRuleDetail(m.rule) }
+func (m DetailModel) View() string { return renderRuleDetailTabbed(m.rule, RuleDetailTabProfile) }
+
+// renderRuleDetailTabbed adds a §15.7 v1.2.0 tab bar around the legacy
+// single-surface rule detail. Profile keeps the v0.1.0 layout; Raw
+// serialises domain.GroupRule as JSON; Conditions / Targets are
+// placeholders until v0.2.
+func renderRuleDetailTabbed(r domain.GroupRule, active RuleDetailTab) string {
+	var b strings.Builder
+	b.WriteString("Group Rule Detail\n")
+	b.WriteString(renderRuleTabBar(active))
+	b.WriteByte('\n')
+	b.WriteString(strings.Repeat("─", 78))
+	b.WriteByte('\n')
+	switch active {
+	case RuleDetailTabRaw:
+		b.WriteString(renderRuleRawTab(r))
+	default:
+		b.WriteString(renderRuleDetail(r))
+	}
+	return b.String()
+}
+
+func renderRuleTabBar(active RuleDetailTab) string {
+	var parts []string
+	for i, label := range ruleDetailTabLabels {
+		if RuleDetailTab(i) == active {
+			parts = append(parts, "["+label+"]")
+		} else {
+			parts = append(parts, "[ "+label+" ]")
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// renderRuleRawTab returns the §15.7 v1.2.0 Raw JSON tab content.
+func renderRuleRawTab(r domain.GroupRule) string {
+	out := ruleJSONShape{
+		ID:             r.ID,
+		Name:           r.Name,
+		Status:         string(r.Status),
+		Expression:     r.Expression,
+		TargetGroupIDs: r.TargetGroupIDs,
+		Created:        formatRuleJSONTime(r.Created),
+		LastUpdated:    formatRuleJSONTime(r.LastUpdated),
+	}
+	buf, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "(raw render error: " + err.Error() + ")\n"
+	}
+	return string(buf) + "\n"
+}
+
+type ruleJSONShape struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Status         string   `json:"status"`
+	Expression     string   `json:"expression"`
+	TargetGroupIDs []string `json:"targetGroupIds,omitempty"`
+	Created        string   `json:"created,omitempty"`
+	LastUpdated    string   `json:"lastUpdated,omitempty"`
+}
+
+func formatRuleJSONTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
 
 func renderRuleDetail(r domain.GroupRule) string {
 	var b strings.Builder
