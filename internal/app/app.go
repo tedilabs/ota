@@ -229,18 +229,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// screenFromName maps a palette/Msg screen name to the Screen enum.
+// screenFromName maps a palette / SwitchScreenMsg screen name to the
+// Screen enum. TUI_DESIGN §3.4 v1.2.0 locks in singular, plural,
+// hyphenated, and underscored variants alongside the k9s-style short
+// codes (u/g/gr/l).
 func screenFromName(name string) (Screen, bool) {
 	switch strings.ToLower(name) {
-	case "users", "u":
+	case "user", "users", "u":
 		return ScreenUsers, true
-	case "groups", "g":
+	case "group", "groups", "g":
 		return ScreenGroups, true
-	case "grouprules", "gr", "rules":
+	case "rule", "rules",
+		"grouprule", "grouprules",
+		"group-rule", "group-rules",
+		"group_rule", "group_rules",
+		"gr":
 		return ScreenRules, true
-	case "policies":
+	case "policy", "policies":
 		return ScreenPolicies, true
-	case "logs", "l":
+	case "log", "logs", "l":
 		return ScreenLogs, true
 	}
 	return 0, false
@@ -651,26 +658,19 @@ const (
 )
 
 // resolvePaletteCommand parses the palette input ("users", ":users",
-// "groups", ":q", ...) into an actionable (kind, screen) pair. Supports
-// k9s-style shortcuts (u/g/gr/l) per TUI_DESIGN §3.4.
+// "groups", ":q", ...) into an actionable (kind, screen) pair. The
+// alias matrix lives in screenFromName so SwitchScreenMsg and the `:`
+// palette stay in sync (TUI_DESIGN §3.4 v1.2.0).
 func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, ok bool) {
 	cmd := strings.TrimSpace(raw)
 	cmd = strings.TrimPrefix(cmd, ":")
 	cmd = strings.ToLower(cmd)
 
-	switch cmd {
-	case "users", "u":
-		return paletteCmdScreen, ScreenUsers, true
-	case "groups", "g":
-		return paletteCmdScreen, ScreenGroups, true
-	case "grouprules", "gr", "rules":
-		return paletteCmdScreen, ScreenRules, true
-	case "policies":
-		return paletteCmdScreen, ScreenPolicies, true
-	case "logs", "l":
-		return paletteCmdScreen, ScreenLogs, true
-	case "quit", "q", "exit":
+	if cmd == "quit" || cmd == "q" || cmd == "exit" {
 		return paletteCmdQuit, 0, true
+	}
+	if s, found := screenFromName(cmd); found {
+		return paletteCmdScreen, s, true
 	}
 	// `:policies OKTA_SIGN_ON` direct-jump variant.
 	if strings.HasPrefix(cmd, "policies ") {
