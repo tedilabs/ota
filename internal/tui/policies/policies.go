@@ -195,6 +195,24 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch km.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
+	case tea.KeyCtrlF:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		m.cursor = clampInt(m.cursor+page, 0, len(m.policies)-1)
+	case tea.KeyCtrlB:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		m.cursor = clampInt(m.cursor-page, 0, len(m.policies)-1)
+	case tea.KeyCtrlD:
+		page := max(1, shared.ListBodyRowBudget(m.height)/2)
+		m.cursor = clampInt(m.cursor+page, 0, len(m.policies)-1)
+	case tea.KeyCtrlU:
+		page := max(1, shared.ListBodyRowBudget(m.height)/2)
+		m.cursor = clampInt(m.cursor-page, 0, len(m.policies)-1)
 	case tea.KeyEnter:
 		if m.cursor >= 0 && m.cursor < len(m.policies) {
 			m.detail = m.policies[m.cursor]
@@ -388,6 +406,21 @@ func (m ListModel) now() time.Time {
 		return m.deps.Clock.Now()
 	}
 	return time.Now()
+}
+
+// clampInt pins v to [lo, hi]. Empty data sets pass hi = -1, which we
+// surface as 0 so the cursor never goes negative on an empty list.
+func clampInt(v, lo, hi int) int {
+	if hi < lo {
+		return lo
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // --- Detail (SCR-042) --------------------------------------------------------

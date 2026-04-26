@@ -196,6 +196,25 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	switch msg.Type {
+	case tea.KeyCtrlF:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		return m.cursorBy(page), nil
+	case tea.KeyCtrlB:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		return m.cursorBy(-page), nil
+	case tea.KeyCtrlD:
+		return m.cursorBy(max(1, shared.ListBodyRowBudget(m.height)/2)), nil
+	case tea.KeyCtrlU:
+		return m.cursorBy(-max(1, shared.ListBodyRowBudget(m.height)/2)), nil
+	}
+
 	if msg.Type == tea.KeyRunes {
 		switch string(msg.Runes) {
 		case "g":
@@ -504,6 +523,30 @@ func rulesSortLabel(title string, active, key SortKey, dir SortDir, tk shared.To
 		return title + shared.SortGlyph("desc", tk)
 	}
 	return title
+}
+
+// cursorBy moves the cursor by delta rows, clamped to the visible range
+// (issue #119).
+func (m ListModel) cursorBy(delta int) ListModel {
+	m.cursor += delta
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if vis := m.visible(); m.cursor >= len(vis) {
+		if len(vis) > 0 {
+			m.cursor = len(vis) - 1
+		} else {
+			m.cursor = 0
+		}
+	}
+	return m
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (m ListModel) selected() *domain.GroupRule {

@@ -297,6 +297,41 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Vim page nav (TUI_DESIGN §3.2). Ctrl-f / Ctrl-b move a full page,
+	// Ctrl-d / Ctrl-u move half a page. Page size mirrors the body
+	// row budget so the cursor lands in the same relative spot after a
+	// jump.
+	switch msg.Type {
+	case tea.KeyCtrlF:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		m.cursor += page
+		return m.clampedCursor(), nil
+	case tea.KeyCtrlB:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		m.cursor -= page
+		return m.clampedCursor(), nil
+	case tea.KeyCtrlD:
+		page := shared.ListBodyRowBudget(m.height) / 2
+		if page <= 0 {
+			page = 5
+		}
+		m.cursor += page
+		return m.clampedCursor(), nil
+	case tea.KeyCtrlU:
+		page := shared.ListBodyRowBudget(m.height) / 2
+		if page <= 0 {
+			page = 5
+		}
+		m.cursor -= page
+		return m.clampedCursor(), nil
+	}
+
 	// Vim navigation: `gg` jumps to top, `G` to bottom. Detected here
 	// because keys.Resolve binds them as a chord ("g g") that classify()
 	// can't represent as a single rune. Any non-`g` keypress resets the
@@ -467,6 +502,21 @@ func (m ListModel) DetailLine() int { return m.detailLine }
 // DetailVisualActive reports whether Visual selection is currently in
 // progress (`v` was pressed and `Esc` / `y` haven't ended it yet).
 func (m ListModel) DetailVisualActive() bool { return m.detailVisual }
+
+// clampedCursor pins m.cursor inside [0, len(visible)-1] and returns
+// the model so the caller can `return m.clampedCursor(), nil` succinctly.
+// Centralised so Ctrl-f / Ctrl-b / Ctrl-d / Ctrl-u all share the same
+// boundary behaviour.
+func (m ListModel) clampedCursor() ListModel {
+	vis := m.visible()
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if n := len(vis); n > 0 && m.cursor >= n {
+		m.cursor = n - 1
+	}
+	return m
+}
 
 // renderDetailWithCursor wraps DetailModel.View() with a line-cursor +
 // optional Vim Visual highlight and a transient toast (e.g. "yanked 5

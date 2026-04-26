@@ -196,6 +196,25 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	switch msg.Type {
+	case tea.KeyCtrlF:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		return m.cursorBy(page), nil
+	case tea.KeyCtrlB:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		return m.cursorBy(-page), nil
+	case tea.KeyCtrlD:
+		return m.cursorBy(max(1, shared.ListBodyRowBudget(m.height)/2)), nil
+	case tea.KeyCtrlU:
+		return m.cursorBy(-max(1, shared.ListBodyRowBudget(m.height)/2)), nil
+	}
+
 	if msg.Type == tea.KeyRunes {
 		switch string(msg.Runes) {
 		case "g":
@@ -489,6 +508,32 @@ func groupsSortLabel(title string, active, key SortKey, dir SortDir, tk shared.T
 		return title + shared.SortGlyph("desc", tk)
 	}
 	return title
+}
+
+// cursorBy moves the cursor by delta rows, clamped to the visible range.
+// Used by Ctrl-f/b/d/u page nav handlers (issue #119).
+func (m ListModel) cursorBy(delta int) ListModel {
+	m.cursor += delta
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if vis := m.visible(); m.cursor >= len(vis) {
+		if len(vis) > 0 {
+			m.cursor = len(vis) - 1
+		} else {
+			m.cursor = 0
+		}
+	}
+	return m
+}
+
+// max returns the larger of a and b. Local copy keeps the file
+// dependency-free and matches the style users/list.go already uses.
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (m ListModel) selected() *domain.Group {

@@ -124,6 +124,30 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch km.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
+	case tea.KeyCtrlF:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		m.cursor = clampLogIdx(m.cursor+page, len(m.events))
+	case tea.KeyCtrlB:
+		page := shared.ListBodyRowBudget(m.height)
+		if page <= 0 {
+			page = 10
+		}
+		m.cursor = clampLogIdx(m.cursor-page, len(m.events))
+	case tea.KeyCtrlD:
+		page := shared.ListBodyRowBudget(m.height) / 2
+		if page < 1 {
+			page = 5
+		}
+		m.cursor = clampLogIdx(m.cursor+page, len(m.events))
+	case tea.KeyCtrlU:
+		page := shared.ListBodyRowBudget(m.height) / 2
+		if page < 1 {
+			page = 5
+		}
+		m.cursor = clampLogIdx(m.cursor-page, len(m.events))
 	case tea.KeyEnter:
 		if m.cursor >= 0 && m.cursor < len(m.events) {
 			m.detail = m.events[m.cursor]
@@ -354,6 +378,20 @@ func (m SearchModel) now() time.Time {
 		return m.deps.Clock.Now()
 	}
 	return time.Now()
+}
+
+// clampLogIdx pins idx to [0, total-1]. Empty list returns 0.
+func clampLogIdx(idx, total int) int {
+	if total == 0 {
+		return 0
+	}
+	if idx < 0 {
+		return 0
+	}
+	if idx >= total {
+		return total - 1
+	}
+	return idx
 }
 
 // timeRangeLabel renders the active history window for the header
