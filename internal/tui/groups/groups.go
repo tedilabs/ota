@@ -77,6 +77,9 @@ type ListModel struct {
 	sortBy  SortKey
 	sortDir SortDir
 	ggChord shared.GChord
+	// hScroll — horizontal column offset (issue #122). h/l move the
+	// column slice when the natural row exceeds the viewport.
+	hScroll int
 }
 
 // GroupDetailTab indexes the Group Detail tab bar. v0.1.2 collapsed the
@@ -246,6 +249,20 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 			return m, nil
+		case "h":
+			m.ggChord.Reset()
+			if m.hScroll > 0 {
+				m.hScroll--
+			}
+			return m, nil
+		case "l":
+			m.ggChord.Reset()
+			specs := groupsColumnSpecs()
+			max := shared.MaxHScroll(specs, m.groupsInnerWidth(), 2)
+			if m.hScroll < max {
+				m.hScroll++
+			}
+			return m, nil
 		case "N":
 			// §3.5a — Groups: Shift+N sorts by NAME. Other Shift chords are
 			// no-ops on Groups (S / L / C have no matching column).
@@ -382,11 +399,18 @@ func groupsColumnSpecs() []shared.ColumnSpec {
 }
 
 // formatGroupsColumns lays out TYPE / NAME / DESCRIPTION / UPDATED / TAGS
-// per the TUI_DESIGN §15.0a Min/Weight + DropPriority model.
+// per the TUI_DESIGN §15.0a Min/Weight + DropPriority model. When the
+// natural row overflows the viewport, switch to LayoutColumnsHScroll so
+// h/l can pan across columns instead of dropping them.
 func (m ListModel) formatGroupsColumns(cells ...string) string {
 	specs := groupsColumnSpecs()
 	innerWidth := m.groupsInnerWidth()
-	widths := shared.LayoutColumns(specs, innerWidth, 2)
+	var widths []int
+	if shared.MaxHScroll(specs, innerWidth, 2) == 0 {
+		widths = shared.LayoutColumns(specs, innerWidth, 2)
+	} else {
+		widths = shared.LayoutColumnsHScroll(specs, innerWidth, 2, m.hScroll)
+	}
 
 	full := make([]string, len(specs))
 	for i := range specs {

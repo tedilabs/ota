@@ -100,6 +100,78 @@ func Test_LayoutColumns_ZeroWidth(t *testing.T) {
 	}
 }
 
+// Test_LayoutColumnsHScroll_ZeroOffsetMatchesNaturalSlice — with
+// hScroll == 0 and a width that fits all columns at Min, every column
+// is visible (never drops a middle column to honor DropPriority).
+func Test_LayoutColumnsHScroll_ZeroOffsetMatchesNaturalSlice(t *testing.T) {
+	t.Parallel()
+
+	specs := usersSpecsFixture()
+	// 14+22+14+10+8 + 4*2 = 76 — comfortable fit at width 80.
+	widths := shared.LayoutColumnsHScroll(specs, 80, 2, 0)
+	for i, w := range widths {
+		assert.Greater(t, w, 0, "column %d (%s) must be visible at hScroll=0", i, specs[i].Title)
+	}
+}
+
+// Test_LayoutColumnsHScroll_OffsetSkipsLeadingColumns — with hScroll > 0
+// the leading columns disappear (width 0) and the slice from hScroll
+// onward fills the budget.
+func Test_LayoutColumnsHScroll_OffsetSkipsLeadingColumns(t *testing.T) {
+	t.Parallel()
+
+	specs := usersSpecsFixture()
+	widths := shared.LayoutColumnsHScroll(specs, 60, 2, 2)
+
+	assert.Equal(t, 0, widths[0], "STATUS must be hidden when hScroll=2")
+	assert.Equal(t, 0, widths[1], "LOGIN must be hidden when hScroll=2")
+	assert.Greater(t, widths[2], 0, "DISPLAY NAME (first visible) must render")
+}
+
+// Test_LayoutColumnsHScroll_PacksUntilOverflow — the first column past
+// the budget is dropped but the slice never breaks contiguity (no
+// "skip and resume" mid-scroll).
+func Test_LayoutColumnsHScroll_PacksUntilOverflow(t *testing.T) {
+	t.Parallel()
+
+	specs := usersSpecsFixture()
+	// Budget that fits STATUS(14) + LOGIN(22) + 1 gutter(2) = 38 only.
+	widths := shared.LayoutColumnsHScroll(specs, 38, 2, 0)
+
+	assert.Greater(t, widths[0], 0, "STATUS must fit")
+	assert.Greater(t, widths[1], 0, "LOGIN must fit")
+	for i := 2; i < len(widths); i++ {
+		assert.Equal(t, 0, widths[i], "column %d must be cut off after budget exhaustion", i)
+	}
+}
+
+// Test_MaxHScroll_AllFit_ReturnsZero — when the natural Min layout fits
+// the available width, hScroll has no upper bound work to do.
+func Test_MaxHScroll_AllFit_ReturnsZero(t *testing.T) {
+	t.Parallel()
+
+	specs := usersSpecsFixture()
+	got := shared.MaxHScroll(specs, 200, 2)
+	assert.Equal(t, 0, got, "no overflow → max hScroll = 0")
+}
+
+// Test_MaxHScroll_ReportsFirstColumnPastOverflow — when not everything
+// fits, the cap is the smallest hScroll that lets the trailing columns
+// fit without re-overflowing. Acts as the guard rail for `l` navigation.
+func Test_MaxHScroll_ReportsFirstColumnPastOverflow(t *testing.T) {
+	t.Parallel()
+
+	specs := usersSpecsFixture()
+	// Width 38 only fits the last 2 cols (CHANGED 8 + LAST LOGIN 10 +
+	// gutter 2 = 20 — actually fits more). Let's construct precisely:
+	// last col CHANGED(8) alone = 8. + LAST LOGIN(10)+gutter(2) = 20.
+	// + DISPLAY NAME min(14)+gutter(2) = 36. + LOGIN(22)+gutter(2) = 60
+	// — overflow at adding LOGIN. So max scroll is 1 (skip STATUS only).
+	// Budget = 50.
+	got := shared.MaxHScroll(specs, 50, 2)
+	assert.Greater(t, got, 0, "overflow at width 50 must produce a non-zero cap")
+}
+
 // Test_FormatRow_RespectsAlignRightPadding — AlignRight cells use leading
 // spaces; left-aligned cells use trailing spaces.
 func Test_FormatRow_RespectsAlignRightPadding(t *testing.T) {

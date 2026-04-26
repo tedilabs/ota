@@ -167,6 +167,116 @@ func pickDropCandidate(specs []ColumnSpec, visible []bool) int {
 	return idx
 }
 
+// LayoutColumnsHScroll lays out columns starting at the hScroll offset
+// (a column index, not a character offset), packing as many columns as
+// fit at their declared Min width into the inner-body width. Columns
+// before hScroll get width 0 so FormatRow skips them, and columns past
+// the budget similarly stay at 0 — they re-enter the viewport when the
+// caller decrements hScroll.
+//
+// Unlike LayoutColumns this never drops "middle" columns by
+// DropPriority. The caller has explicitly opted into horizontal-scroll
+// mode (h / l keys), so the contract is "show a contiguous slice of
+// columns, in declaration order". Combine with ShrinkSpecsToFit to make
+// the slice cover exactly what the data demands.
+//
+// Leftover budget is distributed to ColumnFlex columns proportionally
+// to Weight; the last visible flex column absorbs rounding so the row
+// renders flush to width.
+func LayoutColumnsHScroll(specs []ColumnSpec, width, gutter, hScroll int) []int {
+	n := len(specs)
+	out := make([]int, n)
+	if n == 0 || width <= 0 {
+		return out
+	}
+	if gutter < 0 {
+		gutter = 0
+	}
+	if hScroll < 0 {
+		hScroll = 0
+	}
+	if hScroll >= n {
+		hScroll = n - 1
+	}
+
+	consumed := 0
+	visibleN := 0
+	for i := hScroll; i < n; i++ {
+		need := specs[i].Min
+		if visibleN > 0 {
+			need += gutter
+		}
+		if consumed+need > width {
+			break
+		}
+		out[i] = specs[i].Min
+		consumed += need
+		visibleN++
+	}
+
+	// Distribute leftover to flex columns inside the visible slice.
+	flexSum := 0
+	lastFlex := -1
+	for i := hScroll; i < n; i++ {
+		if out[i] == 0 {
+			break
+		}
+		if specs[i].Kind == ColumnFlex {
+			flexSum += specs[i].Weight
+			lastFlex = i
+		}
+	}
+	if flexSum > 0 && consumed < width {
+		leftover := width - consumed
+		added := 0
+		for i := hScroll; i < n; i++ {
+			if out[i] == 0 {
+				break
+			}
+			if specs[i].Kind != ColumnFlex {
+				continue
+			}
+			share := leftover * specs[i].Weight / flexSum
+			out[i] += share
+			added += share
+		}
+		if lastFlex >= 0 && added < leftover {
+			out[lastFlex] += leftover - added
+		}
+	}
+	return out
+}
+
+// MaxHScroll returns the largest valid hScroll the caller can apply
+// before all remaining columns fit at Min within width. Used to clamp
+// h / l navigation so the user can't scroll into an empty row.
+func MaxHScroll(specs []ColumnSpec, width, gutter int) int {
+	n := len(specs)
+	if n == 0 || width <= 0 {
+		return 0
+	}
+	if gutter < 0 {
+		gutter = 0
+	}
+	consumed := 0
+	visibleN := 0
+	// Walk right-to-left: as long as the rightmost (n-1)..k columns fit,
+	// increment k. The first k that overflows is one past the maximum
+	// scroll, so return k+1.
+	for i := n - 1; i >= 0; i-- {
+		need := specs[i].Min
+		if visibleN > 0 {
+			need += gutter
+		}
+		if consumed+need > width {
+			return i + 1
+		}
+		consumed += need
+		visibleN++
+	}
+	return 0
+}
+
 // FormatRow renders cells with the given widths and a fixed gutter.  Each
 // cell is padded (or truncated with "…") to its column's width.  Cells with
 // width 0 (i.e. dropped columns) are skipped entirely. AlignRight specs are

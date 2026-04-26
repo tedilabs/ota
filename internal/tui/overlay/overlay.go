@@ -257,6 +257,7 @@ func generalHelpEntries() []helpEntry {
 func navigationHelpEntries() []helpEntry {
 	return []helpEntry{
 		{"j / k", "cursor down / up"},
+		{"h / l", "scroll columns left / right"},
 		{"gg / G", "top / bottom"},
 		{"Ctrl-d / Ctrl-u", "half-page down / up"},
 		{"Ctrl-f / Ctrl-b", "page down / up"},

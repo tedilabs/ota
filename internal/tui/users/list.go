@@ -98,6 +98,11 @@ type ListModel struct {
 	sortDir SortDir
 	// ggChord captures the Vim `gg` two-press chord — see shared.GChord.
 	ggChord shared.GChord
+	// hScroll is the horizontal column offset (issue #122). 0 keeps the
+	// row aligned to the leftmost column; `l` advances the slice right
+	// when the natural row exceeds the viewport, `h` retreats. Tracked
+	// per ListModel so each list keeps its own state independently.
+	hScroll int
 }
 
 // usersLoadedMsg delivers the result of the initial fetch.
@@ -330,6 +335,21 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.cursor -= page
 		return m.clampedCursor(), nil
+	}
+
+	// Horizontal scroll (issue #122). `l` advances the column slice
+	// right when the natural row exceeds the viewport; `h` retreats.
+	// Clamped to [0, MaxHScroll] so the user can't scroll into an
+	// empty row.
+	if msg.Type == tea.KeyRunes && string(msg.Runes) == "l" {
+		m.hScroll = m.clampHScroll(m.hScroll + 1)
+		return m, nil
+	}
+	if msg.Type == tea.KeyRunes && string(msg.Runes) == "h" {
+		if m.hScroll > 0 {
+			m.hScroll--
+		}
+		return m, nil
 	}
 
 	// Vim navigation: `gg` jumps to top, `G` to bottom. Detected here
@@ -732,15 +752,8 @@ func usersColumnSpecs() []shared.ColumnSpec {
 // Without the bump a Min-tight column like LAST LOGIN (10) would clip the
 // indicator to "LAST LOGI…".
 func (m ListModel) formatUsersColumns(cells ...string) string {
-	specs := usersColumnSpecs()
-	// Auto-fit (issue #117): shrink first so titles + observed data
-	// determine the floor. Apply the sort-glyph bump *after* the shrink
-	// so the active column always reserves room for its `↑`/`↓`.
-	specs = shared.ShrinkSpecsToFit(specs, m.observedColumnWidths())
-	if i := usersSortColumnIdx(m.sortBy); i >= 0 && m.sortDir != SortOff {
-		specs[i].Min++
-	}
-	widths := shared.LayoutColumns(specs, m.usersInnerWidth(), 2)
+	specs := m.scaledUsersSpecs()
+	widths := m.usersWidths(specs)
 
 	full := make([]string, len(specs))
 	for i := range specs {
@@ -751,6 +764,47 @@ func (m ListModel) formatUsersColumns(cells ...string) string {
 		}
 	}
 	return shared.FormatRow(specs, widths, full, 2)
+}
+
+// scaledUsersSpecs returns the column specs after auto-fit shrink and
+// the sort-glyph bump — both layout decisions need to agree across the
+// header row, the data rows, and the hScroll clamp.
+func (m ListModel) scaledUsersSpecs() []shared.ColumnSpec {
+	specs := usersColumnSpecs()
+	specs = shared.ShrinkSpecsToFit(specs, m.observedColumnWidths())
+	if i := usersSortColumnIdx(m.sortBy); i >= 0 && m.sortDir != SortOff {
+		specs[i].Min++
+	}
+	return specs
+}
+
+// usersWidths picks the width slice for a render. When the natural Min
+// layout fits the inner body, fall back to the original LayoutColumns
+// (preserves DropPriority degradation on narrow terminals). When it
+// overflows, switch to the hScroll-aware packing so the user can pan
+// across columns instead of losing them to drop priority.
+func (m ListModel) usersWidths(specs []shared.ColumnSpec) []int {
+	inner := m.usersInnerWidth()
+	if shared.MaxHScroll(specs, inner, 2) == 0 {
+		return shared.LayoutColumns(specs, inner, 2)
+	}
+	return shared.LayoutColumnsHScroll(specs, inner, 2, m.hScroll)
+}
+
+// clampHScroll bounds the horizontal scroll cursor to [0, MaxHScroll]
+// using the same scaled specs the renderer reads, so h/l can never
+// step into an empty row even after auto-fit / sort-glyph bumps shift
+// the column widths.
+func (m ListModel) clampHScroll(want int) int {
+	if want < 0 {
+		return 0
+	}
+	specs := m.scaledUsersSpecs()
+	max := shared.MaxHScroll(specs, m.usersInnerWidth(), 2)
+	if want > max {
+		return max
+	}
+	return want
 }
 
 // observedColumnWidths returns the largest cell width seen in each

@@ -81,6 +81,9 @@ type ListModel struct {
 	sortBy  SortKey
 	sortDir SortDir
 	ggChord shared.GChord
+	// hScroll — horizontal column offset (issue #122). h/l move the
+	// column slice when the natural row exceeds the viewport.
+	hScroll int
 }
 
 // RuleDetailTab indexes the Group Rule Detail tab bar. v0.1.2 collapsed
@@ -245,6 +248,20 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 			return m, nil
+		case "h":
+			m.ggChord.Reset()
+			if m.hScroll > 0 {
+				m.hScroll--
+			}
+			return m, nil
+		case "l":
+			m.ggChord.Reset()
+			specs := rulesColumnSpecs()
+			max := shared.MaxHScroll(specs, m.rulesInnerWidth(), 2)
+			if m.hScroll < max {
+				m.hScroll++
+			}
+			return m, nil
 		case "S":
 			// §3.5a — Rules: Shift+S sorts by STATUS.
 			m.cycleSort(SortStatus)
@@ -365,11 +382,17 @@ func rulesColumnSpecs() []shared.ColumnSpec {
 }
 
 // formatRulesColumns lays out STATUS / NAME / TARGETS / UPDATED per the
-// TUI_DESIGN §15.0a Min/Weight + DropPriority model.
+// TUI_DESIGN §15.0a Min/Weight + DropPriority model. h/l-aware
+// (issue #122) when the natural row overflows the viewport.
 func (m ListModel) formatRulesColumns(cells ...string) string {
 	specs := rulesColumnSpecs()
 	innerWidth := m.rulesInnerWidth()
-	widths := shared.LayoutColumns(specs, innerWidth, 2)
+	var widths []int
+	if shared.MaxHScroll(specs, innerWidth, 2) == 0 {
+		widths = shared.LayoutColumns(specs, innerWidth, 2)
+	} else {
+		widths = shared.LayoutColumnsHScroll(specs, innerWidth, 2, m.hScroll)
+	}
 
 	full := make([]string, len(specs))
 	for i := range specs {
