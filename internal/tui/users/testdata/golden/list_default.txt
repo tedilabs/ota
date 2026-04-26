@@ -1,7 +1,7 @@
 Users  5 of 5
-STATUS          LOGIN                         DISPLAY NAME        LAST LOGIN   CHANGED
-> [+] ACTIVE      alice@acme.com                Alice Smith             2h ago         —
-  [+] ACTIVE      alan.turing@acme.com          Alan Turing             1d ago         —
-  [!] LOCKED_OUT  alex.lee@acme.com             Alex Lee                     —         —
-  [-] STAGED      amy.wong@acme.com             Amy Wong                     —         —
-  [X] SUSPENDED   aaron.k@acme.com              Aaron K.                5d ago         —
+STATUS          LOGIN                   DISPLAY NAME                              LAST LOGIN                CHANGED
+> [+] ACTIVE      alice@acme.com          Alice Smith                                   2h ago                      —
+  [+] ACTIVE      alan.turing@acme.com    Alan Turing                                   1d ago                      —
+  [!] LOCKED_OUT  alex.lee@acme.com       Alex Lee                                           —                      —
+  [-] STAGED      amy.wong@acme.com       Amy Wong                                           —                      —
+  [X] SUSPENDED   aaron.k@acme.com        Aaron K.                                      5d ago                      —

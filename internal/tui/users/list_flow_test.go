@@ -29,19 +29,23 @@ import (
 func Test_UsersListFlow_FilterAlice_OpensDetail(t *testing.T) {
 	t.Parallel()
 
+	// Login fixtures stay <= LOGIN min width (22) per TUI_DESIGN §15.0a.2 so
+	// they render verbatim at the test's 100-cell terminal without ellipsis
+	// truncation. The original "alice@redacted.example.com" is 26 chars and
+	// would render as "alice@redacted.exampl…" with the v0.1.1 column model.
 	port := fakes.NewUsersPort(t)
 	port.ListFunc = func(_ context.Context, _ domain.UsersQuery) (domain.Iterator[domain.User], error) {
 		return &fakes.SliceIterator[domain.User]{
 			Items: []domain.User{
-				{ID: "00u_active_alice", Profile: domain.UserProfile{Login: "alice@redacted.example.com"}, Status: domain.UserStatusActive},
-				{ID: "00u_active_bob", Profile: domain.UserProfile{Login: "bob@redacted.example.com"}, Status: domain.UserStatusActive},
+				{ID: "00u_active_alice", Profile: domain.UserProfile{Login: "alice@example.com"}, Status: domain.UserStatusActive},
+				{ID: "00u_active_bob", Profile: domain.UserProfile{Login: "bob@example.com"}, Status: domain.UserStatusActive},
 			},
 		}, nil
 	}
 	port.GetFunc = func(_ context.Context, id string) (domain.User, error) {
 		return domain.User{
 			ID:      id,
-			Profile: domain.UserProfile{Login: "alice@redacted.example.com"},
+			Profile: domain.UserProfile{Login: "alice@example.com"},
 			Status:  domain.UserStatusActive,
 		}, nil
 	}
@@ -59,7 +63,7 @@ func Test_UsersListFlow_FilterAlice_OpensDetail(t *testing.T) {
 
 	// 초기 fetch 대기: 화면에 alice가 등장해야 한다.
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte("alice@redacted.example.com"))
+		return bytes.Contains(b, []byte("alice@example.com"))
 	}, teatest.WithCheckInterval(10*time.Millisecond), teatest.WithDuration(2*time.Second))
 
 	// '/alice' 필터 진입 + 타이핑 + Enter 확정.
@@ -75,6 +79,6 @@ func Test_UsersListFlow_FilterAlice_OpensDetail(t *testing.T) {
 	require.NoError(t, err)
 
 	// 상세 화면에 alice 상세 정보가 있어야 한다.
-	require.Contains(t, string(out), "alice@redacted.example.com",
+	require.Contains(t, string(out), "alice@example.com",
 		"상세 전환 후 login이 렌더되어야 한다 (REQ-U05 AC-1)")
 }

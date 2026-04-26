@@ -121,9 +121,11 @@ type Model struct {
 	offline bool
 
 	// width / height track the current terminal size, updated via
-	// tea.WindowSizeMsg. The chrome adapts to this value (clamped to the
-	// 80–200 range; below 80 we fall back to the minimum and rely on the
-	// renderer's truncation to keep layout intact).
+	// tea.WindowSizeMsg. The chrome renders 100% to width (TUI_DESIGN
+	// §15.0a v1.2.0): widths >= 80 pass through unchanged so wide
+	// terminals fill edge-to-edge; widths < 80 clamp to 80 and rely on
+	// the renderer's truncation to keep the layout intact; width == 0
+	// (no WindowSizeMsg yet) falls back to shared.ChromeWidth.
 	width  int
 	height int
 }
@@ -299,8 +301,17 @@ func (m Model) View() string {
 	return shared.RenderChrome(chrome)
 }
 
-// clampWidth bounds w to [80, 200]. Zero (no WindowSizeMsg yet) maps to the
-// chrome's stable default so initial frames render before tea reports size.
+// clampWidth maps a terminal width to the chrome render width.
+//
+//   - w == 0 (no WindowSizeMsg yet): use shared.ChromeWidth as a fallback so
+//     the first frame draws something sensible before tea reports the size.
+//   - w < 80: clamp to 80 (the §1.2 minimum supported terminal). The
+//     "ota requires minimum 80x24 terminal" branch is handled higher up by
+//     the boot screen; once the chrome is engaged we just don't render
+//     narrower than 80 cells.
+//   - w >= 80: pass through unchanged. The v1.0/v1.1 cap of 200 was dropped
+//     in v0.1.1 (§15.0a v1.2.0) so 100% terminal fill works on wide
+//     monitors (160, 180, 220, 240+).
 func clampWidth(w int) int {
 	if w <= 0 {
 		return shared.ChromeWidth
@@ -308,17 +319,14 @@ func clampWidth(w int) int {
 	if w < 80 {
 		return 80
 	}
-	if w > 200 {
-		return 200
-	}
 	return w
 }
 
 // clampBodyLines maps a terminal height to a reasonable body-row count. The
-// chrome itself reserves 6 rows (top border, 2 header rows, divider, 2
-// status rows, bottom border).
+// chrome itself reserves 7 rows (TUI_DESIGN §15.0a.5): top border, TitleBar,
+// ContextBar, body divider, status divider, KeyHints, bottom border.
 func clampBodyLines(h int) int {
-	const reserved = 6
+	const reserved = 7
 	if h <= 0 {
 		return 16
 	}

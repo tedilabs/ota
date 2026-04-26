@@ -205,45 +205,51 @@ func formatTargets(ids []string) string {
 	return strings.Join(ids, ", ")
 }
 
-// formatRulesColumns lays out the 4 columns (TUI_DESIGN §15.4) with
-// responsive drop:
-//
-//   - W ≥ 120 : all 4 columns
-//   - 100..119: drop UPDATED
-//   - 90..99  : STATUS + NAME + TARGETS only
-//   - 80..89  : STATUS + NAME only
-//   - <80     : STATUS + NAME only (NAME trimmed)
-func (m ListModel) formatRulesColumns(status, name, targets, updated string) string {
-	w := m.width
-	const (
-		wStatus  = 14
-		wName    = 30
-		wTargets = 22
-		wUpdated = 10
-	)
-	switch {
-	case w >= 120 || w == 0:
-		return padRight(status, wStatus) + "  " + padRight(name, wName) + "  " +
-			padRight(shared.Truncate(targets, wTargets), wTargets) + "  " +
-			padLeft(updated, wUpdated)
-	case w >= 100:
-		return padRight(status, wStatus) + "  " + padRight(name, wName) + "  " +
-			padRight(shared.Truncate(targets, wTargets), wTargets)
-	case w >= 90:
-		return padRight(status, wStatus) + "  " + padRight(name, wName) + "  " +
-			padRight(shared.Truncate(targets, 18), 18)
-	case w >= 80:
-		return padRight(status, wStatus) + "  " + padRight(name, max(0, w-18))
-	default:
-		return padRight(status, wStatus) + "  " + padRight(name, max(0, w-18))
+// rulesColumnSpecs returns the §15.0a.4 column definitions in declaration
+// order: STATUS, NAME, TARGETS, UPDATED. Drop priorities (low first):
+// TARGETS (1) → UPDATED (2); STATUS / NAME never drop.
+func rulesColumnSpecs() []shared.ColumnSpec {
+	return []shared.ColumnSpec{
+		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 14, DropPriority: 0},
+		{Title: "NAME", Kind: shared.ColumnFlex, Min: 22, Weight: 2, DropPriority: 0},
+		{Title: "TARGETS", Kind: shared.ColumnFlex, Min: 16, Weight: 2, DropPriority: 1},
+		{Title: "UPDATED", Kind: shared.ColumnFixed, Min: 10, DropPriority: 2, AlignRight: true},
 	}
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
+// formatRulesColumns lays out STATUS / NAME / TARGETS / UPDATED per the
+// TUI_DESIGN §15.0a Min/Weight + DropPriority model.
+func (m ListModel) formatRulesColumns(cells ...string) string {
+	specs := rulesColumnSpecs()
+	innerWidth := m.rulesInnerWidth()
+	widths := shared.LayoutColumns(specs, innerWidth, 2)
+
+	full := make([]string, len(specs))
+	for i := range specs {
+		if i < len(cells) {
+			full[i] = cells[i]
+		} else {
+			full[i] = "—"
+		}
 	}
-	return b
+	return shared.FormatRow(specs, widths, full, 2)
+}
+
+// rulesInnerWidth mirrors users.usersInnerWidth — body width after the
+// chrome border (2), left padding (1), and cursor gutter (2).
+func (m ListModel) rulesInnerWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	inner := w - 2 - 1 - 2
+	if inner < 20 {
+		inner = 20
+	}
+	return inner
 }
 
 // countInvalid returns the number of rules whose Status is INVALID.
@@ -271,45 +277,6 @@ func (m ListModel) now() time.Time {
 		return m.deps.Clock.Now()
 	}
 	return time.Now()
-}
-
-// padRight / padLeft mirror the Users/Groups helpers.
-func padRight(s string, width int) string {
-	w := visibleLen(s)
-	if w >= width {
-		return shared.Truncate(s, width)
-	}
-	return s + strings.Repeat(" ", width-w)
-}
-
-func padLeft(s string, width int) string {
-	w := visibleLen(s)
-	if w >= width {
-		return shared.Truncate(s, width)
-	}
-	return strings.Repeat(" ", width-w) + s
-}
-
-func visibleLen(s string) int {
-	count := 0
-	i := 0
-	for i < len(s) {
-		c := s[i]
-		if c == 0x1b && i+1 < len(s) && s[i+1] == '[' {
-			j := i + 2
-			for j < len(s) {
-				if s[j] >= 0x40 && s[j] <= 0x7e {
-					break
-				}
-				j++
-			}
-			i = j + 1
-			continue
-		}
-		count++
-		i++
-	}
-	return count
 }
 
 func (m ListModel) visible() []domain.GroupRule {

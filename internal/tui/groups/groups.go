@@ -200,48 +200,52 @@ func groupTags(g domain.Group) string {
 	return strings.Join(parts, "")
 }
 
-// formatGroupsColumns lays out the 5 columns (TUI_DESIGN §15.3) with
-// responsive drop:
-//
-//   - W ≥ 120 : all 5 columns
-//   - 100..119: drop TAGS
-//   - 90..99  : drop TAGS + DESCRIPTION
-//   - 80..89  : TYPE + NAME + UPDATED only
-//   - <80     : TYPE + NAME only
-func (m ListModel) formatGroupsColumns(typeBadge, name, desc, updated, tags string) string {
-	w := m.width
-	const (
-		wType    = 4
-		wName    = 24
-		wDesc    = 28
-		wUpdated = 10
-		wTags    = 12
-	)
-	switch {
-	case w >= 120 || w == 0:
-		return padRight(typeBadge, wType) + "  " + padRight(name, wName) + "  " +
-			padRight(shared.Truncate(desc, wDesc), wDesc) + "  " +
-			padLeft(updated, wUpdated) + "  " + padRight(tags, wTags)
-	case w >= 100:
-		return padRight(typeBadge, wType) + "  " + padRight(name, wName) + "  " +
-			padRight(shared.Truncate(desc, wDesc), wDesc) + "  " +
-			padLeft(updated, wUpdated)
-	case w >= 90:
-		return padRight(typeBadge, wType) + "  " + padRight(name, wName) + "  " +
-			padLeft(updated, wUpdated)
-	case w >= 80:
-		return padRight(typeBadge, wType) + "  " + padRight(name, 30) + "  " +
-			padLeft(updated, wUpdated)
-	default:
-		return padRight(typeBadge, wType) + "  " + padRight(name, max(0, w-8))
+// groupsColumnSpecs returns the §15.0a.3 column definitions in declaration
+// order: TYPE, NAME, DESCRIPTION, UPDATED, TAGS. Drop priorities (low first):
+// TAGS (1) → DESCRIPTION (2) → UPDATED (3); TYPE / NAME never drop.
+func groupsColumnSpecs() []shared.ColumnSpec {
+	return []shared.ColumnSpec{
+		{Title: "TYPE", Kind: shared.ColumnFixed, Min: 4, DropPriority: 0},
+		{Title: "NAME", Kind: shared.ColumnFlex, Min: 18, Weight: 2, DropPriority: 0},
+		{Title: "DESCRIPTION", Kind: shared.ColumnFlex, Min: 16, Weight: 2, DropPriority: 2},
+		{Title: "UPDATED", Kind: shared.ColumnFixed, Min: 10, DropPriority: 3, AlignRight: true},
+		{Title: "TAGS", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 1},
 	}
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
+// formatGroupsColumns lays out TYPE / NAME / DESCRIPTION / UPDATED / TAGS
+// per the TUI_DESIGN §15.0a Min/Weight + DropPriority model.
+func (m ListModel) formatGroupsColumns(cells ...string) string {
+	specs := groupsColumnSpecs()
+	innerWidth := m.groupsInnerWidth()
+	widths := shared.LayoutColumns(specs, innerWidth, 2)
+
+	full := make([]string, len(specs))
+	for i := range specs {
+		if i < len(cells) {
+			full[i] = cells[i]
+		} else {
+			full[i] = "—"
+		}
 	}
-	return b
+	return shared.FormatRow(specs, widths, full, 2)
+}
+
+// groupsInnerWidth mirrors users.usersInnerWidth — body width after the
+// chrome border (2), left padding (1), and cursor gutter (2).
+func (m ListModel) groupsInnerWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	inner := w - 2 - 1 - 2
+	if inner < 20 {
+		inner = 20
+	}
+	return inner
 }
 
 // groupsCounter returns "N of M" when no filter, else "N of M".
@@ -285,46 +289,6 @@ func (m ListModel) now() time.Time {
 		return m.deps.Clock.Now()
 	}
 	return time.Now()
-}
-
-// padRight / padLeft mirror the Users helpers — kept package-local to avoid
-// exporting layout helpers from shared until we settle on a public API.
-func padRight(s string, width int) string {
-	w := visibleLen(s)
-	if w >= width {
-		return shared.Truncate(s, width)
-	}
-	return s + strings.Repeat(" ", width-w)
-}
-
-func padLeft(s string, width int) string {
-	w := visibleLen(s)
-	if w >= width {
-		return shared.Truncate(s, width)
-	}
-	return strings.Repeat(" ", width-w) + s
-}
-
-func visibleLen(s string) int {
-	count := 0
-	i := 0
-	for i < len(s) {
-		c := s[i]
-		if c == 0x1b && i+1 < len(s) && s[i+1] == '[' {
-			j := i + 2
-			for j < len(s) {
-				if s[j] >= 0x40 && s[j] <= 0x7e {
-					break
-				}
-				j++
-			}
-			i = j + 1
-			continue
-		}
-		count++
-		i++
-	}
-	return count
 }
 
 func (m ListModel) visible() []domain.Group {

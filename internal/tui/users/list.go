@@ -216,9 +216,9 @@ func (m ListModel) contextLine(visible []domain.User) string {
 }
 
 // renderUsersHeader returns the column header row, width-aware (TUI_DESIGN
-// §15.2 responsive drop).
+// §15.0a / §15.2). DEPARTMENT only appears at W' >= 130 (§15.0a.2).
 func (m ListModel) renderUsersHeader(_ shared.Tokens) string {
-	return m.formatUsersColumns("STATUS", "LOGIN", "DISPLAY NAME", "LAST LOGIN", "CHANGED")
+	return m.formatUsersColumns("STATUS", "LOGIN", "DISPLAY NAME", "LAST LOGIN", "CHANGED", "DEPARTMENT")
 }
 
 // renderUsersRow formats a single User row, width-aware.
@@ -230,127 +230,80 @@ func (m ListModel) renderUsersRow(u domain.User, now time.Time, tk shared.Tokens
 	}
 	last := shared.RelativeTime(u.LastLogin, now)
 	changed := shared.RelativeTime(u.StatusChanged, now)
-	return m.formatUsersColumns(status, u.Profile.Login, display, last, changed)
+	department := u.Profile.Department
+	if department == "" {
+		department = "—"
+	}
+	return m.formatUsersColumns(status, u.Profile.Login, display, last, changed, department)
+}
+
+// usersColumnSpecs returns the §15.0a.2 column definitions in declaration
+// order: STATUS, LOGIN, DISPLAY NAME, LAST LOGIN, CHANGED, DEPARTMENT.
+// DropPriority follows the §15.0a.5 scenario table:
+//   - LAST LOGIN drops first (priority 1)
+//   - CHANGED drops next (priority 2)
+//   - DISPLAY NAME drops last (priority 3)
+//   - STATUS / LOGIN / DEPARTMENT are essentials at their applicable widths
+//     (DEPARTMENT is gated by the W' < 130 visibility floor in §15.0a.2 —
+//     see formatUsersColumns).
+func usersColumnSpecs() []shared.ColumnSpec {
+	return []shared.ColumnSpec{
+		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 14, DropPriority: 0},
+		{Title: "LOGIN", Kind: shared.ColumnFixed, Min: 22, DropPriority: 0},
+		{Title: "DISPLAY NAME", Kind: shared.ColumnFlex, Min: 14, Weight: 2, DropPriority: 3},
+		{Title: "LAST LOGIN", Kind: shared.ColumnFixed, Min: 10, DropPriority: 1, AlignRight: true},
+		{Title: "CHANGED", Kind: shared.ColumnFlex, Min: 8, Weight: 1, DropPriority: 2, AlignRight: true},
+		{Title: "DEPARTMENT", Kind: shared.ColumnFlex, Min: 12, Weight: 1, DropPriority: 4},
+	}
 }
 
 // formatUsersColumns lays out STATUS / LOGIN / DISPLAY NAME / LAST LOGIN /
-// CHANGED with TUI_DESIGN §15.2 responsive drop:
+// CHANGED / DEPARTMENT per the TUI_DESIGN §15.0a Min/Weight + DropPriority
+// model. Cells beyond the supplied list (e.g., DEPARTMENT before the User
+// model carries it) are rendered as "—".
+func (m ListModel) formatUsersColumns(cells ...string) string {
+	specs := usersColumnSpecs()
+	innerWidth := m.usersInnerWidth()
+	// §15.0a.2 — DEPARTMENT only appears once W' >= 130. We model that as a
+	// late-stage drop by raising its DropPriority effective threshold here.
+	if innerWidth < 130 {
+		specs[len(specs)-1].DropPriority = 0 // ensure pickDropCandidate returns it first
+		// then explicitly hide it via a sentinel that LayoutColumns won't see.
+		specs = specs[:len(specs)-1]
+	}
+	widths := shared.LayoutColumns(specs, innerWidth, 2)
+
+	full := make([]string, len(specs))
+	for i := range specs {
+		if i < len(cells) {
+			full[i] = cells[i]
+		} else {
+			full[i] = "—"
+		}
+	}
+	return shared.FormatRow(specs, widths, full, 2)
+}
+
+// usersInnerWidth returns the body width available to columns: chrome inner
+// (W - 2 borders) minus the 2-cell gutter the chrome adds around the body
+// (1 cell left padding + the row's right-edge padding handled by chrome).
 //
-//   - W ≥ 120 : all 5 columns
-//   - 100..119: drop CHANGED
-//   - 90..99  : drop CHANGED + DISPLAY NAME
-//   - 80..89  : keep STATUS + LOGIN + LAST LOGIN
-//   - <80     : STATUS + LOGIN only
-//
-// width 0 (no WindowSizeMsg yet) renders the full layout — first frame
-// uses the chrome's default 85-col fallback so callers see all columns even
-// before tea reports terminal size.
-func (m ListModel) formatUsersColumns(status, login, display, lastLogin, changed string) string {
+// width == 0 (no WindowSizeMsg yet) falls back to the chrome's default 85
+// so the first frame still shows the standard column set.
+func (m ListModel) usersInnerWidth() int {
 	w := m.width
-	const (
-		wStatus  = 14
-		wLogin   = 28
-		wDisplay = 18
-		wLast    = 10
-		wChanged = 8
-	)
-	switch {
-	case w >= 120 || w == 0:
-		return padRight(status, wStatus) + "  " + padRight(login, wLogin) + "  " +
-			padRight(display, wDisplay) + "  " + padLeft(lastLogin, wLast) + "  " +
-			padLeft(changed, wChanged)
-	case w >= 100:
-		return padRight(status, wStatus) + "  " + padRight(login, wLogin) + "  " +
-			padRight(display, wDisplay) + "  " + padLeft(lastLogin, wLast)
-	case w >= 90:
-		return padRight(status, wStatus) + "  " + padRight(login, wLogin) + "  " +
-			padLeft(lastLogin, wLast)
-	case w >= 80:
-		return padRight(status, wStatus) + "  " + padRight(login, 22) + "  " +
-			padLeft(lastLogin, wLast)
-	default:
-		return padRight(status, wStatus) + "  " + padRight(login, max(0, w-18))
+	if w <= 0 {
+		w = shared.ChromeWidth
 	}
-}
-
-// max returns the larger of two ints.
-func max(a, b int) int {
-	if a > b {
-		return a
+	if w < 80 {
+		w = 80
 	}
-	return b
-}
-
-// padRight left-aligns s within width using spaces (or truncates with "…").
-func padRight(s string, width int) string {
-	if visibleLen(s) > width {
-		return shared.Truncate(s, width)
+	// chrome border (2) + left padding (1) + cursor gutter (2 for "> "/"  ").
+	inner := w - 2 - 1 - 2
+	if inner < 20 {
+		inner = 20
 	}
-	return s + strings.Repeat(" ", width-visibleLen(s))
-}
-
-// padLeft right-aligns s within width using leading spaces.
-func padLeft(s string, width int) string {
-	if visibleLen(s) > width {
-		return shared.Truncate(s, width)
-	}
-	return strings.Repeat(" ", width-visibleLen(s)) + s
-}
-
-// visibleLen counts visible cells, ignoring ANSI escapes. We re-implement a
-// minimal CSI stripper here to avoid a circular import; chrome.go has the
-// canonical version.
-func visibleLen(s string) int {
-	count := 0
-	i := 0
-	for i < len(s) {
-		c := s[i]
-		if c == 0x1b && i+1 < len(s) && s[i+1] == '[' {
-			j := i + 2
-			for j < len(s) {
-				if s[j] >= 0x40 && s[j] <= 0x7e {
-					break
-				}
-				j++
-			}
-			i = j + 1
-			continue
-		}
-		// rune-naive count (sufficient for the ASCII + box-drawing alphabet
-		// our cells use)
-		_, size := decodeRune(s[i:])
-		count++
-		i += size
-	}
-	return count
-}
-
-func decodeRune(s string) (r rune, size int) {
-	if len(s) == 0 {
-		return 0, 0
-	}
-	b := s[0]
-	switch {
-	case b < 0x80:
-		return rune(b), 1
-	case b < 0xC0:
-		return rune(b), 1
-	case b < 0xE0:
-		if len(s) < 2 {
-			return rune(b), 1
-		}
-		return rune(b), 2
-	case b < 0xF0:
-		if len(s) < 3 {
-			return rune(b), 1
-		}
-		return rune(b), 3
-	default:
-		if len(s) < 4 {
-			return rune(b), 1
-		}
-		return rune(b), 4
-	}
+	return inner
 }
 
 // renderUsersError builds the inline error panel (TUI_DESIGN §17.1) using
