@@ -6,36 +6,44 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"gopkg.in/yaml.v3"
 
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/mask"
 	"github.com/tedilabs/ota/internal/tui/shared"
 )
 
-// DetailTab indexes the visible tab in DetailModel. Order matches the
-// TUI_DESIGN §15.7 v1.2.0 tab bar so int casts to a stable rendering.
+// DetailTab indexes the visible tab in DetailModel. v0.1.2 collapsed the
+// six placeholder tabs (Profile / Credentials / Timestamps / Groups /
+// Factors / Recent) into the three structural views the user actually
+// asked for: a curated key-value Pretty view plus full JSON / YAML
+// dumps of the same domain object. Operators can switch with
+// Tab / Shift-Tab; `r` toggles to JSON and back.
+//
+// DetailTabRaw is kept as an alias for DetailTabJSON so v0.1.1 callers
+// using `WithActiveTab(DetailTabRaw)` continue to compile and behave the
+// same way.
 type DetailTab int
 
 const (
-	DetailTabProfile DetailTab = iota
-	DetailTabCredentials
-	DetailTabTimestamps
-	DetailTabGroups
-	DetailTabFactors
-	DetailTabRecent
-	DetailTabRaw
+	DetailTabPretty DetailTab = iota
+	DetailTabJSON
+	DetailTabYAML
+)
+
+// DetailTabRaw is the legacy alias for DetailTabJSON. v0.1.2+ code should
+// reference DetailTabJSON directly.
+const (
+	DetailTabProfile = DetailTabPretty
+	DetailTabRaw     = DetailTabJSON
 )
 
 // detailTabLabels lists the label rendered for each DetailTab in the tab
 // bar. Index aligns with the DetailTab iota.
 var detailTabLabels = []string{
-	"Profile",
-	"Credentials",
-	"Timestamps",
-	"Groups",
-	"Factors",
-	"Recent",
-	"Raw",
+	"Pretty",
+	"JSON",
+	"YAML",
 }
 
 // detailTabCount is the number of detail tabs (used by Tab/Shift-Tab cycling).
@@ -97,15 +105,31 @@ func (m DetailModel) View() string {
 	b.WriteByte('\n')
 
 	switch m.activeTab {
-	case DetailTabRaw:
-		b.WriteString(m.renderRawTab())
+	case DetailTabJSON:
+		b.WriteString(m.renderJSONTab())
+	case DetailTabYAML:
+		b.WriteString(m.renderYAMLTab())
 	default:
-		// Profile tab is the only fully-rendered MVP body — other tabs
-		// surface a placeholder so operators see the tab transition is
-		// real even before §15.7 fills out Credentials/Timestamps/...
+		// DetailTabPretty: curated key-value rendering, the v0.1.0 surface.
 		b.WriteString(m.renderProfileTab())
 	}
 	return b.String()
+}
+
+// renderJSONTab is the v0.1.2 successor to renderRawTab; the implementation
+// is unchanged but the name now matches the visible "JSON" tab label.
+func (m DetailModel) renderJSONTab() string { return m.renderRawTab() }
+
+// renderYAMLTab marshals the same userJSONShape as the JSON tab through
+// gopkg.in/yaml.v3 so operators get a syntactically-correct YAML view.
+// PII tokens carry through untouched (the value is masked at the shape
+// step) and we keep the # masked annotations from annotateMaskedLines.
+func (m DetailModel) renderYAMLTab() string {
+	body, err := rawYAMLForUser(m.user, m.unmasked)
+	if err != nil {
+		return "(yaml render error: " + err.Error() + ")\n"
+	}
+	return annotateMaskedLines(body) + "\n"
 }
 
 // renderTabBar lays out the §15.7 v1.2.0 tab labels with the active one
@@ -209,7 +233,27 @@ func (m DetailModel) renderRawTab() string {
 // their masked tokens (or left plain when the operator has unmasked them
 // for this session) and returns the json.MarshalIndent output.
 func rawJSONForUser(u domain.User, unmasked map[string]bool) (string, error) {
-	out := userJSONShape{
+	buf, err := json.MarshalIndent(userJSONShapeFor(u, unmasked), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+// rawYAMLForUser is the YAML counterpart to rawJSONForUser; it shares the
+// projection so the two views stay in lockstep.
+func rawYAMLForUser(u domain.User, unmasked map[string]bool) (string, error) {
+	buf, err := yaml.Marshal(userJSONShapeFor(u, unmasked))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(buf), "\n"), nil
+}
+
+// userJSONShapeFor centralises the PII-aware projection used by both the
+// JSON and YAML tabs.
+func userJSONShapeFor(u domain.User, unmasked map[string]bool) userJSONShape {
+	return userJSONShape{
 		ID:              u.ID,
 		Status:          string(u.Status),
 		Profile:         userProfileJSON(u.Profile, unmasked),
@@ -221,44 +265,39 @@ func rawJSONForUser(u domain.User, unmasked map[string]bool) (string, error) {
 		LastUpdated:     formatJSONTime(u.LastUpdated),
 		PasswordChanged: formatJSONTimePtr(u.PasswordChanged),
 	}
-	buf, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(buf), nil
 }
 
 // userJSONShape is the deterministic projection used by Raw tab serialisation.
 // We keep field order explicit (rather than reflecting domain.User directly)
 // so the golden file is stable across Go map-iteration changes.
 type userJSONShape struct {
-	ID              string             `json:"id"`
-	Status          string             `json:"status"`
-	Profile         userProfileShape   `json:"profile"`
-	Credentials     userCredsShape     `json:"credentials"`
-	Created         string             `json:"created,omitempty"`
-	Activated       string             `json:"activated,omitempty"`
-	StatusChanged   string             `json:"statusChanged,omitempty"`
-	LastLogin       string             `json:"lastLogin,omitempty"`
-	LastUpdated     string             `json:"lastUpdated,omitempty"`
-	PasswordChanged string             `json:"passwordChanged,omitempty"`
+	ID              string           `json:"id" yaml:"id"`
+	Status          string           `json:"status" yaml:"status"`
+	Profile         userProfileShape `json:"profile" yaml:"profile"`
+	Credentials     userCredsShape   `json:"credentials" yaml:"credentials"`
+	Created         string           `json:"created,omitempty" yaml:"created,omitempty"`
+	Activated       string           `json:"activated,omitempty" yaml:"activated,omitempty"`
+	StatusChanged   string           `json:"statusChanged,omitempty" yaml:"statusChanged,omitempty"`
+	LastLogin       string           `json:"lastLogin,omitempty" yaml:"lastLogin,omitempty"`
+	LastUpdated     string           `json:"lastUpdated,omitempty" yaml:"lastUpdated,omitempty"`
+	PasswordChanged string           `json:"passwordChanged,omitempty" yaml:"passwordChanged,omitempty"`
 }
 
 type userProfileShape struct {
-	Login       string         `json:"login"`
-	Email       string         `json:"email,omitempty"`
-	FirstName   string         `json:"firstName,omitempty"`
-	LastName    string         `json:"lastName,omitempty"`
-	DisplayName string         `json:"displayName,omitempty"`
-	MobilePhone string         `json:"mobilePhone,omitempty"`
-	SecondEmail string         `json:"secondEmail,omitempty"`
-	Department  string         `json:"department,omitempty"`
-	Extras      map[string]any `json:"extras,omitempty"`
+	Login       string         `json:"login" yaml:"login"`
+	Email       string         `json:"email,omitempty" yaml:"email,omitempty"`
+	FirstName   string         `json:"firstName,omitempty" yaml:"firstName,omitempty"`
+	LastName    string         `json:"lastName,omitempty" yaml:"lastName,omitempty"`
+	DisplayName string         `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	MobilePhone string         `json:"mobilePhone,omitempty" yaml:"mobilePhone,omitempty"`
+	SecondEmail string         `json:"secondEmail,omitempty" yaml:"secondEmail,omitempty"`
+	Department  string         `json:"department,omitempty" yaml:"department,omitempty"`
+	Extras      map[string]any `json:"extras,omitempty" yaml:"extras,omitempty"`
 }
 
 type userCredsShape struct {
-	Provider     string `json:"provider,omitempty"`
-	ProviderType string `json:"providerType,omitempty"`
+	Provider     string `json:"provider,omitempty" yaml:"provider,omitempty"`
+	ProviderType string `json:"providerType,omitempty" yaml:"providerType,omitempty"`
 }
 
 func userProfileJSON(p domain.UserProfile, unmasked map[string]bool) userProfileShape {

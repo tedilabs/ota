@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"gopkg.in/yaml.v3"
 
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
@@ -77,18 +78,24 @@ type ListModel struct {
 	sortDir SortDir
 }
 
-// GroupDetailTab indexes the Group Detail tab bar (TUI_DESIGN §15.7 v1.2.0).
+// GroupDetailTab indexes the Group Detail tab bar. v0.1.2 collapsed the
+// placeholder tabs into the three structural views (Pretty / JSON / YAML).
+// GroupDetailTabProfile and GroupDetailTabRaw are kept as compile-time
+// aliases so v0.1.1 callers keep working.
 type GroupDetailTab int
 
 const (
-	GroupDetailTabProfile GroupDetailTab = iota
-	GroupDetailTabMembers
-	GroupDetailTabApps
-	GroupDetailTabRules
-	GroupDetailTabRaw
+	GroupDetailTabPretty GroupDetailTab = iota
+	GroupDetailTabJSON
+	GroupDetailTabYAML
 )
 
-var groupDetailTabLabels = []string{"Profile", "Members", "Apps", "Rules", "Raw"}
+const (
+	GroupDetailTabProfile = GroupDetailTabPretty
+	GroupDetailTabRaw     = GroupDetailTabJSON
+)
+
+var groupDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
 var groupDetailTabCount = GroupDetailTab(len(groupDetailTabLabels))
 
 // groupsErrMsg surfaces a fetch failure to View() (TUI_DESIGN §17).
@@ -500,12 +507,24 @@ func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab) string {
 	b.WriteString(strings.Repeat("─", 78))
 	b.WriteByte('\n')
 	switch active {
-	case GroupDetailTabRaw:
+	case GroupDetailTabJSON:
 		b.WriteString(renderGroupRawTab(g))
+	case GroupDetailTabYAML:
+		b.WriteString(renderGroupYAMLTab(g))
 	default:
 		b.WriteString(renderGroupDetail(g))
 	}
 	return b.String()
+}
+
+// renderGroupYAMLTab marshals the same groupJSONShape projection as the
+// JSON tab through gopkg.in/yaml.v3.
+func renderGroupYAMLTab(g domain.Group) string {
+	body, err := yaml.Marshal(groupJSONShapeFor(g))
+	if err != nil {
+		return "(yaml render error: " + err.Error() + ")\n"
+	}
+	return strings.TrimRight(string(body), "\n") + "\n"
 }
 
 func renderGroupTabBar(active GroupDetailTab) string {
@@ -524,7 +543,17 @@ func renderGroupTabBar(active GroupDetailTab) string {
 // Groups carry no PII so no mask wrapping is needed; the marshal is
 // straight from the domain projection.
 func renderGroupRawTab(g domain.Group) string {
-	out := groupJSONShape{
+	buf, err := json.MarshalIndent(groupJSONShapeFor(g), "", "  ")
+	if err != nil {
+		return "(raw render error: " + err.Error() + ")\n"
+	}
+	return string(buf) + "\n"
+}
+
+// groupJSONShapeFor centralises the deterministic projection so JSON and
+// YAML tabs render identical data.
+func groupJSONShapeFor(g domain.Group) groupJSONShape {
+	return groupJSONShape{
 		ID:              g.ID,
 		Type:            string(g.Type),
 		DynamicTargeted: g.DynamicTargeted,
@@ -535,28 +564,23 @@ func renderGroupRawTab(g domain.Group) string {
 		Created:     formatJSONTime(g.Created),
 		LastUpdated: formatJSONTime(g.LastUpdated),
 	}
-	buf, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return "(raw render error: " + err.Error() + ")\n"
-	}
-	return string(buf) + "\n"
 }
 
-// groupJSONShape is a stable projection of domain.Group used by the Raw
-// tab. Field order is fixed so the golden file doesn't depend on Go map
-// iteration order.
+// groupJSONShape is a stable projection of domain.Group used by the JSON
+// and YAML tabs. Field order is fixed so the golden file doesn't depend
+// on Go map iteration order.
 type groupJSONShape struct {
-	ID              string            `json:"id"`
-	Type            string            `json:"type"`
-	DynamicTargeted bool              `json:"dynamicTargeted"`
-	Profile         groupProfileShape `json:"profile"`
-	Created         string            `json:"created,omitempty"`
-	LastUpdated     string            `json:"lastUpdated,omitempty"`
+	ID              string            `json:"id" yaml:"id"`
+	Type            string            `json:"type" yaml:"type"`
+	DynamicTargeted bool              `json:"dynamicTargeted" yaml:"dynamicTargeted"`
+	Profile         groupProfileShape `json:"profile" yaml:"profile"`
+	Created         string            `json:"created,omitempty" yaml:"created,omitempty"`
+	LastUpdated     string            `json:"lastUpdated,omitempty" yaml:"lastUpdated,omitempty"`
 }
 
 type groupProfileShape struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
+	Name        string `json:"name" yaml:"name"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
 
 func formatJSONTime(t time.Time) string {

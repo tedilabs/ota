@@ -37,7 +37,7 @@ func Test_DetailModel_RawTab_RendersMaskedJSON(t *testing.T) {
 	m := users.NewDetailModel(users.Deps{}, u).WithActiveTab(users.DetailTabRaw)
 	got := m.View()
 
-	require.Contains(t, got, "[Raw]",
+	require.Contains(t, got, "[JSON]",
 		"Raw tab label must be active")
 	require.Contains(t, got, "\"id\": \"00u_alice\"",
 		"id field must serialise verbatim")
@@ -59,23 +59,52 @@ func Test_DetailModel_RawTab_RendersMaskedJSON(t *testing.T) {
 	}
 }
 
-// Test_DetailModel_RawTab_TabBarShowsAllSeven — the tab bar must list all
-// seven tabs (Profile…Raw) regardless of which one is active. Active tab
-// is rendered as `[Label]`, others as `[ Label ]`.
-func Test_DetailModel_RawTab_TabBarShowsAllSeven(t *testing.T) {
+// Test_DetailModel_TabBar_ListsThreeStructuralTabs — v0.1.2 collapsed the
+// six placeholder tabs into three structural views (Pretty / JSON / YAML).
+// Active tab renders as `[Label]`, inactive ones as `[ Label ]`.
+func Test_DetailModel_TabBar_ListsThreeStructuralTabs(t *testing.T) {
 	t.Parallel()
 
-	m := users.NewDetailModel(users.Deps{}, domain.User{ID: "x"}).WithActiveTab(users.DetailTabProfile)
+	m := users.NewDetailModel(users.Deps{}, domain.User{ID: "x"}).WithActiveTab(users.DetailTabPretty)
 	bar := m.View()
 
-	for _, label := range []string{"Profile", "Credentials", "Timestamps", "Groups", "Factors", "Recent", "Raw"} {
+	for _, label := range []string{"Pretty", "JSON", "YAML"} {
 		assert.Contains(t, bar, label,
-			"tab bar must include the %q tab (TUI_DESIGN §15.7 v1.2.0)", label)
+			"tab bar must include the %q tab (TUI_DESIGN §15.7 v1.2.0+d)", label)
 	}
-	assert.Contains(t, bar, "[Profile]",
-		"active Profile tab must render with no inner padding")
-	assert.Contains(t, bar, "[ Raw ]",
-		"inactive Raw tab must render with inner padding")
+	assert.Contains(t, bar, "[Pretty]",
+		"active Pretty tab must render with no inner padding")
+	assert.Contains(t, bar, "[ JSON ]",
+		"inactive JSON tab must render with inner padding")
+	assert.Contains(t, bar, "[ YAML ]",
+		"inactive YAML tab must render with inner padding")
+}
+
+// Test_DetailModel_YAMLTab_RendersValidYAML — the YAML tab must produce
+// parseable YAML keyed by the same field names the JSON tab uses, with
+// PII still masked at the projection step.
+func Test_DetailModel_YAMLTab_RendersValidYAML(t *testing.T) {
+	t.Parallel()
+
+	u := domain.User{
+		ID:     "00u_alice",
+		Status: domain.UserStatusActive,
+		Profile: domain.UserProfile{
+			Login:       "alice@acme.com",
+			MobilePhone: "+1-555-867-5309",
+		},
+	}
+	m := users.NewDetailModel(users.Deps{}, u).WithActiveTab(users.DetailTabYAML)
+	got := m.View()
+
+	assert.Contains(t, got, "id: 00u_alice", "YAML must include id field")
+	assert.Contains(t, got, "login: alice@acme.com", "YAML must include login")
+	assert.Contains(t, got, "mobilePhone:", "YAML must include mobilePhone")
+	assert.NotContains(t, got, "+1-555-867-5309",
+		"YAML must NOT leak the raw phone — projection masks it")
+	assert.Contains(t, got, "***", "YAML must show the mask token in masked fields")
+	assert.Contains(t, got, "# masked",
+		"YAML masked lines must carry the # masked annotation (TUI_DESIGN §15.7)")
 }
 
 // Test_UsersList_RKey_TogglesRawTab — pressing `r` while the inline detail
@@ -102,14 +131,14 @@ func Test_UsersList_RKey_TogglesRawTab(t *testing.T) {
 	require.NotNil(t, cmd, "`d` must emit fetch Cmd")
 	updated, _ = m.Update(cmd())
 	m = updated.(users.ListModel)
-	require.Contains(t, m.View(), "[Profile]",
+	require.Contains(t, m.View(), "[Pretty]",
 		"detail mode must start on Profile tab")
 
 	// `r` jumps to Raw.
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m = updated.(users.ListModel)
 	view1 := m.View()
-	assert.Contains(t, view1, "[Raw]",
+	assert.Contains(t, view1, "[JSON]",
 		"after `r`, Raw tab must be active")
 	assert.Contains(t, view1, "\"login\": \"alice@acme.com\"",
 		"Raw tab must show JSON of the fetched user")
@@ -118,7 +147,7 @@ func Test_UsersList_RKey_TogglesRawTab(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m = updated.(users.ListModel)
 	view2 := m.View()
-	assert.Contains(t, view2, "[Profile]",
+	assert.Contains(t, view2, "[Pretty]",
 		"second `r` must return to the previously-active tab")
 	assert.NotContains(t, view2, "\"login\": \"alice@acme.com\"",
 		"after returning, the JSON body must be gone")

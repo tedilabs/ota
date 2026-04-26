@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"gopkg.in/yaml.v3"
 
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
@@ -81,18 +82,23 @@ type ListModel struct {
 	sortDir SortDir
 }
 
-// RuleDetailTab indexes the Group Rule Detail tab bar (TUI_DESIGN §15.7
-// v1.2.0). 4 tabs: Profile / Conditions / Targets / Raw.
+// RuleDetailTab indexes the Group Rule Detail tab bar. v0.1.2 collapsed
+// the placeholder tabs into Pretty / JSON / YAML; the old Profile / Raw
+// constants survive as aliases for backward compatibility.
 type RuleDetailTab int
 
 const (
-	RuleDetailTabProfile RuleDetailTab = iota
-	RuleDetailTabConditions
-	RuleDetailTabTargets
-	RuleDetailTabRaw
+	RuleDetailTabPretty RuleDetailTab = iota
+	RuleDetailTabJSON
+	RuleDetailTabYAML
 )
 
-var ruleDetailTabLabels = []string{"Profile", "Conditions", "Targets", "Raw"}
+const (
+	RuleDetailTabProfile = RuleDetailTabPretty
+	RuleDetailTabRaw     = RuleDetailTabJSON
+)
+
+var ruleDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
 var ruleDetailTabCount = RuleDetailTab(len(ruleDetailTabLabels))
 
 // NewListModel constructs a ListModel.
@@ -531,12 +537,24 @@ func renderRuleDetailTabbed(r domain.GroupRule, active RuleDetailTab) string {
 	b.WriteString(strings.Repeat("─", 78))
 	b.WriteByte('\n')
 	switch active {
-	case RuleDetailTabRaw:
+	case RuleDetailTabJSON:
 		b.WriteString(renderRuleRawTab(r))
+	case RuleDetailTabYAML:
+		b.WriteString(renderRuleYAMLTab(r))
 	default:
 		b.WriteString(renderRuleDetail(r))
 	}
 	return b.String()
+}
+
+// renderRuleYAMLTab marshals the same ruleJSONShape projection as the
+// JSON tab through gopkg.in/yaml.v3.
+func renderRuleYAMLTab(r domain.GroupRule) string {
+	body, err := yaml.Marshal(ruleJSONShapeFor(r))
+	if err != nil {
+		return "(yaml render error: " + err.Error() + ")\n"
+	}
+	return strings.TrimRight(string(body), "\n") + "\n"
 }
 
 func renderRuleTabBar(active RuleDetailTab) string {
@@ -553,7 +571,17 @@ func renderRuleTabBar(active RuleDetailTab) string {
 
 // renderRuleRawTab returns the §15.7 v1.2.0 Raw JSON tab content.
 func renderRuleRawTab(r domain.GroupRule) string {
-	out := ruleJSONShape{
+	buf, err := json.MarshalIndent(ruleJSONShapeFor(r), "", "  ")
+	if err != nil {
+		return "(raw render error: " + err.Error() + ")\n"
+	}
+	return string(buf) + "\n"
+}
+
+// ruleJSONShapeFor centralises the deterministic projection so JSON and
+// YAML tabs render identical data.
+func ruleJSONShapeFor(r domain.GroupRule) ruleJSONShape {
+	return ruleJSONShape{
 		ID:             r.ID,
 		Name:           r.Name,
 		Status:         string(r.Status),
@@ -562,21 +590,16 @@ func renderRuleRawTab(r domain.GroupRule) string {
 		Created:        formatRuleJSONTime(r.Created),
 		LastUpdated:    formatRuleJSONTime(r.LastUpdated),
 	}
-	buf, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return "(raw render error: " + err.Error() + ")\n"
-	}
-	return string(buf) + "\n"
 }
 
 type ruleJSONShape struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Status         string   `json:"status"`
-	Expression     string   `json:"expression"`
-	TargetGroupIDs []string `json:"targetGroupIds,omitempty"`
-	Created        string   `json:"created,omitempty"`
-	LastUpdated    string   `json:"lastUpdated,omitempty"`
+	ID             string   `json:"id" yaml:"id"`
+	Name           string   `json:"name" yaml:"name"`
+	Status         string   `json:"status" yaml:"status"`
+	Expression     string   `json:"expression" yaml:"expression"`
+	TargetGroupIDs []string `json:"targetGroupIds,omitempty" yaml:"targetGroupIds,omitempty"`
+	Created        string   `json:"created,omitempty" yaml:"created,omitempty"`
+	LastUpdated    string   `json:"lastUpdated,omitempty" yaml:"lastUpdated,omitempty"`
 }
 
 func formatRuleJSONTime(t time.Time) string {
