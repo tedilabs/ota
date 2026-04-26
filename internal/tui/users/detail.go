@@ -251,13 +251,26 @@ func rawJSONForUser(u domain.User, unmasked map[string]bool) (string, error) {
 }
 
 // rawYAMLForUser is the YAML counterpart to rawJSONForUser; it shares the
-// projection so the two views stay in lockstep.
+// projection so the two views stay in lockstep. Uses an explicit
+// yaml.Encoder with SetIndent(2) so nested keys indent two spaces (the
+// user-requested style) instead of yaml.v3's default 4.
 func rawYAMLForUser(u domain.User, unmasked map[string]bool) (string, error) {
-	buf, err := yaml.Marshal(userJSONShapeFor(u, unmasked))
-	if err != nil {
+	return marshalYAML2(userJSONShapeFor(u, unmasked))
+}
+
+// marshalYAML2 marshals v through yaml.v3 with a 2-space indent, returning
+// the body without its trailing newline so callers can append their own.
+func marshalYAML2(v any) (string, error) {
+	var buf strings.Builder
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
 		return "", err
 	}
-	return strings.TrimRight(string(buf), "\n"), nil
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(buf.String(), "\n"), nil
 }
 
 // userJSONShapeFor centralises the PII-aware projection used by both the

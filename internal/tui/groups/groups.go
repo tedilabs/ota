@@ -520,13 +520,18 @@ func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab) string {
 }
 
 // renderGroupYAMLTab marshals the same groupJSONShape projection as the
-// JSON tab through gopkg.in/yaml.v3.
+// JSON tab through gopkg.in/yaml.v3, with a 2-space indent (issue #109).
 func renderGroupYAMLTab(g domain.Group) string {
-	body, err := yaml.Marshal(groupJSONShapeFor(g))
-	if err != nil {
+	var buf strings.Builder
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(groupJSONShapeFor(g)); err != nil {
 		return "(yaml render error: " + err.Error() + ")\n"
 	}
-	return strings.TrimRight(string(body), "\n") + "\n"
+	if err := enc.Close(); err != nil {
+		return "(yaml render error: " + err.Error() + ")\n"
+	}
+	return strings.TrimRight(buf.String(), "\n") + "\n"
 }
 
 func renderGroupTabBar(active GroupDetailTab) string {
