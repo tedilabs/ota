@@ -56,6 +56,9 @@ type SearchModel struct {
 	height       int
 	viewportTop  int
 	ggChord      shared.GChord
+	// timeRange is the active history window (issue #116). Default 30m;
+	// 1h / 3h / 12h / 24h selectable via `1`, `3`, `c`, `e` shortcuts.
+	timeRange time.Duration
 }
 
 // NewSearchModel constructs a SearchModel with defaults (tail off, follow on,
@@ -73,15 +76,20 @@ func NewSearchModel(deps Deps) SearchModel {
 		pollInterval: interval,
 		width:        deps.Width,
 		height:       deps.Height,
+		timeRange:    30 * time.Minute,
 	}
 }
+
+// TimeRange reports the active history window — exposed for tests and
+// other models that need to mirror the operator's selection.
+func (m SearchModel) TimeRange() time.Duration { return m.timeRange }
 
 // Init fetches the history list.
 func (m SearchModel) Init() tea.Cmd {
 	if len(m.events) > 0 || m.deps.Service == nil {
 		return nil
 	}
-	return fetchHistoryCmd(m.deps.Service)
+	return fetchHistoryWindowCmd(m.deps.Service, m.timeRange)
 }
 
 // Update handles keys: `s` toggles tail, `f` toggles follow, j/k navigates,
@@ -155,9 +163,42 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detail = m.events[m.cursor]
 				m.opened = true
 			}
+		// History window shortcuts (issue #116). Each refetches with the
+		// new bound. Operator presses again any time to refresh.
+		case "0":
+			m.ggChord.Reset()
+			return m.setRange(30 * time.Minute)
+		case "1":
+			m.ggChord.Reset()
+			return m.setRange(1 * time.Hour)
+		case "3":
+			m.ggChord.Reset()
+			return m.setRange(3 * time.Hour)
+		case "c":
+			m.ggChord.Reset()
+			return m.setRange(12 * time.Hour)
+		case "e":
+			m.ggChord.Reset()
+			return m.setRange(24 * time.Hour)
 		}
 	}
 	return m, nil
+}
+
+// setRange swaps the active history window and triggers a re-fetch.
+// Resets cursor / viewport so the new (potentially much smaller) result
+// set renders from the top, then jumps to the bottom in fetchHistoryCmd
+// receipt path so the newest entry is on screen.
+func (m SearchModel) setRange(window time.Duration) (tea.Model, tea.Cmd) {
+	m.timeRange = window
+	m.cursor = 0
+	m.viewportTop = 0
+	if m.deps.Service == nil {
+		// No backing service (test harness with InitialEvents only) —
+		// leave the seeded events alone.
+		return m, nil
+	}
+	return m, fetchHistoryWindowCmd(m.deps.Service, window)
 }
 
 // View renders SCR-050 (TUI_DESIGN §15.6 / §16.8). Columns:
@@ -177,6 +218,9 @@ func (m SearchModel) View() string {
 
 	var b strings.Builder
 	b.WriteString("System Logs  ")
+	b.WriteString("[")
+	b.WriteString(timeRangeLabel(m.timeRange))
+	b.WriteString("]  ")
 	b.WriteString(tailIndicator(m.tail, m.pollInterval, m.follow))
 	b.WriteByte('\n')
 	// 2-cell cursor gutter on the header keeps it aligned with data rows.
@@ -312,6 +356,27 @@ func (m SearchModel) now() time.Time {
 	return time.Now()
 }
 
+// timeRangeLabel renders the active history window for the header
+// (issue #116). 30m / 1h / 3h / 12h / 24h.
+func timeRangeLabel(d time.Duration) string {
+	switch d {
+	case 30 * time.Minute:
+		return "Last 30m"
+	case 1 * time.Hour:
+		return "Last 1h"
+	case 3 * time.Hour:
+		return "Last 3h"
+	case 12 * time.Hour:
+		return "Last 12h"
+	case 24 * time.Hour:
+		return "Last 24h"
+	}
+	if d == 0 {
+		return "All"
+	}
+	return "Last " + d.String()
+}
+
 // tailIndicator returns the top-right status for the tail mode
 // (`[TAIL 7s] ▶` or `[TAIL OFF]`), plus follow state.
 func tailIndicator(tail bool, interval time.Duration, follow bool) string {
@@ -418,9 +483,13 @@ func renderLogDetail(e domain.LogEvent) string {
 // --- Cmd factories -----------------------------------------------------------
 
 func fetchHistoryCmd(svc *service.LogsService) tea.Cmd {
+	return fetchHistoryWindowCmd(svc, 30*time.Minute)
+}
+
+func fetchHistoryWindowCmd(svc *service.LogsService, window time.Duration) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		iter, err := svc.Search(ctx, svc.HistoryQuery())
+		iter, err := svc.Search(ctx, svc.HistoryQueryWindow(window))
 		if err != nil {
 			return logsErrMsg{err: err}
 		}

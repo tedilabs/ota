@@ -43,13 +43,37 @@ func (s *LogsService) Search(ctx context.Context, q domain.LogsQuery) (domain.It
 	return s.port.Search(ctx, q)
 }
 
-// HistoryQuery returns the default query for history mode (REQ-R05 AC-4):
-// SortOrder=DESCENDING (latest first), no explicit Since.
+// HistoryQuery returns the default query for history mode. Pre-v0.1.4
+// behaviour: DESCENDING + no Since. v0.1.4 made the default window 30
+// minutes and switched to ASCENDING so the newest event renders at the
+// bottom of the list (terminal-style log tail). Use HistoryQueryWindow
+// when the operator picks a different range via the `1 / 3 / c / e`
+// shortcuts.
 func (s *LogsService) HistoryQuery() domain.LogsQuery {
-	return domain.LogsQuery{
-		SortOrder: domain.SortDescending,
+	return s.HistoryQueryWindow(30 * time.Minute)
+}
+
+// HistoryQueryWindow returns a history query filtered to events
+// published within the last `window`. ASCENDING sort so the result set
+// can be rendered top-to-bottom oldest-first / newest-last (issue #116).
+func (s *LogsService) HistoryQueryWindow(window time.Duration) domain.LogsQuery {
+	q := domain.LogsQuery{
+		SortOrder: domain.SortAscending,
 		Limit:     1000,
 	}
+	if window > 0 {
+		t := s.now().Add(-window)
+		q.Since = &t
+	}
+	return q
+}
+
+// now returns the injected clock or wall time.
+func (s *LogsService) now() time.Time {
+	if s.clock != nil {
+		return s.clock.Now()
+	}
+	return time.Now()
 }
 
 // PollInterval reports the current polling period (reflects adaptive state).
