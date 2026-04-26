@@ -144,7 +144,7 @@ func Test_AppShell_KeysReachActiveChild(t *testing.T) {
 
 	require.Contains(t, m.View(), "alice@acme.com",
 		"precondition: seeded users rendered after Init")
-	require.Contains(t, m.View(), "> ", "precondition: cursor visible at row 0")
+	require.Contains(t, m.View(), "▸ ", "precondition: cursor (▸) visible at row 0")
 
 	// Press `j` — should move cursor down to row 1 (bob).
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
@@ -152,7 +152,7 @@ func Test_AppShell_KeysReachActiveChild(t *testing.T) {
 
 	view := m.View()
 	// Bob's row should now carry the cursor prefix.
-	assert.Regexp(t, `>\s+\[\+\] ACTIVE\s+bob@acme\.com`, view,
+	assert.Regexp(t, `▸\s+\[\+\] ACTIVE\s+bob@acme\.com`, view,
 		"`j` must reach the child Users screen and advance the cursor")
 }
 

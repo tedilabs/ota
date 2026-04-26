@@ -1,6 +1,6 @@
 Group Rules  3 of 3
 STATUS          NAME                                        TARGETS                                         UPDATED
-> [+] ACTIVE      Engineers to Eng                            00g_eng                                               —
+▸ [+] ACTIVE      Engineers to Eng                            00g_eng                                               —
   [-] INACTIVE    Legacy Eng Mapping                          00g_eng                                               —
   [!] INVALID     Broken Dept Rule                            00g_sales                                             —
 

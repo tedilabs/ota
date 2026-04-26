@@ -81,8 +81,8 @@ func Test_UsersList_ViewportFollowsCursor(t *testing.T) {
 
 	view := m.View()
 	cursorLogin := users50[40].Profile.Login
-	assert.Contains(t, view, "> ",
-		"cursor prefix must remain visible after scrolling")
+	assert.Contains(t, view, "▸ ",
+		"cursor prefix (▸) must remain visible after scrolling")
 	assert.Contains(t, view, cursorLogin,
 		"viewport must scroll so the cursor's row stays rendered")
 	// First user must NOT still be visible — we've scrolled past it.

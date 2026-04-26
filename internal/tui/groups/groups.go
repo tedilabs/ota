@@ -285,7 +285,7 @@ func (m ListModel) View() string {
 	for i := top; i < end; i++ {
 		row := m.renderGroupsRow(rows[i], m.now(), tk)
 		if i == m.cursor {
-			row = "> " + row
+			row = tk.Accent.Render("▸ " + row)
 		} else {
 			row = "  " + row
 		}
