@@ -675,6 +675,10 @@ func usersColumnSpecs() []shared.ColumnSpec {
 // indicator to "LAST LOGI…".
 func (m ListModel) formatUsersColumns(cells ...string) string {
 	specs := usersColumnSpecs()
+	// Auto-fit (issue #117): shrink first so titles + observed data
+	// determine the floor. Apply the sort-glyph bump *after* the shrink
+	// so the active column always reserves room for its `↑`/`↓`.
+	specs = shared.ShrinkSpecsToFit(specs, m.observedColumnWidths())
 	if i := usersSortColumnIdx(m.sortBy); i >= 0 && m.sortDir != SortOff {
 		specs[i].Min++
 	}
@@ -689,6 +693,67 @@ func (m ListModel) formatUsersColumns(cells ...string) string {
 		}
 	}
 	return shared.FormatRow(specs, widths, full, 2)
+}
+
+// observedColumnWidths returns the largest cell width seen in each
+// column across the currently visible rows. Powers ShrinkSpecsToFit so
+// columns auto-fit data instead of always padding to declared Min.
+func (m ListModel) observedColumnWidths() []int {
+	rows := m.visible()
+	if len(rows) == 0 {
+		return nil
+	}
+	now := m.now()
+	tk := activeTokens()
+	dash := func(s string) string {
+		if s == "" {
+			return "—"
+		}
+		return s
+	}
+	out := make([]int, 8)
+	for _, u := range rows {
+		statusBadge := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
+		cells := []string{
+			statusBadge,
+			u.Profile.Login,
+			dash(u.Profile.Title),
+			dash(u.Profile.Division),
+			dash(u.Profile.EmployeeNumber),
+			dash(u.Profile.NickName),
+			shared.RelativeTime(u.LastLogin, now),
+			shared.RelativeTime(u.StatusChanged, now),
+		}
+		for i, c := range cells {
+			if w := visibleCellWidth(c); w > out[i] {
+				out[i] = w
+			}
+		}
+	}
+	return out
+}
+
+// visibleCellWidth approximates the rendered width of a cell after the
+// shared chrome's ANSI stripping — falls back to len(s) for ASCII which
+// covers our column data today (logins, dates, statuses).
+func visibleCellWidth(s string) int {
+	// Stay conservative: count runes after stripping ANSI escapes.
+	n := 0
+	inEsc := false
+	for _, r := range s {
+		if inEsc {
+			if r >= '@' && r <= '~' {
+				inEsc = false
+			}
+			continue
+		}
+		if r == 0x1b {
+			inEsc = true
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // usersSortColumnIdx maps a SortKey to its index in usersColumnSpecs.
