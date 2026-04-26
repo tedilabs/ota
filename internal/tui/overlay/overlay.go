@@ -183,7 +183,8 @@ func defaultHelpEntries() []helpEntry {
 		{"e", "expand detail field"},
 		{"s", "toggle tail (Logs)"},
 		{"f", "toggle auto-scroll follow (Logs)"},
-		{"n / N", "search next / previous"},
+		{"d", "open detail (all attributes)"},
+		{"Shift+S/N/L/C", "sort by Status / Name / Last Login / Created"},
 		{":quit", "quit ota"},
 	}
 }

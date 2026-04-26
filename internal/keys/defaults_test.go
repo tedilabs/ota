@@ -46,15 +46,23 @@ func Test_KeysDefaults_EntireMapMatchesTUIDesign(t *testing.T) {
 		{keys.IDAppRefresh, "R"},
 		{keys.IDAppBack, "Esc"},
 
-		// Prompts/search
+		// Prompts/search (TUI_DESIGN §3.1 — incremental `/` filter; the older
+		// n/N step IDs were dropped in v0.1.1 as dead code).
 		{keys.IDCmdOpen, ":"},
 		{keys.IDSearchOpen, "/"},
-		{keys.IDSearchNext, "n"},
-		{keys.IDSearchPrev, "N"},
 
 		// Logs (TUI_DESIGN §3.3 — KEY POINT: tail_toggle = "s", follow = "f")
 		{keys.IDLogsTailToggle, "s"},   // 현재 코드 "t" 이면 Red
 		{keys.IDLogsFollowToggle, "f"}, // 일치
+
+		// Detail (TUI_DESIGN §3.6 — `d` opens full-attribute detail view).
+		{keys.IDActionDetail, "d"},
+
+		// Sort cycle (TUI_DESIGN §3.5 — Shift+letter mapped as uppercase rune).
+		{keys.IDSortStatus, "S"},
+		{keys.IDSortName, "N"},
+		{keys.IDSortLastLogin, "L"},
+		{keys.IDSortCreated, "C"},
 
 		// PII mask prompts
 		{keys.IDPIIUnmask, ":unmask"},
@@ -81,4 +89,25 @@ func Test_KeysDefaults_ReverseLookup_Tail_S(t *testing.T) {
 	rev := defaults.Reverse()
 	assert.Equal(t, keys.IDLogsTailToggle, rev["s"],
 		"\"s\" 키는 logs.tail_toggle 이어야 한다 (TUI_DESIGN §3.3)")
+}
+
+// Reverse lookup — Shift+letter sort keys (대문자 룬) 은 sort.* 로 분류되어야
+// 하고, vim의 search.next/prev (n/N) 와 충돌이 없어야 한다 (v0.1.1: 후자 제거).
+func Test_KeysDefaults_ReverseLookup_Sort_ShiftLetters(t *testing.T) {
+	t.Parallel()
+	defaults, _, err := keys.Resolve(nil)
+	require.NoError(t, err)
+	rev := defaults.Reverse()
+
+	assert.Equal(t, keys.IDSortStatus, rev["S"], "Shift+S → sort.status (§3.5)")
+	assert.Equal(t, keys.IDSortName, rev["N"], "Shift+N → sort.name (§3.5)")
+	assert.Equal(t, keys.IDSortLastLogin, rev["L"], "Shift+L → sort.last_login (§3.5)")
+	assert.Equal(t, keys.IDSortCreated, rev["C"], "Shift+C → sort.created (§3.5)")
+
+	// Detail (§3.6).
+	assert.Equal(t, keys.IDActionDetail, rev["d"], "\"d\" → action.detail (§3.6)")
+
+	// Lowercase n stays unmapped (search step IDs were dropped as dead code).
+	_, hasN := rev["n"]
+	assert.False(t, hasN, "lowercase \"n\" should be unmapped after dropping search.next")
 }

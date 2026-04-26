@@ -32,16 +32,22 @@ func Defaults() map[ID]string {
 		// §3.1 + §3.3 Prompts / search.
 		IDCmdOpen:    ":",
 		IDSearchOpen: "/",
-		IDSearchNext: "n",
-		IDSearchPrev: "N",
 
-		// §3.3 Observe / yank.
+		// §3.3 + §3.6 Observe / yank.
 		IDActionYank:      "y",
 		IDActionYankField: "y f",
 		IDActionYankRow:   "y y",
 		IDActionOpenWeb:   "o",
 		IDActionExpand:    "e",
 		IDActionToggleRaw: "r",
+		IDActionDetail:    "d",
+
+		// §3.5 Sort cycle. bubbletea delivers Shift+letter as the uppercase
+		// rune so the binding string is the bare uppercase letter.
+		IDSortStatus:    "S",
+		IDSortName:      "N",
+		IDSortLastLogin: "L",
+		IDSortCreated:   "C",
 
 		// §3.3 Logs. `s` = tail toggle (REQ-R05 AC-3), `f` = follow/auto-scroll.
 		IDLogsTailToggle:   "s",

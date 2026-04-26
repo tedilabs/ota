@@ -34,15 +34,15 @@ const (
 	IDGlobalRedraw   ID = "global.redraw"     // Ctrl-l
 )
 
-// Prompts and search (TUI_DESIGN §3.1 + §3.3).
+// Prompts and search (TUI_DESIGN §3.1 + §3.3). Search is incremental — the
+// `/` filter updates the visible set live as the user types, so the older
+// `n` / `N` next/previous step IDs were dead and were dropped in v0.1.1.
 const (
 	IDCmdOpen    ID = "cmd.open"    // :
 	IDSearchOpen ID = "search.open" // /
-	IDSearchNext ID = "search.next" // n
-	IDSearchPrev ID = "search.prev" // N
 )
 
-// Observe / yank actions (TUI_DESIGN §3.3).
+// Observe / yank actions (TUI_DESIGN §3.3 + §3.6).
 const (
 	IDActionYank      ID = "action.yank"       // y
 	IDActionYankField ID = "action.yank_field" // yf
@@ -50,6 +50,19 @@ const (
 	IDActionOpenWeb   ID = "action.open_web"   // o
 	IDActionExpand    ID = "action.expand"     // e
 	IDActionToggleRaw ID = "action.toggle_raw" // r
+	IDActionDetail    ID = "action.detail"     // d — open full attribute detail (TUI_DESIGN §3.6)
+)
+
+// Column sort cycle (TUI_DESIGN §3.5). bubbletea delivers Shift+letter as
+// the uppercase rune so the binding strings here are bare uppercase letters;
+// the §3.5 table renders them as `Shift+S` etc. for human readability.
+// Pressing the bound key cycles dirOff → ↑ → ↓ → off; activating a different
+// column resets the previous to dirOff (single active sort column).
+const (
+	IDSortStatus    ID = "sort.status"     // Shift+S — STATUS column
+	IDSortName      ID = "sort.name"       // Shift+N — NAME / LOGIN column
+	IDSortLastLogin ID = "sort.last_login" // Shift+L — LAST LOGIN / UPDATED column
+	IDSortCreated   ID = "sort.created"    // Shift+C — CREATED / CHANGED column
 )
 
 // Logs-specific (TUI_DESIGN §3.3). `s` toggles tail mode (REQ-R05 AC-3);
