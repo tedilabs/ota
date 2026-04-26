@@ -3,7 +3,7 @@
 
 **ota** is a keyboard-driven, k9s-style Terminal UI for exploring and auditing Okta Workforce Identity organizations. It lets IAM operators, security auditors, and SREs navigate Users, Groups, Group Rules, Policies, and System Logs without leaving the terminal.
 
-> **Status:** v0.1.0 MVP — **read-only**. Write actions (group membership edits, user lifecycle, etc.) are planned for v0.2. See [Roadmap](#roadmap).
+> **Status:** v0.1.1 — **read-only** with responsive layout, column sort (`Shift+S/N/L/C`), `d`-key full detail with `[Raw]` JSON tab, and richer command-palette aliases. Write actions still planned for v0.2. See [Roadmap](#roadmap).
 
 ---
 
@@ -34,7 +34,7 @@ Requires Go 1.24+.
 ### Via `go install` (when published)
 
 ```bash
-go install github.com/tedilabs/ota/cmd/ota@v0.1.0
+go install github.com/tedilabs/ota/cmd/ota@v0.1.1
 ```
 
 ---
@@ -134,29 +134,40 @@ ota's defaults are k9s-compatible with Vim navigation — press `?` in any scree
 | `G` | Bottom of list |
 | `Ctrl-d` `Ctrl-u` | Half-page down / up |
 | `Ctrl-f` `Ctrl-b` | Full-page down / up |
-| `Enter` | Open detail / drill down |
-| `Tab` `Shift-Tab` | Next / previous tab |
+| `Enter` / `d` | Open detail (all attributes — see `[Raw]` tab) |
+| `Esc` | Return from detail to the list |
+| `Tab` `Shift-Tab` | Cycle detail tabs forward / backward |
+
+### Sort (list views)
+
+`Shift`+`<letter>` cycles a column off → asc → desc → off. Active column shows `↑` or `↓` next to its header.
+
+| Key | Sort by | Active in |
+|---|---|---|
+| `Shift+S` | STATUS (operational rank — `INVALID`/`LOCKED_OUT` first) | Users, Group Rules |
+| `Shift+N` | NAME (alphabetical) | Users, Groups, Group Rules |
+| `Shift+L` | LAST LOGIN | Users |
+| `Shift+C` | CREATED / CHANGED | Users |
 
 ### Observe & yank
 
 | Key | Action |
 |---|---|
 | `R` | Refresh current resource (invalidate cache) |
-| `r` | Toggle rich ↔ raw JSON (Policies / Logs detail) |
+| `r` | Detail: jump to / from `[Raw]` JSON tab. Lists: toggle rich ↔ raw (Policies / Logs) |
 | `y` / `yy` / `yf` | Copy to clipboard: selection / row / focused field |
 | `o` | Open Admin Console link in browser |
 | `e` | Expand / collapse detail (e.g. Factor IDs) |
 | `s` | Logs: toggle tail mode |
 | `f` | Logs: toggle auto-follow |
-| `n` `N` | Next / previous search match |
 
 ### Command palette
 
 | Command | Effect |
 |---|---|
-| `:users` `:u` | Users list |
-| `:groups` `:g` | Groups list |
-| `:grouprules` `:gr` | Group Rules list |
+| `:user` `:users` `:u` | Users list |
+| `:group` `:groups` `:g` | Groups list |
+| `:rule` `:rules` `:grouprule` `:grouprules` `:group-rule` `:group-rules` `:group_rule` `:group_rules` `:gr` | Group Rules list |
 | `:policies [TYPE]` | Policy type selector (or jump straight to e.g. `OKTA_SIGN_ON`) |
 | `:logs` `:l` | Logs search / tail |
 | `:search <SCIM-expr>` | Server-side search (Users/Groups). Note: Users `search` is *eventually consistent* — newly-created users may take minutes to appear. |
@@ -189,7 +200,7 @@ Full key map and screen catalogue: [`docs/TUI_DESIGN.md` §3 & §4](docs/TUI_DES
 
 ---
 
-## Known limitations (v0.1.0)
+## Known limitations (v0.1.1)
 
 These are the explicit gaps tracked in [PRD §11.3.1](docs/PRD.md):
 
@@ -198,6 +209,8 @@ These are the explicit gaps tracked in [PRD §11.3.1](docs/PRD.md):
 - **`:ratelimit` and `:healthcheck` modals are partial / missing.** The `[RL]` badge in the header may also be absent in some builds — being added during v0.1.x patches (QA-013, QA-016).
 - **Config file permissions are not validated.** ota does not store tokens, but a `0600` permissions check (warn-only) is queued for v0.1.x (QA-012).
 - **Rendering for `PROFILE_ENROLLMENT` / `POST_AUTH_SESSION` / `IDP_DISCOVERY` policies is raw JSON only.** Press `r` for the JSON view; rich renderers are tracked for v0.2.
+- **Detail view runs inline inside the list** (`ListModel.opened` mode). Full `OpenResourceMsg` routing through the App Shell is deferred to v0.2; the v0.1.1 user-visible behaviour is identical (`d`/`Enter` opens detail, `Esc` returns).
+- **`M!` per-field unmask toggle** is not exposed yet. Detail Raw tab masks PII at projection time and annotates masked lines with `# masked`; selective `:unmask <field>` ships in v0.2.
 
 ---
 
@@ -208,6 +221,7 @@ These are the explicit gaps tracked in [PRD §11.3.1](docs/PRD.md):
 - QA-013 rate-limit numeric display + `:ratelimit` modal
 
 **v0.2 (Q3 2026 target):**
+- `OpenResourceMsg` detail routing (graduates from v0.1.1's inline `ListModel.opened` mode)
 - Apps resource (list, detail, User → Apps tab)
 - Interactive token prompt (QA-005)
 - Runtime `:profile` switch (QA-009)
@@ -218,6 +232,7 @@ These are the explicit gaps tracked in [PRD §11.3.1](docs/PRD.md):
   3. Group Rule activate / deactivate (with double-confirm + impact estimate)
 - Rich renderers for the remaining 3 policy types
 - OAuth 2.0 Service App (Private Key JWT) authentication
+- `:unmask <field>` / `[M!]` selective PII reveal in the Detail Raw tab
 
 **v0.3+:** Custom views (DSL), Event Hook based pseudo-streaming, shareable URI scheme.
 

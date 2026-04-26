@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - QA-013: numeric rate-limit display in the header (`[RL: 586/600]`) and `:ratelimit` modal with last-observed values per category.
 
 ### Planned (v0.2)
+- `OpenResourceMsg` routing for detail screens (graduates from inline `ListModel.opened` mode used in v0.1.1).
 - Apps resource (list, detail, User → Apps tab).
 - Interactive token entry prompt as the third fallback for `OKTA_API_TOKEN` (PRD REQ-C04 AC-1 step 3).
 - Runtime `:profile` switching with cache invalidation (PRD REQ-C02 AC-3).
@@ -23,6 +24,75 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   3. Group Rule `activate` / `deactivate` (with double-confirm + impact estimate; deactivation removes rule-granted memberships).
 - Rich renderers for `PROFILE_ENROLLMENT`, `POST_AUTH_SESSION`, `IDP_DISCOVERY` policy types.
 - OAuth 2.0 Service App (Private Key JWT) authentication alongside SSWS.
+- `M!` toggle (`:unmask <field>` / `:mask`) for selective PII reveal in Detail Raw tab.
+
+---
+
+## [0.1.1] — 2026-04-26
+
+User-driven iteration on top of v0.1.0. Adds responsive TUI, column sort,
+Detail entry / Raw tab, and palette aliases. Targets Users / Groups /
+Group Rules; Policies and Logs unchanged from v0.1.0.
+
+### Added
+
+**Responsive layout (TUI_DESIGN §15.0a)**
+- Chrome now fills 100% of the terminal width — `clampWidth` no longer caps at
+  200, and `tea.WindowSizeMsg` propagates through every cached child screen.
+- New `internal/tui/shared/columns.go` implements a Min/Weight + drop-priority
+  layout algorithm shared across all list views.
+- Users gains a 6th column `DEPARTMENT` once usable width ≥ 130; falls off
+  before `LAST LOGIN` / `CHANGED` / `DISPLAY NAME` as the terminal narrows.
+
+**Column sort (TUI_DESIGN §3.5)**
+- `Shift+S/N/L/C` cycles each column off → asc → desc → off. The active
+  column header carries a `↑` or `↓` glyph (one cell, no padding impact).
+- Stable sort (`sort.SliceStable`); cursor resets on cycle change, preserves
+  position on repeat. Status orderings follow operational rank
+  (Users: `ACTIVE` first, Rules: `INVALID` first).
+- Users supports all four keys; Groups: `Shift+N` only; Rules: `Shift+S`
+  + `Shift+N`. Unmapped keys are no-op.
+
+**`d` for inline Detail (TUI_DESIGN §3.6, §3.6a Note)**
+- `d` and `Enter` both open a resource's detail in inline mode. `Esc`
+  returns to the list. `Ctrl-c` quits the program globally.
+- Full `OpenResourceMsg` routing through the App Shell remains a v0.2
+  goal; v0.1.1 ships the simpler `ListModel.opened` pattern Phase 6c
+  already deferred for v0.1.0.
+
+**Detail Raw tab (TUI_DESIGN §15.7)**
+- Every detail surface gains a final `[Raw]` tab — Users (7), Groups (5),
+  Rules (4) — that renders `json.MarshalIndent` of a stable shape struct.
+- `Tab` / `Shift+Tab` cycle through tabs forward / backward. `r` toggles
+  between Raw and the most recently viewed non-Raw tab.
+- PII (phone numbers, emails) is masked at the projection step before
+  marshalling, and masked lines are annotated `# masked` in the rendered
+  output for human readers.
+
+**Palette aliases (TUI_DESIGN §3.4)**
+- `:user`, `:users`, `:u` → Users.
+- `:group`, `:groups`, `:g` → Groups.
+- `:rule`, `:rules`, `:grouprule`, `:grouprules`, `:group-rule`,
+  `:group-rules`, `:group_rule`, `:group_rules`, `:gr` → Group Rules.
+- Existing `:policy`, `:policies`, `:log`, `:logs`, `:l` aliases retained.
+
+### Changed
+
+- Removed the unused `IDSearchNext` / `IDSearchPrev` (`n` / `N`) keys —
+  they were never wired and the incremental `/` filter makes match-step
+  navigation moot. Frees the uppercase `N` rune for `IDSortName`.
+- Help overlay row updated to advertise `Shift+S/N/L/C` sort and `d`
+  detail.
+- `internal/app/clampBodyLines` reserves 7 rows of chrome instead of 6
+  to match the §15.0a layout.
+
+### Internals
+
+- 6 new feature commits + 1 spec commit, each one a single work unit.
+- Production `internal/tui/users/list.go` shrunk by 168 lines after
+  migrating to the shared column layout.
+- Test scoreboard: 21 packages race-PASS, 0 fail. New spec lock-ins for
+  responsive widths, sort cycling, d-key detail, and palette resolution.
 
 ---
 
@@ -101,5 +171,6 @@ This release was built end-to-end through a multi-phase agent workflow: PRD auth
 - **MINOR** — new functional REQ added (e.g. v0.2 Write actions, Apps resource).
 - **PATCH** — Known-Limitations resolution, bug fix, or doc-only change. PRD `1.0.x` increments accompany ota `0.1.x` patches when AC clarifications ship.
 
-[Unreleased]: https://github.com/tedilabs/ota/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tedilabs/ota/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/tedilabs/ota/releases/tag/v0.1.1
 [0.1.0]: https://github.com/tedilabs/ota/releases/tag/v0.1.0
