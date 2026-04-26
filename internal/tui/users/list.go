@@ -3,11 +3,13 @@ package users
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tedilabs/ota/internal/clock"
@@ -65,6 +67,16 @@ type ListModel struct {
 	// detailRawReturn is the tab to fall back to when the operator
 	// presses `r` while already on Raw — see TUI_DESIGN §3.6 r-toggle.
 	detailRawReturn DetailTab
+	// detailLine is the active line cursor inside the detail body.
+	// Drives j/k navigation and the anchor for Vim Visual selection.
+	detailLine int
+	// detailVisual / detailVisualAnchor power line-based Visual mode.
+	// `v` enters Visual, j/k extend, `y` copies, Esc cancels.
+	detailVisual       bool
+	detailVisualAnchor int
+	// detailToast is a transient one-line message shown above the body
+	// (e.g. "5 lines copied"). Cleared on the next key press.
+	detailToast     string
 	lastErr         error
 	// width is the most recent terminal width seen via WindowSizeMsg. Drives
 	// responsive column drop per TUI_DESIGN §15.2.
@@ -150,29 +162,93 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Detail mode (TUI_DESIGN §3.6): Esc returns to the list; Tab /
 	// Shift-Tab cycle through tabs; `r` toggles the Raw tab against the
 	// last-visited non-Raw tab so a second press returns the operator to
-	// where they came from.
+	// where they came from. Line-cursor + Visual mode (v / V / y) live
+	// alongside the tab navigation.
 	if m.opened {
+		// Any keypress dismisses the previous "5 lines copied" toast.
+		m.detailToast = ""
 		switch msg.Type {
 		case tea.KeyEsc:
+			if m.detailVisual {
+				// Cancel Visual without leaving detail mode.
+				m.detailVisual = false
+				return m, nil
+			}
 			m.opened = false
 			m.detailUser = domain.User{}
 			m.detailTab = DetailTabProfile
 			m.detailRawReturn = DetailTabProfile
+			m.detailLine = 0
+			m.detailVisualAnchor = 0
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = (m.detailTab + 1) % detailTabCount
+			m.detailLine = 0
+			m.detailVisual = false
 			return m, nil
 		case tea.KeyShiftTab:
 			m.detailTab = (m.detailTab + detailTabCount - 1) % detailTabCount
+			m.detailLine = 0
+			m.detailVisual = false
 			return m, nil
 		case tea.KeyRunes:
-			if string(msg.Runes) == "r" {
+			switch string(msg.Runes) {
+			case "r":
 				if m.detailTab == DetailTabRaw {
 					m.detailTab = m.detailRawReturn
 				} else {
 					m.detailRawReturn = m.detailTab
 					m.detailTab = DetailTabRaw
 				}
+				m.detailLine = 0
+				m.detailVisual = false
+			case "j":
+				lines := m.detailBodyLines()
+				if m.detailLine < len(lines)-1 {
+					m.detailLine++
+				}
+			case "k":
+				if m.detailLine > 0 {
+					m.detailLine--
+				}
+			case "g":
+				m.detailLine = 0
+			case "G":
+				lines := m.detailBodyLines()
+				if len(lines) > 0 {
+					m.detailLine = len(lines) - 1
+				}
+			case "v", "V":
+				if m.detailVisual {
+					m.detailVisual = false
+				} else {
+					m.detailVisual = true
+					m.detailVisualAnchor = m.detailLine
+				}
+			case "y":
+				lines := m.detailBodyLines()
+				if len(lines) == 0 {
+					return m, nil
+				}
+				start, end := m.detailLine, m.detailLine
+				if m.detailVisual {
+					start, end = m.detailVisualAnchor, m.detailLine
+					if start > end {
+						start, end = end, start
+					}
+				}
+				selected := strings.Join(lines[start:end+1], "\n")
+				if err := clipboard.WriteAll(selected); err != nil {
+					m.detailToast = "yank failed: " + err.Error()
+				} else {
+					n := end - start + 1
+					unit := "line"
+					if n != 1 {
+						unit = "lines"
+					}
+					m.detailToast = "yanked " + itoaSimple(n) + " " + unit
+				}
+				m.detailVisual = false
 			}
 			return m, nil
 		}
@@ -297,9 +373,7 @@ func (m ListModel) classify(msg tea.KeyMsg) keys.ID {
 //	...
 func (m ListModel) View() string {
 	if m.opened {
-		// Delegate to DetailModel so the tab bar / Profile / Raw rendering
-		// lives next to its data; ListModel only keeps the active-tab cursor.
-		return NewDetailModel(m.deps, m.detailUser).WithActiveTab(m.detailTab).View()
+		return m.renderDetailWithCursor()
 	}
 
 	if m.lastErr != nil {
@@ -339,6 +413,75 @@ func (m ListModel) View() string {
 	}
 	return b.String()
 }
+
+// renderDetailWithCursor wraps DetailModel.View() with a line-cursor +
+// optional Vim Visual highlight and a transient toast (e.g. "yanked 5
+// lines"). The DetailModel itself is stateless across renders; the
+// cursor / visual state lives on ListModel so the data flow stays
+// idempotent.
+func (m ListModel) renderDetailWithCursor() string {
+	tk := activeTokens()
+	body := NewDetailModel(m.deps, m.detailUser).WithActiveTab(m.detailTab).View()
+	lines := strings.Split(body, "\n")
+
+	// The first three lines (header / tab bar / divider) are not
+	// selectable — Visual mode only operates on the body.
+	const headerLines = 3
+	cursor := m.detailLine + headerLines
+	anchor := m.detailVisualAnchor + headerLines
+	start, end := cursor, cursor
+	if m.detailVisual {
+		start, end = anchor, cursor
+		if start > end {
+			start, end = end, start
+		}
+	}
+
+	var b strings.Builder
+	if m.detailToast != "" {
+		b.WriteString(tk.Header.Render(m.detailToast))
+		b.WriteByte('\n')
+	}
+	if m.detailVisual {
+		b.WriteString(tk.Warning.Render("-- VISUAL --"))
+		b.WriteByte('\n')
+	}
+	for i, line := range lines {
+		switch {
+		case i < headerLines:
+			b.WriteString(line)
+		case m.detailVisual && i >= start && i <= end:
+			b.WriteString(tk.Accent.Render(line))
+		case i == cursor:
+			b.WriteString(tk.Accent.Render("▸ " + line))
+			b.WriteByte('\n')
+			continue
+		default:
+			b.WriteString(line)
+		}
+		b.WriteByte('\n')
+	}
+	footer := tk.Muted.Render("<j/k> nav · <v> visual · <y> yank · <Tab> tabs · <Esc> back")
+	b.WriteString(footer)
+	return b.String()
+}
+
+// detailBodyLines returns the body of the active tab as a slice of lines,
+// excluding the three-line header (User Detail / tab bar / divider) so j/k
+// navigation only counts content rows.
+func (m ListModel) detailBodyLines() []string {
+	body := NewDetailModel(m.deps, m.detailUser).WithActiveTab(m.detailTab).View()
+	all := strings.Split(body, "\n")
+	const headerLines = 3
+	if len(all) <= headerLines {
+		return nil
+	}
+	return all[headerLines:]
+}
+
+// itoaSimple is a tiny strconv.Itoa shim used by handleKey's toast string
+// (avoids importing strconv elsewhere in list.go for one usage).
+func itoaSimple(n int) string { return strconv.Itoa(n) }
 
 // windowBounds returns the [top, end) slice of rows that should render
 // given the current cursor position and viewportTop. Delegates to the

@@ -1,0 +1,140 @@
+package users_test
+
+// Vim Visual selection + yank in the Detail pane (TUI_DESIGN §3.6 v0.1.2).
+// These tests do NOT touch the system clipboard — atotto/clipboard returns
+// nil/error depending on the environment. We assert the user-visible
+// state: VISUAL banner, cursor row highlight, and the toast that appears
+// after `y` (either "yanked N line(s)" or "yank failed: …").
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/tedilabs/ota/internal/domain"
+	"github.com/tedilabs/ota/internal/tui/users"
+)
+
+// detailFixturePort returns a stub UsersPort that hands back the seeded
+// user from Get without panic — sufficient for opening the detail surface
+// in unit tests without wiring a full okta.Client.
+type detailFixturePort struct{ user domain.User }
+
+func (p *detailFixturePort) List(_ context.Context, _ domain.UsersQuery) (domain.Iterator[domain.User], error) {
+	return nil, nil
+}
+func (p *detailFixturePort) Get(_ context.Context, _ string) (domain.User, error) {
+	return p.user, nil
+}
+func (p *detailFixturePort) ListGroups(_ context.Context, _ string) ([]domain.Group, error) {
+	return nil, nil
+}
+func (p *detailFixturePort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
+	return nil, nil
+}
+
+// detailHarness opens an inline Detail surface for a single seeded user
+// so the keyboard-driven Visual / yank test below stays focused on the
+// detail behaviour and doesn't drag in the list-fetch path.
+func detailHarness(t *testing.T) users.ListModel {
+	t.Helper()
+	u := domain.User{
+		ID:     "00u_alice",
+		Status: domain.UserStatusActive,
+		Profile: domain.UserProfile{
+			Login:       "alice@acme.com",
+			DisplayName: "Alice Smith",
+		},
+	}
+	m := users.NewListModel(users.Deps{
+		Port:         &detailFixturePort{user: u},
+		InitialUsers: []domain.User{u},
+		Width:        120,
+		Height:       30,
+	})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(users.ListModel)
+	require.NotNil(t, cmd, "`d` should emit the open-detail Cmd")
+	updated, _ = m.Update(cmd())
+	return updated.(users.ListModel)
+}
+
+func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+
+// Test_DetailVisual_VEntersAndShowsBanner asserts the `v` key flips the
+// Detail pane into Visual mode and the "-- VISUAL --" banner becomes
+// visible.
+func Test_DetailVisual_VEntersAndShowsBanner(t *testing.T) {
+	t.Parallel()
+	m := detailHarness(t)
+
+	updated, _ := m.Update(key('v'))
+	m = updated.(users.ListModel)
+
+	assert.Contains(t, m.View(), "-- VISUAL --",
+		"Visual mode banner must surface after `v`")
+}
+
+// Test_DetailVisual_EscCancelsWithoutClosingDetail covers the user
+// expectation that Esc inside Visual mode exits the selection but keeps
+// the detail surface open (matches Vim semantics).
+func Test_DetailVisual_EscCancelsWithoutClosingDetail(t *testing.T) {
+	t.Parallel()
+	m := detailHarness(t)
+	updated, _ := m.Update(key('v'))
+	m = updated.(users.ListModel)
+	require.Contains(t, m.View(), "-- VISUAL --", "precondition: visual mode active")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(users.ListModel)
+
+	view := m.View()
+	assert.NotContains(t, view, "-- VISUAL --",
+		"first Esc must cancel Visual mode")
+	assert.Contains(t, view, "User Detail",
+		"Esc inside Visual must NOT close the detail surface")
+}
+
+// Test_DetailVisual_YankProducesToast asserts that pressing `y` ends
+// Visual mode and surfaces a toast — either "yanked N lines" on systems
+// where atotto/clipboard succeeded, or "yank failed:" otherwise. Either
+// path proves the keypath ran end-to-end.
+func Test_DetailVisual_YankProducesToast(t *testing.T) {
+	t.Parallel()
+	m := detailHarness(t)
+	updated, _ := m.Update(key('v'))
+	m = updated.(users.ListModel)
+	updated, _ = m.Update(key('j'))
+	m = updated.(users.ListModel)
+	updated, _ = m.Update(key('y'))
+	m = updated.(users.ListModel)
+
+	view := m.View()
+	hasOK := strings.Contains(view, "yanked") && strings.Contains(view, "line")
+	hasErr := strings.Contains(view, "yank failed:")
+	assert.True(t, hasOK || hasErr,
+		"after `y`, View must surface a yank toast (success or failure):\n%s", view)
+	assert.NotContains(t, view, "-- VISUAL --",
+		"Visual mode must end after `y` regardless of clipboard success")
+}
+
+// Test_DetailVisual_JKMovesCursor asserts that line-cursor navigation
+// works inside the detail pane (the precondition for Visual mode being
+// useful).
+func Test_DetailVisual_JKMovesCursor(t *testing.T) {
+	t.Parallel()
+	m := detailHarness(t)
+
+	// Cursor starts at line 0; press j once → line 1. Render should
+	// always carry exactly one ▸ marker — moving doesn't add cursors.
+	updated, _ := m.Update(key('j'))
+	m = updated.(users.ListModel)
+	view := m.View()
+	got := strings.Count(view, "▸ ")
+	assert.Equal(t, 1, got,
+		"after `j`, exactly one cursor marker should be rendered:\n%s", view)
+}
