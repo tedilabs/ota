@@ -612,6 +612,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, quitConfirmCmd()
 		}
 	}
+	// Any key the App Shell didn't claim (j/k navigation, Shift+S sort,
+	// d / Enter detail, /, Backspace, ...) belongs to the active child
+	// Screen. Forward and persist its updated state, otherwise list-level
+	// shortcuts silently no-op (the user reported this for `Shift+S`).
+	if child, ok := m.screens[m.active]; ok {
+		updated, cmd := child.Update(msg)
+		m.screens[m.active] = updated
+		return m, cmd
+	}
 	return m, nil
 }
 

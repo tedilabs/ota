@@ -6,6 +6,7 @@ package app_test
 // shortcuts available on the current view.
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -15,8 +16,21 @@ import (
 
 	"github.com/tedilabs/ota/internal/app"
 	"github.com/tedilabs/ota/internal/clock"
+	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
 )
+
+// testUsersForKeyTest seeds two users for the key-delegation regression
+// test below. Stable, alphabetised by login so cursor advance is
+// deterministic.
+func testUsersForKeyTest() []domain.User {
+	return []domain.User{
+		{ID: "00u_alice", Status: domain.UserStatusActive,
+			Profile: domain.UserProfile{Login: "alice@acme.com"}},
+		{ID: "00u_bob", Status: domain.UserStatusActive,
+			Profile: domain.UserProfile{Login: "bob@acme.com"}},
+	}
+}
 
 func newHelpTestModel(t *testing.T) app.Model {
 	t.Helper()
@@ -97,6 +111,90 @@ func Test_AppShell_QuestionMarkToggle(t *testing.T) {
 	assert.NotContains(t, m.View(), "Help · Users List",
 		"second `?` must close the modal")
 }
+
+// Test_AppShell_KeysReachActiveChild guards the App Shell key-delegation
+// path. The user reported "Shift+S 같은 단축키가 아무런 변화도 안 일으킨다."
+// — the root cause was handleKey() returning (m, nil) for any rune outside
+// {:, ?, q}, swallowing j/k/Shift+S/d/Enter before they reached the child
+// Screen. This test pins the fix: pressing `j` on the Users screen must
+// reach the seeded child and advance its cursor (visible by the "> "
+// prefix moving from alice to bob).
+func Test_AppShell_KeysReachActiveChild(t *testing.T) {
+	t.Parallel()
+
+	port := &seededUsersPort{users: testUsersForKeyTest()}
+	keymap, _, err := keys.Resolve(nil)
+	require.NoError(t, err)
+
+	m := app.New(app.Deps{
+		Keys:      keymap,
+		Clock:     clock.Real(),
+		Profile:   "test",
+		OrgURL:    "https://acme.okta.com",
+		UsersPort: port,
+	})
+
+	// Run the initial fetch Cmd so the seeded users land in the child model.
+	if init := m.Init(); init != nil {
+		if msg := init(); msg != nil {
+			updated, _ := m.Update(msg)
+			m = updated.(app.Model)
+		}
+	}
+
+	require.Contains(t, m.View(), "alice@acme.com",
+		"precondition: seeded users rendered after Init")
+	require.Contains(t, m.View(), "> ", "precondition: cursor visible at row 0")
+
+	// Press `j` — should move cursor down to row 1 (bob).
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(app.Model)
+
+	view := m.View()
+	// Bob's row should now carry the cursor prefix.
+	assert.Regexp(t, `>\s+\[\+\] ACTIVE\s+bob@acme\.com`, view,
+		"`j` must reach the child Users screen and advance the cursor")
+}
+
+// seededUsersPort is a tiny domain.UsersPort double that returns a fixed
+// slice of users on List and supports nothing else. Sufficient for the
+// key-delegation regression test.
+type seededUsersPort struct {
+	users []domain.User
+}
+
+func (p *seededUsersPort) List(_ context.Context, _ domain.UsersQuery) (domain.Iterator[domain.User], error) {
+	return &seededUsersIter{remaining: p.users}, nil
+}
+
+func (p *seededUsersPort) Get(_ context.Context, id string) (domain.User, error) {
+	for _, u := range p.users {
+		if u.ID == id || u.Profile.Login == id {
+			return u, nil
+		}
+	}
+	return domain.User{}, domain.ErrNotFound
+}
+
+func (p *seededUsersPort) ListGroups(_ context.Context, _ string) ([]domain.Group, error) {
+	return nil, nil
+}
+
+func (p *seededUsersPort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
+	return nil, nil
+}
+
+type seededUsersIter struct{ remaining []domain.User }
+
+func (it *seededUsersIter) Next(_ context.Context) (domain.User, bool, error) {
+	if len(it.remaining) == 0 {
+		return domain.User{}, false, nil
+	}
+	u := it.remaining[0]
+	it.remaining = it.remaining[1:]
+	return u, true, nil
+}
+func (it *seededUsersIter) Close() error { return nil }
 
 // Test_AppShell_HelpInternalFilter verifies `/` inside the help modal narrows
 // the displayed entries — the `?` overlay's own search.
