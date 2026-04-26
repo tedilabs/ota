@@ -25,10 +25,18 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/testfx"
 	"github.com/tedilabs/ota/internal/tui/users"
 )
+
+// fixtureClock returns a frozen Clock at the same instant the test fixtures
+// were authored against (TUI_DESIGN §16). Without this, RelativeTime drifts
+// against time.Now() and goldens become flaky as the calendar moves on.
+func fixtureClock() clock.Clock {
+	return clock.NewFake(time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC))
+}
 
 func init() { testfx.PinTestEnvironment() }
 
@@ -62,7 +70,12 @@ func Test_UsersListGolden_Default(t *testing.T) {
 	t.Parallel()
 // Phase 6d-{3,4,5,6} unblocked — golden lock-in active.
 
-	m := users.NewListModel(users.Deps{InitialUsers: sampleUsersFixture(), Width: 120, Height: 30})
+	m := users.NewListModel(users.Deps{
+		InitialUsers: sampleUsersFixture(),
+		Width:        120,
+		Height:       30,
+		Clock:        fixtureClock(),
+	})
 	got := testfx.StripANSI(m.View())
 	testfx.AssertGolden(t, got, "testdata/golden/list_default.txt")
 }

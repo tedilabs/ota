@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/testfx"
 	"github.com/tedilabs/ota/internal/tui/logs"
@@ -56,7 +57,13 @@ func Test_LogsListGolden_History(t *testing.T) {
 	t.Parallel()
 // Phase 6d-{3,4,5,6} unblocked — golden lock-in active.
 
-	m := logs.NewSearchModel(logs.Deps{InitialEvents: sampleLogsFixture(), Width: 120, Height: 30})
+	frozen := clock.NewFake(time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC))
+	m := logs.NewSearchModel(logs.Deps{
+		InitialEvents: sampleLogsFixture(),
+		Width:         120,
+		Height:        30,
+		Clock:         frozen,
+	})
 	got := testfx.StripANSI(m.View())
 	testfx.AssertGolden(t, got, "testdata/golden/list_history.txt")
 }
