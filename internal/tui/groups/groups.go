@@ -520,7 +520,8 @@ func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab) string {
 }
 
 // renderGroupYAMLTab marshals the same groupJSONShape projection as the
-// JSON tab through gopkg.in/yaml.v3, with a 2-space indent (issue #109).
+// JSON tab through gopkg.in/yaml.v3, with a 2-space indent (issue #109)
+// and shared syntax highlighting (issue #110).
 func renderGroupYAMLTab(g domain.Group) string {
 	var buf strings.Builder
 	enc := yaml.NewEncoder(&buf)
@@ -531,7 +532,8 @@ func renderGroupYAMLTab(g domain.Group) string {
 	if err := enc.Close(); err != nil {
 		return "(yaml render error: " + err.Error() + ")\n"
 	}
-	return strings.TrimRight(buf.String(), "\n") + "\n"
+	body := strings.TrimRight(buf.String(), "\n")
+	return shared.HighlightYAML(body, activeTokens()) + "\n"
 }
 
 func renderGroupTabBar(active GroupDetailTab) string {
@@ -548,13 +550,13 @@ func renderGroupTabBar(active GroupDetailTab) string {
 
 // renderGroupRawTab returns the §15.7 v1.2.0 Raw JSON tab content.
 // Groups carry no PII so no mask wrapping is needed; the marshal is
-// straight from the domain projection.
+// straight from the domain projection. v0.1.3 adds syntax highlighting.
 func renderGroupRawTab(g domain.Group) string {
 	buf, err := json.MarshalIndent(groupJSONShapeFor(g), "", "  ")
 	if err != nil {
 		return "(raw render error: " + err.Error() + ")\n"
 	}
-	return string(buf) + "\n"
+	return shared.HighlightJSON(string(buf), activeTokens()) + "\n"
 }
 
 // groupJSONShapeFor centralises the deterministic projection so JSON and

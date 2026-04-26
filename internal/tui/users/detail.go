@@ -117,9 +117,13 @@ func (m DetailModel) View() string {
 	return b.String()
 }
 
-// renderJSONTab is the v0.1.2 successor to renderRawTab; the implementation
-// is unchanged but the name now matches the visible "JSON" tab label.
-func (m DetailModel) renderJSONTab() string { return m.renderRawTab() }
+// renderJSONTab is the v0.1.2 successor to renderRawTab; the v0.1.3
+// upgrade adds shared.HighlightJSON over the masked-line annotation so
+// keys / strings / numbers / bools / nulls all render with their own
+// lipgloss tokens.
+func (m DetailModel) renderJSONTab() string {
+	return shared.HighlightJSON(m.renderRawTab(), activeTokens())
+}
 
 // renderYAMLTab marshals the same userJSONShape as the JSON tab through
 // gopkg.in/yaml.v3 so operators get a syntactically-correct YAML view.
@@ -130,7 +134,7 @@ func (m DetailModel) renderYAMLTab() string {
 	if err != nil {
 		return "(yaml render error: " + err.Error() + ")\n"
 	}
-	return annotateMaskedLines(body) + "\n"
+	return shared.HighlightYAML(annotateMaskedLines(body), activeTokens()) + "\n"
 }
 
 // renderTabBar lays out the §15.7 v1.2.0 tab labels with the active one

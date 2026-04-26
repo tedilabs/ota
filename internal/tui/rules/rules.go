@@ -550,7 +550,8 @@ func renderRuleDetailTabbed(r domain.GroupRule, active RuleDetailTab) string {
 }
 
 // renderRuleYAMLTab marshals the same ruleJSONShape projection as the
-// JSON tab through gopkg.in/yaml.v3, with a 2-space indent (issue #109).
+// JSON tab through gopkg.in/yaml.v3, with a 2-space indent (issue #109)
+// and shared syntax highlighting (issue #110).
 func renderRuleYAMLTab(r domain.GroupRule) string {
 	var buf strings.Builder
 	enc := yaml.NewEncoder(&buf)
@@ -561,7 +562,8 @@ func renderRuleYAMLTab(r domain.GroupRule) string {
 	if err := enc.Close(); err != nil {
 		return "(yaml render error: " + err.Error() + ")\n"
 	}
-	return strings.TrimRight(buf.String(), "\n") + "\n"
+	body := strings.TrimRight(buf.String(), "\n")
+	return shared.HighlightYAML(body, activeTokens()) + "\n"
 }
 
 func renderRuleTabBar(active RuleDetailTab) string {
@@ -576,13 +578,14 @@ func renderRuleTabBar(active RuleDetailTab) string {
 	return strings.Join(parts, " ")
 }
 
-// renderRuleRawTab returns the §15.7 v1.2.0 Raw JSON tab content.
+// renderRuleRawTab returns the §15.7 v1.2.0 Raw JSON tab content with
+// v0.1.3 syntax highlighting.
 func renderRuleRawTab(r domain.GroupRule) string {
 	buf, err := json.MarshalIndent(ruleJSONShapeFor(r), "", "  ")
 	if err != nil {
 		return "(raw render error: " + err.Error() + ")\n"
 	}
-	return string(buf) + "\n"
+	return shared.HighlightJSON(string(buf), activeTokens()) + "\n"
 }
 
 // ruleJSONShapeFor centralises the deterministic projection so JSON and
