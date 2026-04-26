@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +14,28 @@ import (
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
 	"github.com/tedilabs/ota/internal/tui/shared"
+)
+
+// SortKey identifies the column the user has selected via Shift+letter.
+// SortNone is the default — rows render in fetch order.
+type SortKey int
+
+// Sort keys for the Users list (TUI_DESIGN §3.5a).
+const (
+	SortNone SortKey = iota
+	SortStatus
+	SortName // Users → Profile.Login
+	SortLastLogin
+	SortCreated // Users → StatusChanged (fallback Created per §3.5a)
+)
+
+// SortDir is the on/off cycle direction (off → asc → desc → off).
+type SortDir int
+
+const (
+	SortOff SortDir = iota
+	SortAsc
+	SortDesc
 )
 
 // Deps bundles ListModel's dependencies (CONVENTIONS §8.1).
@@ -40,6 +63,10 @@ type ListModel struct {
 	// width is the most recent terminal width seen via WindowSizeMsg. Drives
 	// responsive column drop per TUI_DESIGN §15.2.
 	width int
+	// sortBy / sortDir track the active column sort cycle (TUI_DESIGN §3.5).
+	// SortNone / SortOff means render rows in fetch order.
+	sortBy  SortKey
+	sortDir SortDir
 }
 
 // usersLoadedMsg delivers the result of the initial fetch.
@@ -133,8 +160,45 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, openUserCmd(m.deps.Port, sel.ID)
+	case keys.IDSortStatus:
+		m.cycleSort(SortStatus)
+		return m, nil
+	case keys.IDSortName:
+		m.cycleSort(SortName)
+		return m, nil
+	case keys.IDSortLastLogin:
+		m.cycleSort(SortLastLogin)
+		return m, nil
+	case keys.IDSortCreated:
+		m.cycleSort(SortCreated)
+		return m, nil
 	}
 	return m, nil
+}
+
+// cycleSort advances the sort state per TUI_DESIGN §3.5:
+//   - same key as the active column → off → asc → desc → off
+//   - new key → reset cursor + start at SortAsc on the new column
+//
+// Pressing a different sort key always discards the previous column's
+// direction immediately (single-active-sort invariant).
+func (m *ListModel) cycleSort(target SortKey) {
+	if m.sortBy != target {
+		m.sortBy = target
+		m.sortDir = SortAsc
+		m.cursor = 0
+		return
+	}
+	switch m.sortDir {
+	case SortOff:
+		m.sortDir = SortAsc
+	case SortAsc:
+		m.sortDir = SortDesc
+	case SortDesc:
+		m.sortBy = SortNone
+		m.sortDir = SortOff
+	}
+	m.cursor = 0
 }
 
 // classify resolves a tea.KeyMsg through the injected Deps.Keys map (REQ-C03
@@ -216,9 +280,33 @@ func (m ListModel) contextLine(visible []domain.User) string {
 }
 
 // renderUsersHeader returns the column header row, width-aware (TUI_DESIGN
-// §15.0a / §15.2). DEPARTMENT only appears at W' >= 130 (§15.0a.2).
+// §15.0a / §15.2). DEPARTMENT only appears at W' >= 130 (§15.0a.2). The
+// active sort column carries an `↑` (asc) or `↓` (desc) indicator appended
+// to its label per §15.2 v1.2.0.
 func (m ListModel) renderUsersHeader(_ shared.Tokens) string {
-	return m.formatUsersColumns("STATUS", "LOGIN", "DISPLAY NAME", "LAST LOGIN", "CHANGED", "DEPARTMENT")
+	return m.formatUsersColumns(
+		usersSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir),
+		usersSortLabel("LOGIN", m.sortBy, SortName, m.sortDir),
+		"DISPLAY NAME",
+		usersSortLabel("LAST LOGIN", m.sortBy, SortLastLogin, m.sortDir),
+		usersSortLabel("CHANGED", m.sortBy, SortCreated, m.sortDir),
+		"DEPARTMENT",
+	)
+}
+
+// usersSortLabel appends "↑" / "↓" to title when active is the same key as
+// the column. SortNone / SortOff renders the label unchanged.
+func usersSortLabel(title string, active, key SortKey, dir SortDir) string {
+	if active != key || dir == SortOff {
+		return title
+	}
+	switch dir {
+	case SortAsc:
+		return title + "↑"
+	case SortDesc:
+		return title + "↓"
+	}
+	return title
 }
 
 // renderUsersRow formats a single User row, width-aware.
@@ -261,8 +349,16 @@ func usersColumnSpecs() []shared.ColumnSpec {
 // CHANGED / DEPARTMENT per the TUI_DESIGN §15.0a Min/Weight + DropPriority
 // model. Cells beyond the supplied list (e.g., DEPARTMENT before the User
 // model carries it) are rendered as "—".
+//
+// The active sort column gets +1 Min to reserve room for its `↑` / `↓`
+// indicator (§15.2 v1.2.0: "헤더만 1글자 차지, 본문 cell 폭 영향 없음").
+// Without the bump a Min-tight column like LAST LOGIN (10) would clip the
+// indicator to "LAST LOGI…".
 func (m ListModel) formatUsersColumns(cells ...string) string {
 	specs := usersColumnSpecs()
+	if i := usersSortColumnIdx(m.sortBy); i >= 0 && m.sortDir != SortOff {
+		specs[i].Min++
+	}
 	innerWidth := m.usersInnerWidth()
 	// §15.0a.2 — DEPARTMENT only appears once W' >= 130. We model that as a
 	// late-stage drop by raising its DropPriority effective threshold here.
@@ -282,6 +378,22 @@ func (m ListModel) formatUsersColumns(cells ...string) string {
 		}
 	}
 	return shared.FormatRow(specs, widths, full, 2)
+}
+
+// usersSortColumnIdx maps a SortKey to its index in usersColumnSpecs.
+// Returns -1 when the key has no matching column (e.g., SortNone).
+func usersSortColumnIdx(k SortKey) int {
+	switch k {
+	case SortStatus:
+		return 0
+	case SortName:
+		return 1
+	case SortLastLogin:
+		return 3
+	case SortCreated:
+		return 4
+	}
+	return -1
 }
 
 // usersInnerWidth returns the body width available to columns: chrome inner
@@ -329,19 +441,111 @@ func activeTokens() shared.Tokens {
 }
 
 // visible applies the active filter (case-insensitive substring match on
-// Profile.Login) to m.users.
+// Profile.Login) and active sort (TUI_DESIGN §3.5) to m.users. The filter
+// is applied first so sort operates over the visible subset.
 func (m ListModel) visible() []domain.User {
+	var out []domain.User
 	if m.filter == "" {
-		return m.users
-	}
-	needle := strings.ToLower(m.filter)
-	out := make([]domain.User, 0, len(m.users))
-	for _, u := range m.users {
-		if strings.Contains(strings.ToLower(u.Profile.Login), needle) {
-			out = append(out, u)
+		// Copy so the sort below doesn't mutate m.users in place.
+		out = append(out, m.users...)
+	} else {
+		needle := strings.ToLower(m.filter)
+		out = make([]domain.User, 0, len(m.users))
+		for _, u := range m.users {
+			if strings.Contains(strings.ToLower(u.Profile.Login), needle) {
+				out = append(out, u)
+			}
 		}
 	}
+	if m.sortBy != SortNone && m.sortDir != SortOff {
+		sortUsersByKey(out, m.sortBy, m.sortDir)
+	}
 	return out
+}
+
+// sortUsersByKey applies a stable sort to xs in place per §3.5a (Users).
+// Stability matters: rows sharing a sort-key value must keep their original
+// fetch order so operators don't see a confusing reshuffle.
+func sortUsersByKey(xs []domain.User, key SortKey, dir SortDir) {
+	less := usersComparator(key)
+	if less == nil {
+		return
+	}
+	sort.SliceStable(xs, func(i, j int) bool {
+		if dir == SortDesc {
+			return less(xs[j], xs[i])
+		}
+		return less(xs[i], xs[j])
+	})
+}
+
+// usersComparator returns a "less" function honouring §3.5a's per-column
+// rules. Returns nil for keys not applicable to Users (none, in MVP).
+func usersComparator(key SortKey) func(a, b domain.User) bool {
+	switch key {
+	case SortStatus:
+		return func(a, b domain.User) bool {
+			return userStatusRank(a.Status) < userStatusRank(b.Status)
+		}
+	case SortName:
+		return func(a, b domain.User) bool {
+			return strings.ToLower(a.Profile.Login) < strings.ToLower(b.Profile.Login)
+		}
+	case SortLastLogin:
+		// nil is "smallest" — asc places never-logged-in users at the top.
+		return func(a, b domain.User) bool {
+			return userLastLoginInstant(a).Before(userLastLoginInstant(b))
+		}
+	case SortCreated:
+		// §3.5a: StatusChanged with Created fallback (StatusChanged.IsZero).
+		return func(a, b domain.User) bool {
+			return userChangedInstant(a).Before(userChangedInstant(b))
+		}
+	}
+	return nil
+}
+
+// userStatusRank assigns the §3.5a operational ordering: ACTIVE first so
+// most-affected accounts surface ahead of routine ones isn't the goal —
+// the rank reflects "what an operator wants to see at the top in a
+// healthy → broken cascade".
+func userStatusRank(s domain.UserStatus) int {
+	switch s {
+	case domain.UserStatusActive:
+		return 0
+	case domain.UserStatusLockedOut:
+		return 1
+	case domain.UserStatusPasswordExpired:
+		return 2
+	case domain.UserStatusSuspended:
+		return 3
+	case domain.UserStatusStaged:
+		return 4
+	case domain.UserStatusProvisioned:
+		return 5
+	case domain.UserStatusDeprovisioned:
+		return 6
+	}
+	return 7
+}
+
+// userLastLoginInstant returns u.LastLogin or the zero time when nil/zero.
+// time.Time's zero value (Jan 1, year 1) is "smaller than" all real
+// timestamps — exactly the §3.5a contract for nil-as-smallest.
+func userLastLoginInstant(u domain.User) time.Time {
+	if u.LastLogin == nil {
+		return time.Time{}
+	}
+	return *u.LastLogin
+}
+
+// userChangedInstant returns u.StatusChanged or u.Created when StatusChanged
+// is unset. Mirrors the §3.5a Created column contract.
+func userChangedInstant(u domain.User) time.Time {
+	if u.StatusChanged != nil && !u.StatusChanged.IsZero() {
+		return *u.StatusChanged
+	}
+	return u.Created
 }
 
 // selected returns the currently-highlighted user, if any.

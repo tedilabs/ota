@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,6 +17,25 @@ import (
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
 	"github.com/tedilabs/ota/internal/tui/shared"
+)
+
+// SortKey identifies the column the user has selected via Shift+letter
+// (TUI_DESIGN §3.5a). Rules honours SortStatus and SortName.
+type SortKey int
+
+const (
+	SortNone SortKey = iota
+	SortStatus
+	SortName
+)
+
+// SortDir is the on/off cycle direction (off → asc → desc → off).
+type SortDir int
+
+const (
+	SortOff SortDir = iota
+	SortAsc
+	SortDesc
 )
 
 // Deps bundles dependencies shared by Rules screens.
@@ -48,6 +68,9 @@ type ListModel struct {
 	detail    domain.GroupRule
 	lastErr   error
 	width     int
+	// sortBy / sortDir track the active column sort cycle (TUI_DESIGN §3.5).
+	sortBy  SortKey
+	sortDir SortDir
 }
 
 // NewListModel constructs a ListModel.
@@ -122,6 +145,14 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 			return m, nil
+		case "S":
+			// §3.5a — Rules: Shift+S sorts by STATUS.
+			m.cycleSort(SortStatus)
+			return m, nil
+		case "N":
+			// §3.5a — Rules: Shift+N sorts by NAME.
+			m.cycleSort(SortName)
+			return m, nil
 		}
 	}
 	if msg.Type == tea.KeyEnter {
@@ -158,7 +189,12 @@ func (m ListModel) View() string {
 	if m.filtering {
 		b.WriteString("filter: " + m.filter + "\n")
 	}
-	b.WriteString(m.formatRulesColumns("STATUS", "NAME", "TARGETS", "UPDATED"))
+	b.WriteString(m.formatRulesColumns(
+		rulesSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir),
+		rulesSortLabel("NAME", m.sortBy, SortName, m.sortDir),
+		"TARGETS",
+		"UPDATED",
+	))
 	b.WriteByte('\n')
 	for i, r := range rows {
 		row := m.renderRulesRow(r, m.now(), tk)
@@ -280,17 +316,101 @@ func (m ListModel) now() time.Time {
 }
 
 func (m ListModel) visible() []domain.GroupRule {
+	var out []domain.GroupRule
 	if m.filter == "" {
-		return m.rules
-	}
-	needle := strings.ToLower(m.filter)
-	out := make([]domain.GroupRule, 0, len(m.rules))
-	for _, r := range m.rules {
-		if strings.Contains(strings.ToLower(r.Name), needle) {
-			out = append(out, r)
+		out = append(out, m.rules...)
+	} else {
+		needle := strings.ToLower(m.filter)
+		out = make([]domain.GroupRule, 0, len(m.rules))
+		for _, r := range m.rules {
+			if strings.Contains(strings.ToLower(r.Name), needle) {
+				out = append(out, r)
+			}
 		}
 	}
+	if m.sortBy != SortNone && m.sortDir != SortOff {
+		sortRulesByKey(out, m.sortBy, m.sortDir)
+	}
 	return out
+}
+
+// cycleSort advances the sort state per TUI_DESIGN §3.5.
+func (m *ListModel) cycleSort(target SortKey) {
+	if m.sortBy != target {
+		m.sortBy = target
+		m.sortDir = SortAsc
+		m.cursor = 0
+		return
+	}
+	switch m.sortDir {
+	case SortOff:
+		m.sortDir = SortAsc
+	case SortAsc:
+		m.sortDir = SortDesc
+	case SortDesc:
+		m.sortBy = SortNone
+		m.sortDir = SortOff
+	}
+	m.cursor = 0
+}
+
+// sortRulesByKey applies a stable sort honouring §3.5a Rules.
+//   - SortStatus uses the operational rank (INVALID first → ACTIVE → INACTIVE)
+//     so the asc cycle surfaces broken rules at the top.
+//   - SortName is case-insensitive alphabetical on rule.Name.
+func sortRulesByKey(xs []domain.GroupRule, key SortKey, dir SortDir) {
+	less := rulesComparator(key)
+	if less == nil {
+		return
+	}
+	sort.SliceStable(xs, func(i, j int) bool {
+		if dir == SortDesc {
+			return less(xs[j], xs[i])
+		}
+		return less(xs[i], xs[j])
+	})
+}
+
+func rulesComparator(key SortKey) func(a, b domain.GroupRule) bool {
+	switch key {
+	case SortStatus:
+		return func(a, b domain.GroupRule) bool {
+			return ruleStatusRank(a.Status) < ruleStatusRank(b.Status)
+		}
+	case SortName:
+		return func(a, b domain.GroupRule) bool {
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		}
+	}
+	return nil
+}
+
+// ruleStatusRank returns the §3.5a operational rank for asc sorting.
+// INVALID first surfaces broken rules at the top of the list.
+func ruleStatusRank(s domain.GroupRuleStatus) int {
+	switch s {
+	case domain.GroupRuleStatusInvalid:
+		return 0
+	case domain.GroupRuleStatusActive:
+		return 1
+	case domain.GroupRuleStatusInactive:
+		return 2
+	}
+	return 3
+}
+
+// rulesSortLabel appends "↑" / "↓" to title when the active key matches.
+func rulesSortLabel(title string, active, key SortKey, dir SortDir) string {
+	if active != key || dir == SortOff {
+		return title
+	}
+	switch dir {
+	case SortAsc:
+		return title + "↑"
+	case SortDesc:
+		return title + "↓"
+	}
+	return title
 }
 
 func (m ListModel) selected() *domain.GroupRule {

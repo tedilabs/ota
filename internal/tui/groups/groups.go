@@ -5,6 +5,7 @@ package groups
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,25 @@ import (
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
 	"github.com/tedilabs/ota/internal/tui/shared"
+)
+
+// SortKey identifies the column the user has selected via Shift+letter
+// (TUI_DESIGN §3.5a). Groups only honours SortName in MVP; other Shift
+// chords are no-ops at the handler level.
+type SortKey int
+
+const (
+	SortNone SortKey = iota
+	SortName
+)
+
+// SortDir is the on/off cycle direction (off → asc → desc → off).
+type SortDir int
+
+const (
+	SortOff SortDir = iota
+	SortAsc
+	SortDesc
 )
 
 // Deps bundles dependencies shared by Groups screens.
@@ -44,6 +64,9 @@ type ListModel struct {
 	detail    domain.Group
 	lastErr   error
 	width     int
+	// sortBy / sortDir track the active column sort cycle (TUI_DESIGN §3.5).
+	sortBy  SortKey
+	sortDir SortDir
 }
 
 // groupsErrMsg surfaces a fetch failure to View() (TUI_DESIGN §17).
@@ -121,6 +144,11 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 			return m, nil
+		case "N":
+			// §3.5a — Groups: Shift+N sorts by NAME. Other Shift chords are
+			// no-ops on Groups (S / L / C have no matching column).
+			m.cycleSort(SortName)
+			return m, nil
 		}
 	}
 	if msg.Type == tea.KeyEnter {
@@ -132,6 +160,27 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.opened = true
 	}
 	return m, nil
+}
+
+// cycleSort advances the sort state per TUI_DESIGN §3.5: same key cycles
+// off → asc → desc → off; a different key resets cursor and starts at asc.
+func (m *ListModel) cycleSort(target SortKey) {
+	if m.sortBy != target {
+		m.sortBy = target
+		m.sortDir = SortAsc
+		m.cursor = 0
+		return
+	}
+	switch m.sortDir {
+	case SortOff:
+		m.sortDir = SortAsc
+	case SortAsc:
+		m.sortDir = SortDesc
+	case SortDesc:
+		m.sortBy = SortNone
+		m.sortDir = SortOff
+	}
+	m.cursor = 0
 }
 
 // View renders SCR-020 (TUI_DESIGN §15.3 / §16.5).
@@ -162,7 +211,13 @@ func (m ListModel) View() string {
 	if m.filtering {
 		b.WriteString("filter: " + m.filter + "\n")
 	}
-	b.WriteString(m.formatGroupsColumns("TYPE", "NAME", "DESCRIPTION", "UPDATED", "TAGS"))
+	b.WriteString(m.formatGroupsColumns(
+		"TYPE",
+		groupsSortLabel("NAME", m.sortBy, SortName, m.sortDir),
+		"DESCRIPTION",
+		"UPDATED",
+		"TAGS",
+	))
 	b.WriteByte('\n')
 	for i, g := range rows {
 		row := m.renderGroupsRow(g, m.now(), tk)
@@ -292,17 +347,52 @@ func (m ListModel) now() time.Time {
 }
 
 func (m ListModel) visible() []domain.Group {
+	var out []domain.Group
 	if m.filter == "" {
-		return m.groups
-	}
-	needle := strings.ToLower(m.filter)
-	out := make([]domain.Group, 0, len(m.groups))
-	for _, g := range m.groups {
-		if strings.Contains(strings.ToLower(g.Profile.Name), needle) {
-			out = append(out, g)
+		out = append(out, m.groups...)
+	} else {
+		needle := strings.ToLower(m.filter)
+		out = make([]domain.Group, 0, len(m.groups))
+		for _, g := range m.groups {
+			if strings.Contains(strings.ToLower(g.Profile.Name), needle) {
+				out = append(out, g)
+			}
 		}
 	}
+	if m.sortBy != SortNone && m.sortDir != SortOff {
+		sortGroupsByKey(out, m.sortBy, m.sortDir)
+	}
 	return out
+}
+
+// sortGroupsByKey applies a stable sort honouring §3.5a Groups: only
+// SortName is mapped (case-insensitive sort on Profile.Name).
+func sortGroupsByKey(xs []domain.Group, key SortKey, dir SortDir) {
+	if key != SortName {
+		return
+	}
+	sort.SliceStable(xs, func(i, j int) bool {
+		ai := strings.ToLower(xs[i].Profile.Name)
+		bj := strings.ToLower(xs[j].Profile.Name)
+		if dir == SortDesc {
+			return ai > bj
+		}
+		return ai < bj
+	})
+}
+
+// groupsSortLabel appends "↑" / "↓" to title when the active key matches.
+func groupsSortLabel(title string, active, key SortKey, dir SortDir) string {
+	if active != key || dir == SortOff {
+		return title
+	}
+	switch dir {
+	case SortAsc:
+		return title + "↑"
+	case SortDesc:
+		return title + "↓"
+	}
+	return title
 }
 
 func (m ListModel) selected() *domain.Group {

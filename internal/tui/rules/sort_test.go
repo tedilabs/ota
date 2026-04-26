@@ -57,7 +57,10 @@ func Test_RulesList_SortByStatus_CyclesAscDescOff(t *testing.T) {
 		"after 3×Shift+S, desc indicator cleared")
 }
 
-// Test_RulesList_SortByStatus_AscOrder — ACTIVE < INACTIVE < INVALID alphabetically.
+// Test_RulesList_SortByStatus_AscOrder — operational rank per §3.5a:
+// INVALID first (so broken rules surface at the top), then ACTIVE, then
+// INACTIVE. The rationale is `§0.4 (상태는 숨기지 않는다)` — alphabetical
+// would bury INVALID in the middle.
 func Test_RulesList_SortByStatus_AscOrder(t *testing.T) {
 	t.Parallel()
 
@@ -70,11 +73,11 @@ func Test_RulesList_SortByStatus_AscOrder(t *testing.T) {
 	m = updated.(rules.ListModel)
 
 	view := testfx.StripANSI(m.View())
-	idxActive := strings.Index(view, "ACTIVE")
-	idxInactive := strings.Index(view, "INACTIVE")
 	idxInvalid := strings.Index(view, "INVALID")
-	assert.Less(t, idxActive, idxInactive, "asc: ACTIVE before INACTIVE")
-	assert.Less(t, idxInactive, idxInvalid, "asc: INACTIVE before INVALID")
+	idxActive := strings.Index(view, "[+] ACTIVE")
+	idxInactive := strings.Index(view, "INACTIVE")
+	assert.Less(t, idxInvalid, idxActive, "asc rank: INVALID before ACTIVE (§3.5a)")
+	assert.Less(t, idxActive, idxInactive, "asc rank: ACTIVE before INACTIVE (§3.5a)")
 }
 
 func shiftKey(r rune) tea.KeyMsg {
