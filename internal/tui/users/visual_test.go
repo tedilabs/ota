@@ -66,8 +66,9 @@ func detailHarness(t *testing.T) users.ListModel {
 func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
 // Test_DetailVisual_VEntersAndShowsBanner asserts the `v` key flips the
-// Detail pane into Visual mode and the "-- VISUAL --" banner becomes
-// visible.
+// Detail pane into Visual mode — both the user-visible banner and the
+// internal flag (the banner contains style codes that may strip in
+// tests).
 func Test_DetailVisual_VEntersAndShowsBanner(t *testing.T) {
 	t.Parallel()
 	m := detailHarness(t)
@@ -75,6 +76,7 @@ func Test_DetailVisual_VEntersAndShowsBanner(t *testing.T) {
 	updated, _ := m.Update(key('v'))
 	m = updated.(users.ListModel)
 
+	assert.True(t, m.DetailVisualActive(), "`v` must enter Visual mode")
 	assert.Contains(t, m.View(), "-- VISUAL --",
 		"Visual mode banner must surface after `v`")
 }
@@ -118,23 +120,29 @@ func Test_DetailVisual_YankProducesToast(t *testing.T) {
 	hasErr := strings.Contains(view, "yank failed:")
 	assert.True(t, hasOK || hasErr,
 		"after `y`, View must surface a yank toast (success or failure):\n%s", view)
-	assert.NotContains(t, view, "-- VISUAL --",
+	assert.False(t, m.DetailVisualActive(),
 		"Visual mode must end after `y` regardless of clipboard success")
 }
 
 // Test_DetailVisual_JKMovesCursor asserts that line-cursor navigation
 // works inside the detail pane (the precondition for Visual mode being
-// useful).
+// useful). Asserts the exported DetailLine() accessor since v0.1.3-1
+// dropped the visible ▸ marker — the highlight is now style-only and
+// stripped under NO_COLOR.
 func Test_DetailVisual_JKMovesCursor(t *testing.T) {
 	t.Parallel()
 	m := detailHarness(t)
+	require.Equal(t, 0, m.DetailLine(), "precondition: cursor starts at line 0")
 
-	// Cursor starts at line 0; press j once → line 1. Render should
-	// always carry exactly one ▸ marker — moving doesn't add cursors.
 	updated, _ := m.Update(key('j'))
 	m = updated.(users.ListModel)
-	view := m.View()
-	got := strings.Count(view, "▸ ")
-	assert.Equal(t, 1, got,
-		"after `j`, exactly one cursor marker should be rendered:\n%s", view)
+	assert.Equal(t, 1, m.DetailLine(), "`j` must advance the line cursor")
+
+	updated, _ = m.Update(key('j'))
+	m = updated.(users.ListModel)
+	assert.Equal(t, 2, m.DetailLine(), "second `j` must advance again")
+
+	updated, _ = m.Update(key('k'))
+	m = updated.(users.ListModel)
+	assert.Equal(t, 1, m.DetailLine(), "`k` must move the cursor up")
 }

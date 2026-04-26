@@ -414,6 +414,17 @@ func (m ListModel) View() string {
 	return b.String()
 }
 
+// DetailLine returns the active line cursor inside the detail body.
+// Exported so tests can assert cursor movement without depending on a
+// visual marker — v0.1.3-1 dropped the ▸ prefix to avoid shifting the
+// cursor row's indent, leaving the highlight as style-only (stripped by
+// testfx.PinTestEnvironment under NO_COLOR).
+func (m ListModel) DetailLine() int { return m.detailLine }
+
+// DetailVisualActive reports whether Visual selection is currently in
+// progress (`v` was pressed and `Esc` / `y` haven't ended it yet).
+func (m ListModel) DetailVisualActive() bool { return m.detailVisual }
+
 // renderDetailWithCursor wraps DetailModel.View() with a line-cursor +
 // optional Vim Visual highlight and a transient toast (e.g. "yanked 5
 // lines"). The DetailModel itself is stateless across renders; the
@@ -446,16 +457,17 @@ func (m ListModel) renderDetailWithCursor() string {
 		b.WriteString(tk.Warning.Render("-- VISUAL --"))
 		b.WriteByte('\n')
 	}
+	// Highlight cursor / Visual range with style only — no character prefix
+	// so columns stay aligned with the surrounding lines (issue #106).
+	cursorStyle := tk.Accent.Bold(true)
 	for i, line := range lines {
 		switch {
 		case i < headerLines:
 			b.WriteString(line)
 		case m.detailVisual && i >= start && i <= end:
-			b.WriteString(tk.Accent.Render(line))
+			b.WriteString(cursorStyle.Render(line))
 		case i == cursor:
-			b.WriteString(tk.Accent.Render("▸ " + line))
-			b.WriteByte('\n')
-			continue
+			b.WriteString(cursorStyle.Render(line))
 		default:
 			b.WriteString(line)
 		}
