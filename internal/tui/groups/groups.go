@@ -70,6 +70,8 @@ type ListModel struct {
 	detailRawReturn GroupDetailTab
 	lastErr         error
 	width           int
+	height          int
+	viewportTop     int
 	// sortBy / sortDir track the active column sort cycle (TUI_DESIGN §3.5).
 	sortBy  SortKey
 	sortDir SortDir
@@ -110,6 +112,7 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case groupsLoadedMsg:
 		m.groups = msg.groups
@@ -278,8 +281,9 @@ func (m ListModel) View() string {
 		"TAGS",
 	))
 	b.WriteByte('\n')
-	for i, g := range rows {
-		row := m.renderGroupsRow(g, m.now(), tk)
+	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
+	for i := top; i < end; i++ {
+		row := m.renderGroupsRow(rows[i], m.now(), tk)
 		if i == m.cursor {
 			row = "> " + row
 		} else {

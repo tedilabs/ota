@@ -69,6 +69,13 @@ type ListModel struct {
 	// width is the most recent terminal width seen via WindowSizeMsg. Drives
 	// responsive column drop per TUI_DESIGN §15.2.
 	width int
+	// height is the most recent terminal height. Used (with the chrome
+	// reservation) to compute how many rows the body can show without
+	// pushing the chrome header off-screen.
+	height int
+	// viewportTop is the index of the first row currently rendered. Slides
+	// with the cursor to keep the selection inside the visible window.
+	viewportTop int
 	// sortBy / sortDir track the active column sort cycle (TUI_DESIGN §3.5).
 	// SortNone / SortOff means render rows in fetch order.
 	sortBy  SortKey
@@ -87,7 +94,12 @@ type userOpenedMsg struct{ user domain.User }
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
-	return ListModel{deps: deps, users: deps.InitialUsers, width: deps.Width}
+	return ListModel{
+		deps:   deps,
+		users:  deps.InitialUsers,
+		width:  deps.Width,
+		height: deps.Height,
+	}
 }
 
 // Init kicks off the initial List call (REQ-R01 AC-1).
@@ -103,6 +115,7 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case usersLoadedMsg:
 		m.users = msg.users
@@ -307,8 +320,15 @@ func (m ListModel) View() string {
 	}
 	b.WriteString(m.renderUsersHeader(tk))
 	b.WriteByte('\n')
-	for i, u := range rows {
-		row := m.renderUsersRow(u, m.now(), tk)
+
+	// Compute the slice of rows that fits in the body. Without windowing,
+	// large user lists render every row into the body string and the chrome
+	// header scrolls off-screen — the user reported this directly. The
+	// budget keeps the chrome's top border + context line visible by
+	// reserving header / hint / filter rows from the body height.
+	top, end := m.windowBounds(len(rows))
+	for i := top; i < end; i++ {
+		row := m.renderUsersRow(rows[i], m.now(), tk)
 		if i == m.cursor {
 			row = "> " + row
 		} else {
@@ -318,6 +338,13 @@ func (m ListModel) View() string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// windowBounds returns the [top, end) slice of rows that should render
+// given the current cursor position and viewportTop. Delegates to the
+// shared helper so Groups and Rules use the same algorithm.
+func (m ListModel) windowBounds(total int) (int, int) {
+	return shared.WindowBounds(m.cursor, m.viewportTop, total, shared.ListBodyRowBudget(m.height))
 }
 
 // contextLine renders the "Users · 5 of N · q="..."" line (TUI_DESIGN §15.2
