@@ -644,17 +644,31 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.paletteInput = ""
 		return m, nil
 	case tea.KeyEnter:
-		cmd, target, ok := resolvePaletteCommand(m.paletteInput)
+		cmd, target, arg, ok := resolvePaletteCommand(m.paletteInput)
 		m.overlay = OverlayNone
 		m.paletteInput = ""
 		if !ok {
 			return m, nil
 		}
-		if cmd == paletteCmdScreen {
+		switch cmd {
+		case paletteCmdScreen:
 			return m, screenChangeCmd(target)
-		}
-		if cmd == paletteCmdQuit {
+		case paletteCmdQuit:
 			return m, quitConfirmCmd()
+		case paletteCmdUnmask:
+			// Forward to the active screen so the detail model can flip
+			// the per-field unmask flag (issue #115).
+			if child, ok := m.screens[m.active]; ok {
+				updated, c := child.Update(UnmaskFieldMsg{Field: arg})
+				m.screens[m.active] = updated
+				return m, c
+			}
+		case paletteCmdMask:
+			if child, ok := m.screens[m.active]; ok {
+				updated, c := child.Update(MaskAllMsg{})
+				m.screens[m.active] = updated
+				return m, c
+			}
 		}
 		return m, nil
 	case tea.KeyBackspace:
@@ -717,28 +731,52 @@ const (
 	paletteCmdNone paletteCmdKind = iota
 	paletteCmdScreen
 	paletteCmdQuit
+	paletteCmdUnmask
+	paletteCmdMask
+)
+
+// UnmaskFieldMsg / MaskAllMsg are re-exported from the shared msgs
+// package so callers that only depend on `internal/app` (e.g. tests)
+// can still reference them by their App Shell name.
+type (
+	UnmaskFieldMsg = shared.UnmaskFieldMsg
+	MaskAllMsg     = shared.MaskAllMsg
 )
 
 // resolvePaletteCommand parses the palette input ("users", ":users",
-// "groups", ":q", ...) into an actionable (kind, screen) pair. The
-// alias matrix lives in screenFromName so SwitchScreenMsg and the `:`
-// palette stay in sync (TUI_DESIGN §3.4 v1.2.0).
-func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, ok bool) {
+// "groups", ":q", "unmask mobilePhone", ...) into a kind. Most commands
+// resolve to a screen via screenFromName so SwitchScreenMsg and `:` stay
+// in sync (TUI_DESIGN §3.4 v1.2.0). PII unmask / mask commands route
+// through their own kinds so the App Shell can fan them out to the
+// active detail model.
+func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, arg string, ok bool) {
 	cmd := strings.TrimSpace(raw)
 	cmd = strings.TrimPrefix(cmd, ":")
-	cmd = strings.ToLower(cmd)
+	// Preserve case-sensitive args for `:unmask <field>` (Okta profile
+	// keys are camelCase) but lowercase the verb for matching.
+	verb, rest, hasArg := strings.Cut(cmd, " ")
+	verb = strings.ToLower(verb)
+	rest = strings.TrimSpace(rest)
 
-	if cmd == "quit" || cmd == "q" || cmd == "exit" {
-		return paletteCmdQuit, 0, true
+	switch verb {
+	case "quit", "q", "exit":
+		return paletteCmdQuit, 0, "", true
+	case "mask":
+		return paletteCmdMask, 0, "", true
+	case "unmask":
+		if !hasArg || rest == "" {
+			return paletteCmdNone, 0, "", false
+		}
+		return paletteCmdUnmask, 0, rest, true
 	}
-	if s, found := screenFromName(cmd); found {
-		return paletteCmdScreen, s, true
+	if s, found := screenFromName(strings.ToLower(cmd)); found {
+		return paletteCmdScreen, s, "", true
 	}
 	// `:policies OKTA_SIGN_ON` direct-jump variant.
-	if strings.HasPrefix(cmd, "policies ") {
-		return paletteCmdScreen, ScreenPolicies, true
+	if strings.HasPrefix(strings.ToLower(cmd), "policies ") {
+		return paletteCmdScreen, ScreenPolicies, "", true
 	}
-	return paletteCmdNone, 0, false
+	return paletteCmdNone, 0, "", false
 }
 
 // --- Cmd factories -------------------------------------------------------

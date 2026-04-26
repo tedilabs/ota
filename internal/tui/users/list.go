@@ -76,7 +76,11 @@ type ListModel struct {
 	detailVisualAnchor int
 	// detailToast is a transient one-line message shown above the body
 	// (e.g. "5 lines copied"). Cleared on the next key press.
-	detailToast     string
+	detailToast string
+	// detailUnmasked is the per-field PII unmask flag set, persisted on
+	// the ListModel so it survives DetailModel reconstruction every render
+	// (issue #115). Toggled by :unmask <field> / :mask palette commands.
+	detailUnmasked  map[string]bool
 	lastErr         error
 	// width is the most recent terminal width seen via WindowSizeMsg. Drives
 	// responsive column drop per TUI_DESIGN §15.2.
@@ -146,6 +150,20 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// teatest harnesses to drain final output, is gone now that operators
 		// can press `d` repeatedly and Esc back to the list. v0.2 will replace
 		// this with App Shell OpenResourceMsg routing.
+		return m, nil
+	case shared.UnmaskFieldMsg:
+		// :unmask <field> from the App Shell palette (issue #115). Only
+		// honoured while detail mode is active — masking outside the
+		// detail surface has nothing to flip.
+		if m.opened && msg.Field != "" {
+			if m.detailUnmasked == nil {
+				m.detailUnmasked = map[string]bool{}
+			}
+			m.detailUnmasked[msg.Field] = true
+		}
+		return m, nil
+	case shared.MaskAllMsg:
+		m.detailUnmasked = nil
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -457,7 +475,7 @@ func (m ListModel) DetailVisualActive() bool { return m.detailVisual }
 // idempotent.
 func (m ListModel) renderDetailWithCursor() string {
 	tk := activeTokens()
-	body := NewDetailModel(m.deps, m.detailUser).WithActiveTab(m.detailTab).View()
+	body := m.newDetail().View()
 	lines := strings.Split(body, "\n")
 
 	// The first three lines (header / tab bar / divider) are not
@@ -506,11 +524,25 @@ func (m ListModel) renderDetailWithCursor() string {
 	return b.String()
 }
 
+// newDetail constructs a DetailModel for the current detailUser and
+// applies the persistent ListModel state (active tab + per-field unmask
+// flags) so :unmask survives across renders. Centralised so the detail
+// view and detailBodyLines stay in lockstep.
+func (m ListModel) newDetail() DetailModel {
+	d := NewDetailModel(m.deps, m.detailUser).WithActiveTab(m.detailTab)
+	for field, on := range m.detailUnmasked {
+		if on {
+			d.ToggleUnmask(field)
+		}
+	}
+	return d
+}
+
 // detailBodyLines returns the body of the active tab as a slice of lines,
 // excluding the three-line header (User Detail / tab bar / divider) so j/k
 // navigation only counts content rows.
 func (m ListModel) detailBodyLines() []string {
-	body := NewDetailModel(m.deps, m.detailUser).WithActiveTab(m.detailTab).View()
+	body := m.newDetail().View()
 	all := strings.Split(body, "\n")
 	const headerLines = 3
 	if len(all) <= headerLines {
