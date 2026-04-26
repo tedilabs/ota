@@ -295,9 +295,8 @@ func (m ListModel) View() string {
 		b.WriteString(" · q=\"" + m.filter + "\"")
 	}
 	b.WriteByte('\n')
-	if m.filtering {
-		b.WriteString("filter: " + m.filter + "\n")
-	}
+	// Inline "filter:" dropped in v0.1.5-6 — App Shell renders a floating
+	// input box for `/`.
 	// 2-cell cursor gutter on the header keeps it aligned with data rows.
 	b.WriteString("  ")
 	b.WriteString(m.formatRulesColumns(
@@ -524,6 +523,11 @@ func rulesSortLabel(title string, active, key SortKey, dir SortDir, tk shared.To
 	}
 	return title
 }
+
+// Filtering / Filter expose the `/` filter state so the App Shell can
+// render its floating filter box (issue #123).
+func (m ListModel) Filtering() bool { return m.filtering }
+func (m ListModel) Filter() string  { return m.filter }
 
 // cursorBy moves the cursor by delta rows, clamped to the visible range
 // (issue #119).

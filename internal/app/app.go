@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
@@ -285,12 +286,24 @@ func (m Model) View() string {
 	tokens := activeTokens()
 
 	body := m.composeBody()
-	if m.overlay != OverlayNone {
-		if overlay := m.renderOverlayPanel(tokens); overlay != "" {
-			if body != "" {
-				body = body + "\n" + overlay
-			} else {
-				body = overlay
+	// Floating palette: when : is open the input box renders ABOVE the
+	// body — k9s-style, list still visible behind it (issue #123). Help
+	// still owns the full body via composeBody. QuitConfirm + other
+	// small overlays continue to append below the body.
+	switch {
+	case m.overlay == OverlayPalette:
+		body = m.renderPaletteBox(tokens) + "\n" + body
+	case m.activeChildIsFiltering():
+		body = m.renderFilterBox(tokens) + "\n" + body
+		fallthrough
+	default:
+		if m.overlay != OverlayNone {
+			if overlay := m.renderOverlayPanel(tokens); overlay != "" {
+				if body != "" {
+					body = body + "\n" + overlay
+				} else {
+					body = overlay
+				}
 			}
 		}
 	}
@@ -461,7 +474,9 @@ func (m Model) keyHints(tk shared.Tokens) string {
 func (m Model) renderOverlayPanel(tk shared.Tokens) string {
 	switch m.overlay {
 	case OverlayPalette:
-		return tk.Accent.Render(":") + m.paletteInput + tk.Muted.Render("  <Esc> cancel")
+		// The palette is rendered as a floating box above the body in
+		// View(); the footer panel is left empty so it doesn't double up.
+		return ""
 	case OverlayHelp:
 		// Body composition has already replaced the screen with the modal.
 		return ""
@@ -469,6 +484,70 @@ func (m Model) renderOverlayPanel(tk shared.Tokens) string {
 		return tk.Danger.Render("Quit ota?") + tk.Muted.Render("  (y/N)")
 	}
 	return ""
+}
+
+// FilterStater is implemented by list screens that own a `/` incremental
+// filter so the App Shell can render the same floating input box used
+// for the palette (issue #123).
+type FilterStater interface {
+	Filtering() bool
+	Filter() string
+}
+
+// activeChildIsFiltering reports whether the active list child is
+// currently in `/` filter input mode.
+func (m Model) activeChildIsFiltering() bool {
+	child, ok := m.screens[m.active]
+	if !ok {
+		return false
+	}
+	fs, ok := child.(FilterStater)
+	return ok && fs.Filtering()
+}
+
+// renderFilterBox builds the floating input box for `/` filter mode.
+// Sibling of renderPaletteBox; same chrome, different prompt and hint.
+func (m Model) renderFilterBox(tk shared.Tokens) string {
+	const innerWidth = 60
+	prompt := tk.Accent.Render("/")
+	input := ""
+	if child, ok := m.screens[m.active]; ok {
+		if fs, ok := child.(FilterStater); ok {
+			input = fs.Filter()
+		}
+	}
+	cursor := tk.RowHighlight.Render(" ")
+	body := prompt + input + cursor
+	hint := tk.Muted.Render("<Enter> apply · <Esc> cancel")
+	return lipglossModalBox(body, hint, innerWidth, tk)
+}
+
+// renderPaletteBox builds the small framed input box that appears above
+// the body when : is open (issue #123). Mirrors k9s's command bar:
+// rounded border, accent prompt, blinking-style block cursor, plus the
+// :Esc cancel hint.
+func (m Model) renderPaletteBox(tk shared.Tokens) string {
+	const innerWidth = 60
+	prompt := tk.Accent.Render(":")
+	input := m.paletteInput
+	cursor := tk.RowHighlight.Render(" ")
+	// Pad so the box edge lines up consistently regardless of input length.
+	body := prompt + input + cursor
+	hint := tk.Muted.Render("<Tab> autocomplete · <Enter> run · <Esc> cancel")
+	box := lipglossModalBox(body, hint, innerWidth, tk)
+	return box
+}
+
+// lipglossModalBox renders a small two-line box with body on the first
+// line and hint on the second, using lipgloss.RoundedBorder. Centralised
+// here so the palette input shares chrome with the future filter prompt.
+func lipglossModalBox(body, hint string, innerWidth int, tk shared.Tokens) string {
+	border := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#5e81ac")).
+		Padding(0, 1).
+		Width(innerWidth)
+	return border.Render(body + "\n" + hint)
 }
 
 // tenantFromOrgURL extracts the host segment from a tenant URL. Handles the

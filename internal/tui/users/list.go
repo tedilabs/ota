@@ -463,10 +463,8 @@ func (m ListModel) View() string {
 	var b strings.Builder
 	b.WriteString(hint)
 	b.WriteByte('\n')
-	if m.filtering {
-		b.WriteString("filter: " + m.filter)
-		b.WriteByte('\n')
-	}
+	// Inline "filter:" dropped in v0.1.5-6 — App Shell renders a
+	// floating input box for `/` so the body no longer needs to echo it.
 	// Header carries the same 2-cell cursor gutter every data row uses so
 	// column titles align with their values (issue #107).
 	b.WriteString("  ")
@@ -491,6 +489,14 @@ func (m ListModel) View() string {
 	}
 	return b.String()
 }
+
+// Filtering reports whether the operator is in `/` filter input mode.
+// Implements app.FilterStater so the App Shell can render the floating
+// filter box (issue #123).
+func (m ListModel) Filtering() bool { return m.filtering }
+
+// Filter returns the current filter string (echoed in the floating box).
+func (m ListModel) Filter() string { return m.filter }
 
 // DetailLine returns the active line cursor inside the detail body.
 // Exported so tests can assert cursor movement without depending on a
