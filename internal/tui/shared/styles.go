@@ -29,6 +29,16 @@ type Tokens struct {
 	// the operator's focus is elsewhere on the screen. Mono falls back to
 	// reverse-video for the same purpose (issue #112).
 	RowHighlight lipgloss.Style
+
+	// RowDanger / RowWarning / RowMuted tint the entire row's
+	// background when STATUS is abnormal (issue #155). The bgs are
+	// chosen to read as alarm severity at a glance — dark red for
+	// LOCKED_OUT / INVALID, dark amber for SUSPENDED /
+	// PASSWORD_EXPIRED, dark gray for DEPROVISIONED / INACTIVE —
+	// without overwhelming the underlying text colours.
+	RowDanger  lipgloss.Style
+	RowWarning lipgloss.Style
+	RowMuted   lipgloss.Style
 }
 
 // MonochromeEnabled reports whether ota should render without colour. Set by
@@ -60,6 +70,18 @@ func Dark() Tokens {
 			Background(lipgloss.Color("#2e3440")).
 			Foreground(lipgloss.Color("#88c0d0")).
 			Bold(true),
+		// Status-row backgrounds — dark enough to read as a tint
+		// rather than an alarm, but distinct from the chrome's
+		// neutral background so abnormal rows pop visually.
+		RowDanger: lipgloss.NewStyle().
+			Background(lipgloss.Color("#4c1f21")).
+			Foreground(lipgloss.Color("#f0d4d6")),
+		RowWarning: lipgloss.NewStyle().
+			Background(lipgloss.Color("#4a3a17")).
+			Foreground(lipgloss.Color("#f5e7c1")),
+		RowMuted: lipgloss.NewStyle().
+			Background(lipgloss.Color("#2a2f38")).
+			Foreground(lipgloss.Color("#7a8290")),
 	}
 }
 
@@ -92,5 +114,13 @@ func Monochrome() Tokens {
 		BadgeLarge:   plain.Reverse(true),
 		BadgeUnmask:  plain.Reverse(true).Bold(true),
 		RowHighlight: plain.Reverse(true).Bold(true),
+		// In monochrome mode the danger/warning/muted bg styles fall
+		// back to bold (danger), italic-ish underline (warning), and
+		// dim (muted) so abnormal rows still read distinctly without
+		// colour. Lipgloss + the NO_COLOR fallback keeps the tokens
+		// safe — they emit attribute codes instead of colour codes.
+		RowDanger:  plain.Bold(true).Underline(true),
+		RowWarning: plain.Bold(true),
+		RowMuted:   plain.Faint(true),
 	}
 }

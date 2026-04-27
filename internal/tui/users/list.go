@@ -507,12 +507,28 @@ func (m ListModel) View() string {
 	top, end := m.windowBounds(len(rows))
 	for i := top; i < end; i++ {
 		row := m.renderUsersRow(rows[i], m.now(), tk)
+		prefix := "  "
 		if i == m.cursor {
-			row = tk.Accent.Render("▸ " + row)
-		} else {
-			row = "  " + row
+			prefix = "▸ "
 		}
-		b.WriteString(row)
+		composed := prefix + row
+		switch {
+		case i == m.cursor:
+			// Cursor takes priority — the operator needs to see
+			// where they are. The status badge in the row already
+			// conveys the abnormal state.
+			composed = tk.Accent.Render(composed)
+		default:
+			// Issue #155: non-cursor row gets a status-driven bg
+			// tint when STATUS is abnormal so LOCKED_OUT /
+			// SUSPENDED / PASSWORD_EXPIRED / DEPROVISIONED pop.
+			// Strip inner ANSI first so the bg style applies
+			// uniformly across the row.
+			if rowStyle, ok := shared.RowStyleForStatus(string(rows[i].Status), tk); ok {
+				composed = rowStyle.Render(shared.StripCSI(composed))
+			}
+		}
+		b.WriteString(composed)
 		b.WriteByte('\n')
 	}
 	return b.String()

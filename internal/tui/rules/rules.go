@@ -330,12 +330,22 @@ func (m ListModel) View() string {
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
 	for i := top; i < end; i++ {
 		row := m.renderRulesRow(rows[i], m.now(), tk)
+		prefix := "  "
 		if i == m.cursor {
-			row = tk.Accent.Render("▸ " + row)
-		} else {
-			row = "  " + row
+			prefix = "▸ "
 		}
-		b.WriteString(row)
+		composed := prefix + row
+		switch {
+		case i == m.cursor:
+			composed = tk.Accent.Render(composed)
+		default:
+			// Issue #155 — INVALID rules tint danger-red, INACTIVE
+			// rules tint muted-gray so the body reads at a glance.
+			if rowStyle, ok := shared.RowStyleForStatus(string(rows[i].Status), tk); ok {
+				composed = rowStyle.Render(shared.StripCSI(composed))
+			}
+		}
+		b.WriteString(composed)
 		b.WriteByte('\n')
 	}
 

@@ -359,12 +359,21 @@ func (m ListModel) View() string {
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(m.policies), shared.ListBodyRowBudget(m.height))
 	for i := top; i < end; i++ {
 		row := m.renderPolicyRow(m.policies[i], now, tk)
+		prefix := "  "
 		if i == m.cursor {
-			row = tk.Accent.Render("▸ " + row)
-		} else {
-			row = "  " + row
+			prefix = "▸ "
 		}
-		b.WriteString(row)
+		composed := prefix + row
+		switch {
+		case i == m.cursor:
+			composed = tk.Accent.Render(composed)
+		default:
+			// Issue #155 — INACTIVE policies tint muted-gray.
+			if rowStyle, ok := shared.RowStyleForStatus(string(m.policies[i].Status), tk); ok {
+				composed = rowStyle.Render(shared.StripCSI(composed))
+			}
+		}
+		b.WriteString(composed)
 		b.WriteByte('\n')
 	}
 	return b.String()

@@ -2,6 +2,29 @@ package shared
 
 import "github.com/charmbracelet/lipgloss"
 
+// RowStyleForStatus returns the lipgloss style that should tint the
+// ENTIRE row when the given resource status is abnormal — issue #155.
+// Returns the zero Style + false when status is "normal" so callers
+// can short-circuit and skip the row-bg pass.
+//
+// Mapping:
+//
+//	LOCKED_OUT, INVALID                          → RowDanger (red)
+//	SUSPENDED, PASSWORD_EXPIRED                  → RowWarning (amber)
+//	DEPROVISIONED, INACTIVE                      → RowMuted (gray)
+//	everything else (ACTIVE, STAGED, PROVISIONED) → no tint
+func RowStyleForStatus(status string, tk Tokens) (lipgloss.Style, bool) {
+	switch status {
+	case "LOCKED_OUT", "INVALID":
+		return tk.RowDanger, true
+	case "SUSPENDED", "PASSWORD_EXPIRED":
+		return tk.RowWarning, true
+	case "DEPROVISIONED", "INACTIVE":
+		return tk.RowMuted, true
+	}
+	return lipgloss.Style{}, false
+}
+
 // StatusBadge represents one of the canonical "[icon] LABEL" cells used in
 // list views. Mono is the NO_COLOR fallback (TUI_DESIGN §15.2 status table).
 type StatusBadge struct {
