@@ -1,7 +1,7 @@
 5 of 5
-  STATUS          LOGIN                       TITLE              DIVISION  EMPLOYEE#  NICKNAME    LAST LOGIN  CHANGED
-▸ [+] ACTIVE      alice@acme.com              —                  —         —          —               2h ago        —
-  [+] ACTIVE      alan.turing@acme.com        —                  —         —          —               1d ago        —
-  [!] LOCKED_OUT  alex.lee@acme.com           —                  —         —          —                    —        —
-  [-] STAGED      amy.wong@acme.com           —                  —         —          —                    —        —
-  [X] SUSPENDED   aaron.k@acme.com            —                  —         —          —               5d ago        —
+  STATUS          LOGIN                 TITLE  DIVISION  EMPLOYEE#  NICKNAME  LAST LOGIN  CHANGED
+▸ [+] ACTIVE      alice@acme.com        —      —         —          —             2h ago        —
+  [+] ACTIVE      alan.turing@acme.com  —      —         —          —             1d ago        —
+  [!] LOCKED_OUT  alex.lee@acme.com     —      —         —          —                  —        —
+  [-] STAGED      amy.wong@acme.com     —      —         —          —                  —        —
+  [X] SUSPENDED   aaron.k@acme.com      —      —         —          —             5d ago        —

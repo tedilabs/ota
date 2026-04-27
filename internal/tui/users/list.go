@@ -786,15 +786,22 @@ func (m ListModel) scaledUsersSpecs() []shared.ColumnSpec {
 	return specs
 }
 
-// usersWidths picks the width slice for a render. When the natural Min
-// layout fits the inner body, fall back to the original LayoutColumns
-// (preserves DropPriority degradation on narrow terminals). When it
-// overflows, switch to the hScroll-aware packing so the user can pan
-// across columns instead of losing them to drop priority.
+// usersWidths picks the width slice for a render. Three-stage fall-back:
+//
+//  1. Tight (issue #138): try to fit every column at its observed-data
+//     width. No flex puffing — leftover space stays empty at end of
+//     row. The user wants tight columns; LOGIN should never grow past
+//     the longest login it actually contains.
+//  2. hScroll: when the tight layout overflows, switch to the
+//     hScroll-aware packing so h / l can pan across columns.
+//
+// The previous "LayoutColumns then puff flex" path was actively
+// hostile to operators staring at 30-char-wide LOGIN columns full of
+// trailing whitespace.
 func (m ListModel) usersWidths(specs []shared.ColumnSpec) []int {
 	inner := m.usersInnerWidth()
-	if shared.MaxHScroll(specs, inner, 2) == 0 {
-		return shared.LayoutColumns(specs, inner, 2)
+	if w := shared.LayoutColumnsTight(specs, inner, 2); w != nil {
+		return w
 	}
 	return shared.LayoutColumnsHScroll(specs, inner, 2, m.hScroll)
 }

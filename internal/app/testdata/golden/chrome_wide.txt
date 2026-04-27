@@ -2,7 +2,7 @@
 │ ota v0.1.6 · acme.okta.com [prod]                                                                     [RL: ok]    UTC│
 ├─ Users ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 0 of 0                                                                                                               │
-│   STATUS          LOGIN                      TITLE             DIVISION    EMPLOYEE#   NICKNAME    LAST LOGIN   CHANG│
+│   STATUS          LOGIN                   TITLE           DIVISION    EMPLOYEE#   NICKNAME    LAST LOGIN   CHANGED   │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

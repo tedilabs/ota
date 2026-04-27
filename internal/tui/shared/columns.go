@@ -167,6 +167,44 @@ func pickDropCandidate(specs []ColumnSpec, visible []bool) int {
 	return idx
 }
 
+// LayoutColumnsTight lays out columns at exactly their declared Min
+// widths, with no flex puffing — the row's total width is the sum of
+// Mins plus gutters; any leftover space inside the inner body is
+// returned as empty cells at the end of the row (the chrome handles
+// trailing padding). Returns nil when the tight layout doesn't fit
+// the supplied width, so callers can fall back to the dropping
+// LayoutColumns or the hScroll path.
+//
+// Use this in tandem with ShrinkSpecsToFit so the Min reflects each
+// column's observed-data width — the row then renders as tight as
+// the data demands, never wider. Issue #138 (the user's repeated
+// "LOGIN 컬럼이 불필요하게 많은 크기를 차지하고 있어" complaint).
+func LayoutColumnsTight(specs []ColumnSpec, width, gutter int) []int {
+	n := len(specs)
+	if n == 0 || width <= 0 {
+		return nil
+	}
+	if gutter < 0 {
+		gutter = 0
+	}
+	consumed := 0
+	for i, c := range specs {
+		need := c.Min
+		if i > 0 {
+			need += gutter
+		}
+		if consumed+need > width {
+			return nil
+		}
+		consumed += need
+	}
+	out := make([]int, n)
+	for i, c := range specs {
+		out[i] = c.Min
+	}
+	return out
+}
+
 // LayoutColumnsHScroll lays out columns starting at the hScroll offset
 // (a column index, not a character offset), packing as many columns as
 // fit at their declared Min width into the inner-body width. Columns
