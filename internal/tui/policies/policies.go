@@ -130,6 +130,17 @@ type policiesLoadedMsg struct{ policies []domain.Policy }
 // policiesErrMsg surfaces a fetch failure (TUI_DESIGN §17, QA-022).
 type policiesErrMsg struct{ err error }
 
+// policyRulesLoadedMsg / policyRulesErrMsg deliver the result of a
+// per-policy rules fetch (issue #154 detail tab).
+type policyRulesLoadedMsg struct {
+	policyID string
+	rules    []domain.PolicyRule
+}
+type policyRulesErrMsg struct {
+	policyID string
+	err      error
+}
+
 // ListModel renders policies of a single type (REQ-R04 AC-3).
 type ListModel struct {
 	deps        Deps
@@ -143,6 +154,15 @@ type ListModel struct {
 	height      int
 	viewportTop int
 	ggChord     shared.GChord
+	// detailRules / detailRulesPolicy / detailRulesLoaded carry the
+	// lazy-fetched rule list for the open policy (issue #154). The
+	// inline detail surfaces the rules below the policy header so
+	// operators can read the per-type rules without a side trip.
+	detailRules        []domain.PolicyRule
+	detailRulesPolicy  string
+	detailRulesLoaded  bool
+	detailRulesErr     error
+	detailShowRaw      bool
 }
 
 // NewListModel constructs a ListModel for the given type.
@@ -185,6 +205,20 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case policiesErrMsg:
 		m.lastErr = msg.err
 		return m, nil
+	case policyRulesLoadedMsg:
+		if m.opened && m.detail.ID == msg.policyID {
+			m.detailRules = msg.rules
+			m.detailRulesPolicy = msg.policyID
+			m.detailRulesLoaded = true
+			m.detailRulesErr = nil
+		}
+		return m, nil
+	case policyRulesErrMsg:
+		if m.opened && m.detail.ID == msg.policyID {
+			m.detailRulesErr = msg.err
+			m.detailRulesLoaded = true
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -197,6 +231,17 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.opened && km.Type == tea.KeyEsc {
 		m.opened = false
 		m.detail = domain.Policy{}
+		m.detailRules = nil
+		m.detailRulesPolicy = ""
+		m.detailRulesLoaded = false
+		m.detailRulesErr = nil
+		m.detailShowRaw = false
+		return m, nil
+	}
+	// `r` toggles between the rich detail view (with rule list) and
+	// the raw JSON view of the underlying policy.
+	if m.opened && km.Type == tea.KeyRunes && string(km.Runes) == "r" {
+		m.detailShowRaw = !m.detailShowRaw
 		return m, nil
 	}
 	switch km.Type {
@@ -224,6 +269,7 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && m.cursor < len(m.policies) {
 			m.detail = m.policies[m.cursor]
 			m.opened = true
+			return m, openPolicyRulesCmd(m.deps.Port, m.detail.ID)
 		}
 	case tea.KeyRunes:
 		switch string(km.Runes) {
@@ -252,10 +298,29 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.cursor >= 0 && m.cursor < len(m.policies) {
 				m.detail = m.policies[m.cursor]
 				m.opened = true
+				return m, openPolicyRulesCmd(m.deps.Port, m.detail.ID)
 			}
 		}
 	}
 	return m, nil
+}
+
+// openPolicyRulesCmd lazily fetches the rule list for the supplied
+// policy. Round-trips the policyID through the result message so a
+// stale fetch from a previously-opened detail can't overwrite the
+// current one (mirrors the Group Detail Members pattern from #142).
+func openPolicyRulesCmd(port domain.PoliciesPort, policyID string) tea.Cmd {
+	if port == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx := context.Background()
+		rules, err := port.Rules(ctx, policyID)
+		if err != nil {
+			return policyRulesErrMsg{policyID: policyID, err: err}
+		}
+		return policyRulesLoadedMsg{policyID: policyID, rules: rules}
+	}
 }
 
 
@@ -264,7 +329,14 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ErrorPanel (TUI_DESIGN §17.1, QA-022).
 func (m ListModel) View() string {
 	if m.opened {
-		return renderPolicyDetail(m.detail, true)
+		var b strings.Builder
+		b.WriteString(renderPolicyDetail(m.detail, !m.detailShowRaw))
+		// Issue #154 — append the per-policy rule list once the
+		// lazy fetch completes. Spinner / error states surface
+		// inline so the operator can see why the list is empty.
+		b.WriteString("\n")
+		b.WriteString(renderPolicyRulesSection(m.detailRules, m.detailRulesLoaded, m.detailRulesErr))
+		return b.String()
 	}
 	if m.lastErr != nil {
 		return "Policies › " + string(m.policyType) + "  (error)\n" +
@@ -506,6 +578,53 @@ func renderPolicyDetail(p domain.Policy, rich bool) string {
 		} else {
 			b.WriteString("\nRich view not yet available for this type — raw JSON only.\n")
 		}
+	}
+	return b.String()
+}
+
+// renderPolicyRulesSection produces the "Rules" block appended to
+// the inline policy detail (issue #154). Three states:
+//
+//   - !loaded && err == nil:  "loading rules…"
+//   - err != nil:             "(rules failed: <err>)"
+//   - loaded:                 priority-ordered rule list with
+//                             status badge + name
+func renderPolicyRulesSection(rules []domain.PolicyRule, loaded bool, err error) string {
+	tk := activeTokens()
+	var b strings.Builder
+	b.WriteString(shared.SectionHeader("Rules", 56))
+	b.WriteByte('\n')
+	if err != nil {
+		b.WriteString("  ")
+		b.WriteString(tk.Danger.Render("rules failed: " + err.Error()))
+		b.WriteByte('\n')
+		return b.String()
+	}
+	if !loaded {
+		b.WriteString("  ")
+		b.WriteString(tk.Muted.Render("loading rules…"))
+		b.WriteByte('\n')
+		return b.String()
+	}
+	if len(rules) == 0 {
+		b.WriteString("  ")
+		b.WriteString(tk.Muted.Render("(policy has no rules)"))
+		b.WriteByte('\n')
+		return b.String()
+	}
+	for _, r := range rules {
+		statusBadge := shared.PolicyStatusBadge(string(r.Status), tk).Render(tk)
+		b.WriteString("  ")
+		b.WriteString(statusBadge)
+		b.WriteString("  #")
+		b.WriteString(itoa(r.Priority))
+		b.WriteString("  ")
+		b.WriteString(r.Name)
+		if r.System {
+			b.WriteString("  ")
+			b.WriteString(tk.Muted.Render("[SYS]"))
+		}
+		b.WriteByte('\n')
 	}
 	return b.String()
 }

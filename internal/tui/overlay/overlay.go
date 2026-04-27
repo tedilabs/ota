@@ -457,8 +457,9 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 		}
 	case "policies":
 		return []helpEntry{
-			{"Enter", "drill into policy type"},
-			{"r", "toggle rich ↔ raw JSON"},
+			{"Enter", "pick type / open detail"},
+			{"Esc", "back to type select / list"},
+			{"r", "toggle rich ↔ raw JSON in detail"},
 		}
 	case "logs":
 		return []helpEntry{

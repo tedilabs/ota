@@ -904,7 +904,10 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 		})
 		return mdl, mdl.Init()
 	case ScreenPolicies:
-		mdl := policies.NewTypeSelectModel(policies.Deps{
+		// Issue #154: the policies screen is now a Wrapper that
+		// routes between the type-select picker and the type-aware
+		// list/detail. Esc on the list returns to the picker.
+		mdl := policies.NewWrapper(policies.Deps{
 			Port:   m.deps.PoliciesPort,
 			Clock:  m.deps.Clock,
 			Logger: m.deps.Logger,
