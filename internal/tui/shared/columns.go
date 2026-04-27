@@ -29,6 +29,10 @@ type ColumnSpec struct {
 	Weight       int
 	DropPriority int
 	AlignRight   bool
+	// AlignCenter centers the cell content within its column width
+	// — used for STATUS columns whose content reads as a tag rather
+	// than a left-anchored label (issue #156).
+	AlignCenter bool
 }
 
 // LayoutColumns picks which specs are visible at the given inner-body width
@@ -340,13 +344,14 @@ func FormatRow(specs []ColumnSpec, widths []int, cells []string, gutter int) str
 		if i < len(cells) {
 			cell = cells[i]
 		}
-		b.WriteString(padCell(cell, w, specs[i].AlignRight))
+		b.WriteString(padCellAlign(cell, w, specs[i]))
 	}
 	return b.String()
 }
 
-// padCell pads or truncates s to exactly width visible cells.
-func padCell(s string, width int, alignRight bool) string {
+// padCellAlign pads or truncates s to exactly width visible cells,
+// honouring the spec's AlignRight / AlignCenter / default-left.
+func padCellAlign(s string, width int, spec ColumnSpec) string {
 	if width <= 0 {
 		return ""
 	}
@@ -357,9 +362,21 @@ func padCell(s string, width int, alignRight bool) string {
 	if w > width {
 		return Truncate(s, width)
 	}
-	pad := strings.Repeat(" ", width-w)
-	if alignRight {
-		return pad + s
+	missing := width - w
+	switch {
+	case spec.AlignCenter:
+		left := missing / 2
+		right := missing - left
+		return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+	case spec.AlignRight:
+		return strings.Repeat(" ", missing) + s
+	default:
+		return s + strings.Repeat(" ", missing)
 	}
-	return s + pad
+}
+
+// padCell is kept as a wrapper for callers outside the ColumnSpec
+// flow (Truncate, format helpers).
+func padCell(s string, width int, alignRight bool) string {
+	return padCellAlign(s, width, ColumnSpec{AlignRight: alignRight})
 }

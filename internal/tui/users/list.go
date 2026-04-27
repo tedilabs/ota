@@ -797,7 +797,7 @@ func usersColumnSpecs() []shared.ColumnSpec {
 		{Title: "DIVISION", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 5},
 		{Title: "DEPARTMENT", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 4},
 		{Title: "TITLE", Kind: shared.ColumnFlex, Min: 12, Weight: 2, DropPriority: 3},
-		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 14, DropPriority: 0},
+		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 16, DropPriority: 0, AlignCenter: true},
 		{Title: "LAST LOGIN", Kind: shared.ColumnFixed, Min: 10, DropPriority: 2, AlignRight: true},
 		{Title: "LAST UPDATED", Kind: shared.ColumnFixed, Min: 12, DropPriority: 1, AlignRight: true},
 	}

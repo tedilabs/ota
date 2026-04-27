@@ -390,7 +390,7 @@ func formatTargets(ids []string) string {
 // TARGETS (1) → UPDATED (2); STATUS / NAME never drop.
 func rulesColumnSpecs() []shared.ColumnSpec {
 	return []shared.ColumnSpec{
-		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 14, DropPriority: 0},
+		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 10, DropPriority: 0, AlignCenter: true},
 		{Title: "NAME", Kind: shared.ColumnFlex, Min: 22, Weight: 2, DropPriority: 0},
 		{Title: "TARGETS", Kind: shared.ColumnFlex, Min: 16, Weight: 2, DropPriority: 1},
 		{Title: "UPDATED", Kind: shared.ColumnFixed, Min: 10, DropPriority: 2, AlignRight: true},

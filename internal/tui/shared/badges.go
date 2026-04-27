@@ -34,13 +34,13 @@ type StatusBadge struct {
 	Style lipgloss.Style
 }
 
-// Render returns the styled "[mono] LABEL" cell padded by the caller.
-// In monochrome mode the icon is replaced by Mono. Goldens use mono.
+// Render returns the bare LABEL — issue #156 dropped the mono icon
+// prefix because the row's bg tint (issue #155) already conveys
+// abnormal status, and the icon doubled the column width without
+// adding signal. Color comes from the Style applied by the caller's
+// table cell.
 func (b StatusBadge) Render(_ Tokens) string {
-	// Always emit the mono prefix (e.g., "[+] ACTIVE") so plain-text/golden
-	// comparisons stay stable; color comes from the Style applied by the
-	// caller's table cell.
-	return b.Mono + " " + b.Label
+	return b.Label
 }
 
 // UserStatusBadge maps a domain.UserStatus value (string) to its visual

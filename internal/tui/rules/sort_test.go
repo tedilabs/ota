@@ -73,8 +73,12 @@ func Test_RulesList_SortByStatus_AscOrder(t *testing.T) {
 	m = updated.(rules.ListModel)
 
 	view := testfx.StripANSI(m.View())
+	// v0.1.12 dropped the [+]/[!]/[X] mono prefix (issue #156); the
+	// status column now reads as a centered bare label. INACTIVE
+	// is a substring of "INACTIVE" so we anchor on whitespace
+	// boundaries when finding ACTIVE.
 	idxInvalid := strings.Index(view, "INVALID")
-	idxActive := strings.Index(view, "[+] ACTIVE")
+	idxActive := strings.Index(view, "  ACTIVE  ")
 	idxInactive := strings.Index(view, "INACTIVE")
 	assert.Less(t, idxInvalid, idxActive, "asc rank: INVALID before ACTIVE (§3.5a)")
 	assert.Less(t, idxActive, idxInactive, "asc rank: ACTIVE before INACTIVE (§3.5a)")

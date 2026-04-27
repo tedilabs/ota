@@ -1,8 +1,8 @@
 range Last 30m  ·  tail OFF  ·  follow ON
   range: 0=30m 1=1h 3=3h c=12h e=24h  ·  s=toggle tail  ·  f=toggle follow  ·  r=refresh  ·  /=filter
   WHEN          SEV       EVENTTYPE                 ACTOR               OUTCOME    IP             
-▸ 2h ago        [i] INFO  user.session.start        alice@acme.com      FAILURE    10.0.1.5       
-  3h ago        [i] INFO  user.session.start        bob@acme.com        FAILURE    10.0.1.6       
-  7h ago        [!] WARN  user.session.start        alice@acme.com      FAILURE    10.0.1.5       
-  1d ago        [i] INFO  user.session.start        unknown@acme.com    FAILURE    10.0.1.7       
-  2d ago        [X] ERR   user.session.start        svc-sync@acme       FAILURE    10.0.1.8       
+▸ 2h ago        INFO      user.session.start        alice@acme.com      FAILURE    10.0.1.5       
+  3h ago        INFO      user.session.start        bob@acme.com        FAILURE    10.0.1.6       
+  7h ago        WARN      user.session.start        alice@acme.com      FAILURE    10.0.1.5       
+  1d ago        INFO      user.session.start        unknown@acme.com    FAILURE    10.0.1.7       
+  2d ago        ERR       user.session.start        svc-sync@acme       FAILURE    10.0.1.8       
