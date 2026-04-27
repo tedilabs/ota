@@ -202,8 +202,9 @@ func Test_AppShell_KeysReachActiveChild(t *testing.T) {
 	m = updated.(app.Model)
 
 	view := m.View()
-	// Bob's row should now carry the cursor prefix.
-	assert.Regexp(t, `▸\s+\[\+\] ACTIVE\s+bob@acme\.com`, view,
+	// Bob's row should now carry the cursor prefix. Issue #145 column
+	// order puts LOGIN first, so the cursor sits next to bob's login.
+	assert.Regexp(t, `▸\s+bob@acme\.com`, view,
 		"`j` must reach the child Users screen and advance the cursor")
 }
 

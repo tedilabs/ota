@@ -58,18 +58,22 @@ func WindowBounds(cursor, prevTop, total, budget int) (top int, end int) {
 	return top, top + budget
 }
 
-// ShrinkSpecsToFit returns a copy of specs with each Min reduced to fit
-// the largest cell observed in that column. Header width and an absolute
-// floor (4 cells) are honoured so titles never clip and very narrow
-// columns still leave room for "—" placeholders.
+// ShrinkSpecsToFit returns a copy of specs with each Min set to
+// max(header_width, observed_data_width, floor) — the EXACT width
+// the column needs to render its data without truncation.
 //
-// observed[i] is the visible-cell width of the widest row body for that
-// column. Pass nil when no data is available; in that case the original
-// specs are returned unchanged.
+// Issue #145 (the user's recurring "columns are clipped" complaint):
+// the previous implementation only ever SHRANK Min, never expanded
+// it. When observed > original_Min, Min stayed at original_Min and
+// LayoutColumnsTight ran data through padCell's truncate path —
+// "alice.anderson@verylongco…" instead of the full login. With the
+// fix, Min always reflects the data demands and tight layout either
+// fits everything or falls through to LayoutColumnsHScroll for
+// horizontal scrolling.
 //
-// This is the auto-fit half of issue #117: columns no longer pad to
-// their declared Min when data is shorter, so a list of 5-char titles
-// doesn't reserve 16 cells full of trailing whitespace.
+// observed[i] is the visible-cell width of the widest row body for
+// that column. Pass nil when no data is available; in that case the
+// original specs are returned unchanged.
 func ShrinkSpecsToFit(specs []ColumnSpec, observed []int) []ColumnSpec {
 	if observed == nil {
 		return specs
@@ -86,9 +90,7 @@ func ShrinkSpecsToFit(specs []ColumnSpec, observed []int) []ColumnSpec {
 		if fit < floor {
 			fit = floor
 		}
-		if fit < out[i].Min {
-			out[i].Min = fit
-		}
+		out[i].Min = fit
 	}
 	return out
 }

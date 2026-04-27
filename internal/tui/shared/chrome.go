@@ -477,6 +477,12 @@ func visibleWidth(s string) int {
 // stripCSI is a lightweight ANSI-CSI stripper for width calculation. Mirrors
 // what testfx.StripANSI does at the test boundary; we reimplement a minimal
 // version inline so styles.go has no test-only dependency.
+// StripCSI is the exported counterpart of stripCSI — removes ANSI CSI
+// escape sequences (the lipgloss style prefixes / resets) so callers
+// can render the plain content without inner styles fighting an outer
+// wrap. Used by the detail-view cursor highlighter (issue #146).
+func StripCSI(s string) string { return stripCSI(s) }
+
 func stripCSI(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

@@ -609,12 +609,23 @@ func (m ListModel) renderDetailWithCursor() string {
 			maxBodyWidth = w
 		}
 	}
+	// Issue #146: lipgloss's outer Style.Render emits its own
+	// foreground/background prefix and a `\x1b[0m` suffix, but inner
+	// ANSI resets emitted by the syntax highlighter (one per styled
+	// segment) wipe the outer bg too. The result was a row highlight
+	// that only covered text BEFORE the first inner reset — the key
+	// portion of `"login": "alice@acme.com"` would tint, the value
+	// after the colon stayed flat. Strip inner ANSI from the cursor
+	// row so RowHighlight produces a uniform bg tint across the
+	// whole line. The cost is losing syntax colour on the active row,
+	// which is a fair trade for unambiguous cursor visibility.
 	highlight := func(line string) string {
-		w := shared.VisibleWidth(line)
+		plain := shared.StripCSI(line)
+		w := shared.VisibleWidth(plain)
 		if w < maxBodyWidth {
-			line = line + strings.Repeat(" ", maxBodyWidth-w)
+			plain = plain + strings.Repeat(" ", maxBodyWidth-w)
 		}
-		return tk.RowHighlight.Render(line)
+		return tk.RowHighlight.Render(plain)
 	}
 	for i, line := range lines {
 		switch {
@@ -681,26 +692,20 @@ func (m ListModel) contextLine(visible []domain.User) string {
 }
 
 // renderUsersHeader returns the column header row, width-aware
-// (TUI_DESIGN §15.0a / §15.2 v1.3). v0.1.3 columns:
-//
-//	STATUS · LOGIN · TITLE · DIVISION · EMPLOYEE# · NICKNAME ·
-//	LAST LOGIN · CHANGED
-//
-// The whole row is wrapped in tk.Header (bold accent) so operators
-// can tell the column titles from data rows at a glance — issue #137.
-// The active sort column carries an `↑` (asc) or `↓` (desc) indicator
-// appended to its label per §15.2 v1.2.0; sort glyphs already carry
-// their own colour and survive the outer Bold+Accent wrap.
+// (issue #145 column lineup): LOGIN, NICKNAME, DIVISION, DEPARTMENT,
+// TITLE, STATUS, LAST LOGIN, LAST UPDATED. The whole row is wrapped
+// in tk.Header (bold + accent) for issue #137. Sort glyphs survive
+// the outer wrap.
 func (m ListModel) renderUsersHeader(tk shared.Tokens) string {
 	row := m.formatUsersColumns(
-		usersSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
 		usersSortLabel("LOGIN", m.sortBy, SortName, m.sortDir, tk),
-		"TITLE",
-		"DIVISION",
-		"EMPLOYEE#",
 		"NICKNAME",
+		"DIVISION",
+		"DEPARTMENT",
+		"TITLE",
+		usersSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
 		usersSortLabel("LAST LOGIN", m.sortBy, SortLastLogin, m.sortDir, tk),
-		usersSortLabel("CHANGED", m.sortBy, SortCreated, m.sortDir, tk),
+		usersSortLabel("LAST UPDATED", m.sortBy, SortCreated, m.sortDir, tk),
 	)
 	return tk.Header.Render(row)
 }
@@ -725,51 +730,57 @@ func usersSortLabel(title string, active, key SortKey, dir SortDir, tk shared.To
 // renderUsersRow formats a single User row, width-aware.
 func (m ListModel) renderUsersRow(u domain.User, now time.Time, tk shared.Tokens) string {
 	status := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
-	last := shared.RelativeTime(u.LastLogin, now)
-	changed := shared.RelativeTime(u.StatusChanged, now)
+	lastLogin := shared.RelativeTime(u.LastLogin, now)
+	lastUpdated := shared.RelativeTime(&u.LastUpdated, now)
 	dash := func(s string) string {
 		if s == "" {
 			return "—"
 		}
 		return s
 	}
+	// Order matches usersColumnSpecs: LOGIN first so it lands left of
+	// the eye, identity attrs next, status mid-row, timestamps right.
 	return m.formatUsersColumns(
-		status,
 		u.Profile.Login,
-		dash(u.Profile.Title),
-		dash(u.Profile.Division),
-		dash(u.Profile.EmployeeNumber),
 		dash(u.Profile.NickName),
-		last,
-		changed,
+		dash(u.Profile.Division),
+		dash(u.Profile.Department),
+		dash(u.Profile.Title),
+		status,
+		lastLogin,
+		lastUpdated,
 	)
 }
 
-// usersColumnSpecs returns the v0.1.3 column definitions:
+// usersColumnSpecs is the column lineup the user pinned in #145:
 //
-//	STATUS, LOGIN, TITLE, DIVISION, EMPLOYEE#, NICKNAME, LAST LOGIN, CHANGED
+//	LOGIN > NICKNAME > DIVISION > DEPARTMENT > TITLE > STATUS >
+//	LAST LOGIN > LAST UPDATED
 //
-// Drop priority (lowest = drops first) keeps the user-requested fields
-// visible as long as possible while still degrading gracefully on narrow
-// terminals:
+// EMPLOYEE# was dropped at the same time. Drop priority degrades
+// from the right so the LOGIN identity stays visible longest:
 //
-//	1  CHANGED
+//	1  LAST UPDATED
 //	2  LAST LOGIN
-//	3  NICKNAME
-//	4  EMPLOYEE#
+//	3  TITLE
+//	4  DEPARTMENT
 //	5  DIVISION
-//	6  TITLE
-//	0  STATUS, LOGIN — never dropped (essentials)
+//	6  NICKNAME
+//	0  LOGIN, STATUS — never dropped (essentials)
+//
+// Min widths are placeholders — ShrinkSpecsToFit overrides them with
+// max(header, observed-data-width) every render so the layout
+// honours the actual fetched data.
 func usersColumnSpecs() []shared.ColumnSpec {
 	return []shared.ColumnSpec{
-		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 14, DropPriority: 0},
-		{Title: "LOGIN", Kind: shared.ColumnFlex, Min: 22, Weight: 3, DropPriority: 0},
-		{Title: "TITLE", Kind: shared.ColumnFlex, Min: 14, Weight: 2, DropPriority: 6},
+		{Title: "LOGIN", Kind: shared.ColumnFlex, Min: 18, Weight: 3, DropPriority: 0},
+		{Title: "NICKNAME", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 6},
 		{Title: "DIVISION", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 5},
-		{Title: "EMPLOYEE#", Kind: shared.ColumnFixed, Min: 10, DropPriority: 4},
-		{Title: "NICKNAME", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 3},
+		{Title: "DEPARTMENT", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 4},
+		{Title: "TITLE", Kind: shared.ColumnFlex, Min: 12, Weight: 2, DropPriority: 3},
+		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 14, DropPriority: 0},
 		{Title: "LAST LOGIN", Kind: shared.ColumnFixed, Min: 10, DropPriority: 2, AlignRight: true},
-		{Title: "CHANGED", Kind: shared.ColumnFixed, Min: 8, DropPriority: 1, AlignRight: true},
+		{Title: "LAST UPDATED", Kind: shared.ColumnFixed, Min: 12, DropPriority: 1, AlignRight: true},
 	}
 }
 
@@ -847,7 +858,9 @@ func (m ListModel) clampHScroll(want int) int {
 
 // observedColumnWidths returns the largest cell width seen in each
 // column across the currently visible rows. Powers ShrinkSpecsToFit so
-// columns auto-fit data instead of always padding to declared Min.
+// every column gets exactly the width its data demands. Order must
+// match usersColumnSpecs: LOGIN, NICKNAME, DIVISION, DEPARTMENT,
+// TITLE, STATUS, LAST LOGIN, LAST UPDATED.
 func (m ListModel) observedColumnWidths() []int {
 	rows := m.visible()
 	if len(rows) == 0 {
@@ -865,14 +878,14 @@ func (m ListModel) observedColumnWidths() []int {
 	for _, u := range rows {
 		statusBadge := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
 		cells := []string{
-			statusBadge,
 			u.Profile.Login,
-			dash(u.Profile.Title),
-			dash(u.Profile.Division),
-			dash(u.Profile.EmployeeNumber),
 			dash(u.Profile.NickName),
+			dash(u.Profile.Division),
+			dash(u.Profile.Department),
+			dash(u.Profile.Title),
+			statusBadge,
 			shared.RelativeTime(u.LastLogin, now),
-			shared.RelativeTime(u.StatusChanged, now),
+			shared.RelativeTime(&u.LastUpdated, now),
 		}
 		for i, c := range cells {
 			if w := visibleCellWidth(c); w > out[i] {
@@ -896,16 +909,16 @@ func visibleCellWidth(s string) int {
 }
 
 // usersSortColumnIdx maps a SortKey to its index in usersColumnSpecs.
-// Updated for the v0.1.3 column order:
+// Issue #145 column order:
 //
-//	0 STATUS · 1 LOGIN · 2 TITLE · 3 DIVISION · 4 EMPLOYEE# · 5 NICKNAME ·
-//	6 LAST LOGIN · 7 CHANGED
+//	0 LOGIN · 1 NICKNAME · 2 DIVISION · 3 DEPARTMENT · 4 TITLE ·
+//	5 STATUS · 6 LAST LOGIN · 7 LAST UPDATED
 func usersSortColumnIdx(k SortKey) int {
 	switch k {
-	case SortStatus:
-		return 0
 	case SortName:
-		return 1
+		return 0
+	case SortStatus:
+		return 5
 	case SortLastLogin:
 		return 6
 	case SortCreated:

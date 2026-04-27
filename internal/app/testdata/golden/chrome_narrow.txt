@@ -1,7 +1,7 @@
 ╭────────────────────────────────────────────────────────────────────────────────────────╮
 │ ota v0.1.7 · acme.okta.com [prod]                                       [RL: ok]    UTC│
 ├─ Users ────────────────────────────────────────────────────────────────────────────────┤
-│   STATUS          LOGIN                      TITLE             DIVISION      EMPLOYEE# │
+│   LOGIN               NICKNAME    DIVISION    DEPARTMENT  TITLE          STATUS        │
 │                                                                                        │
 │                                                                                        │
 │                                                                                        │

@@ -61,8 +61,8 @@ func Test_UsersList_LStepsLeftColumnsOffViewport(t *testing.T) {
 	})
 
 	before := testfx.StripANSI(m.View())
-	require.Contains(t, before, "STATUS",
-		"precondition: STATUS column visible before scroll")
+	require.Contains(t, before, "LOGIN",
+		"precondition: LOGIN column (leftmost in #145 lineup) visible before scroll")
 	require.Contains(t, before, "alice@acme.com")
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
@@ -70,10 +70,8 @@ func Test_UsersList_LStepsLeftColumnsOffViewport(t *testing.T) {
 	require.True(t, ok)
 
 	after := testfx.StripANSI(mdl.View())
-	assert.NotContains(t, after, "STATUS",
-		"`l` must drop the leftmost column when the row overflows the viewport")
-	assert.Contains(t, after, "alice@acme.com",
-		"LOGIN row body must remain visible after scrolling once")
+	assert.NotContains(t, after, "alice@acme.com",
+		"`l` must drop the leftmost column (LOGIN) once the row overflows the viewport")
 }
 
 // Test_UsersList_HReturnsToLeftEdge verifies pressing `h` after `l`
@@ -98,8 +96,8 @@ func Test_UsersList_HReturnsToLeftEdge(t *testing.T) {
 	m = feed(m, 'h')
 
 	view := testfx.StripANSI(m.View())
-	assert.Contains(t, view, "STATUS",
-		"`h` must restore the leftmost column once we scroll back")
+	assert.Contains(t, view, "alice@acme.com",
+		"`h` must restore the leftmost LOGIN column once we scroll back")
 }
 
 // Test_UsersList_HClampsAtZero verifies pressing `h` at the left edge
@@ -121,8 +119,8 @@ func Test_UsersList_HClampsAtZero(t *testing.T) {
 	}
 
 	view := testfx.StripANSI(m.View())
-	assert.Contains(t, view, "STATUS",
-		"hScroll must clamp at 0 — leftmost column stays visible after repeated `h`")
+	assert.Contains(t, view, "alice@acme.com",
+		"hScroll must clamp at 0 — leftmost LOGIN column stays visible after repeated `h`")
 }
 
 // Test_UsersList_LClampsAtMax verifies the scroll cursor cannot run
@@ -146,9 +144,11 @@ func Test_UsersList_LClampsAtMax(t *testing.T) {
 
 	view := testfx.StripANSI(m.View())
 	// alice@acme.com may scroll out of view; confirm her *row* still
-	// renders with data from a trailing column (NICKNAME "Ali") so we
-	// know the body didn't collapse to blank.
-	assert.Contains(t, view, "Ali",
+	// renders with data from a trailing column ([+] ACTIVE status
+	// badge or LAST UPDATED timestamp) so we know the body didn't
+	// collapse to blank.
+	assert.True(t,
+		strings.Contains(view, "ACTIVE") || strings.Contains(view, "ago"),
 		"trailing-column row data must remain visible after over-scrolling")
 	assert.False(t, strings.Contains(view, "\n\n\n\n"),
 		"body must never collapse to blank after over-scrolling")
