@@ -664,13 +664,13 @@ func (m ListModel) contextLine(visible []domain.User) string {
 //	STATUS · LOGIN · TITLE · DIVISION · EMPLOYEE# · NICKNAME ·
 //	LAST LOGIN · CHANGED
 //
-// DISPLAY NAME and DEPARTMENT moved out of the default row at the user's
-// request — they're still on the Pretty / JSON / YAML detail tabs.
-//
+// The whole row is wrapped in tk.Header (bold accent) so operators
+// can tell the column titles from data rows at a glance — issue #137.
 // The active sort column carries an `↑` (asc) or `↓` (desc) indicator
-// appended to its label per §15.2 v1.2.0.
+// appended to its label per §15.2 v1.2.0; sort glyphs already carry
+// their own colour and survive the outer Bold+Accent wrap.
 func (m ListModel) renderUsersHeader(tk shared.Tokens) string {
-	return m.formatUsersColumns(
+	row := m.formatUsersColumns(
 		usersSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
 		usersSortLabel("LOGIN", m.sortBy, SortName, m.sortDir, tk),
 		"TITLE",
@@ -680,6 +680,7 @@ func (m ListModel) renderUsersHeader(tk shared.Tokens) string {
 		usersSortLabel("LAST LOGIN", m.sortBy, SortLastLogin, m.sortDir, tk),
 		usersSortLabel("CHANGED", m.sortBy, SortCreated, m.sortDir, tk),
 	)
+	return tk.Header.Render(row)
 }
 
 // usersSortLabel appends a coloured ↑ / ↓ to title when this column is

@@ -280,7 +280,7 @@ func (m ListModel) View() string {
 	b.WriteByte('\n')
 	// 2-cell cursor gutter on the header keeps it aligned with data rows.
 	b.WriteString("  ")
-	b.WriteString(m.formatPoliciesColumns("PRI", "STATUS", "NAME", "SYSTEM", "UPDATED"))
+	b.WriteString(tk.Header.Render(m.formatPoliciesColumns("PRI", "STATUS", "NAME", "SYSTEM", "UPDATED")))
 	b.WriteByte('\n')
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(m.policies), shared.ListBodyRowBudget(m.height))
 	for i := top; i < end; i++ {

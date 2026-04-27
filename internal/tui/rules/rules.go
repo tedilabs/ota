@@ -324,12 +324,12 @@ func (m ListModel) View() string {
 	// input box for `/`.
 	// 2-cell cursor gutter on the header keeps it aligned with data rows.
 	b.WriteString("  ")
-	b.WriteString(m.formatRulesColumns(
+	b.WriteString(tk.Header.Render(m.formatRulesColumns(
 		rulesSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
 		rulesSortLabel("NAME", m.sortBy, SortName, m.sortDir, tk),
 		"TARGETS",
 		"UPDATED",
-	))
+	)))
 	b.WriteByte('\n')
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
 	for i := top; i < end; i++ {
