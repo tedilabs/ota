@@ -76,13 +76,17 @@ func (m CmdPaletteModel) Buffer() string { return m.buffer }
 
 // --- Help (SCR-902) ----------------------------------------------------------
 
-// HelpModel renders a two-column key reference (TUI_DESIGN §3) with an
-// optional inline `/` filter (REQ-U06 AC-2).
+// HelpModel renders a three-column key reference (TUI_DESIGN §3 +
+// issue #147 widescreen layout) with an optional inline `/` filter
+// (REQ-U06 AC-2). Width is the available content width; the App
+// Shell pipes the terminal's contentWidth in via WithWidth so the
+// modal fills the screen instead of clinging to the top-left.
 type HelpModel struct {
 	screen    string
 	entries   []helpEntry
 	filter    string
 	filtering bool
+	width     int
 }
 
 type helpEntry struct {
@@ -108,6 +112,14 @@ func NewHelpModelFor(screen string) HelpModel {
 		screen:  screen,
 		entries: helpEntriesForScreen(screen),
 	}
+}
+
+// WithWidth returns a copy of m with width set so the View() can
+// size its 3-column layout to the chrome's available content area.
+// Width = 0 means "use the auto-fit width" (legacy behaviour).
+func (m HelpModel) WithWidth(w int) HelpModel {
+	m.width = w
+	return m
 }
 
 // Init implements tea.Model.
@@ -148,9 +160,12 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the help modal — a RoundedBorder box laying out the
 // three k9s-style sections (Resource / General / Navigation) as
-// side-by-side columns (issue #132). The optional `/` filter narrows
-// every column in place; sections with no matching rows still keep
-// their header so the layout stays stable.
+// side-by-side columns (issue #132 + #147 widescreen). When the App
+// Shell hands a width via WithWidth, the modal fills that width and
+// divides the body evenly between the three columns, separated by
+// `│` glyphs for clear visual separation. Without a width hint the
+// modal falls back to the auto-fit form so callers that don't know
+// the chrome dimensions still render something sensible.
 func (m HelpModel) View() string {
 	header := "Press Esc to close"
 	if m.filtering {
@@ -185,25 +200,50 @@ func (m HelpModel) View() string {
 		{Title: "General", Entries: general},
 		{Title: "Navigation", Entries: navigation},
 	}
-	// Each column auto-fits to its widest "key  desc" cell (header
-	// included) so neighbouring sections don't bleed into each other.
-	colWidths := make([]int, len(cols))
-	for i, c := range cols {
-		colWidths[i] = helpColumnWidth(c)
-	}
+	colWidths, totalWidth := pickHelpColumnLayout(cols, m.width)
 
 	var body strings.Builder
 	body.WriteString(header + "\n\n")
 	body.WriteString(renderHelpColumns(cols, colWidths))
 	body.WriteString("\n\n<Esc> close · </> filter")
 
-	const gutter = 2
-	const padding = 4 // box padding (1+1) + border (1+1)
-	totalWidth := padding + (len(cols)-1)*gutter
-	for _, w := range colWidths {
-		totalWidth += w
-	}
 	return shared.Modal(helpTitle(m.screen), body.String(), totalWidth)
+}
+
+// pickHelpColumnLayout resolves each column's rendered width and
+// the overall modal width. Target > 0 (issue #147): the modal fills
+// that width and divides the body evenly across the columns. Target
+// == 0: auto-fit each column to its widest cell (legacy form).
+func pickHelpColumnLayout(cols []helpColumn, target int) (colWidths []int, totalWidth int) {
+	const padding = 4 // box border (2) + body padding (2)
+	const sepW = 3    // " │ " separator between columns
+	colWidths = make([]int, len(cols))
+
+	if target <= 0 {
+		for i, c := range cols {
+			colWidths[i] = helpColumnWidth(c)
+		}
+		totalWidth = padding
+		for i, w := range colWidths {
+			if i > 0 {
+				totalWidth += sepW
+			}
+			totalWidth += w
+		}
+		return colWidths, totalWidth
+	}
+
+	body := target - padding - (len(cols)-1)*sepW
+	if body < len(cols)*8 {
+		body = len(cols) * 8
+	}
+	per := body / len(cols)
+	for i := range cols {
+		colWidths[i] = per
+	}
+	colWidths[len(cols)-1] += body - per*len(cols)
+	totalWidth = target
+	return colWidths, totalWidth
 }
 
 // helpColumnWidth picks the rendered width for one help column —
@@ -232,10 +272,12 @@ type helpColumn struct {
 	Entries []helpEntry
 }
 
-// renderHelpColumns lays out N columns side-by-side. Each column gets
-// its own pre-computed width via colWidths[i] (auto-fit, computed by
-// helpColumnWidth). Rows pack to the longest section's row count so
-// the columns line up; shorter sections pad with blank rows.
+// renderHelpColumns lays out N columns side-by-side, separated by
+// ` │ ` for clear visual separation (issue #147 — operators
+// reported the previous 2-space gap looked like one wide column).
+// Each column's content gets padded to colWidths[i] cells; the body
+// is truncated when a single key+desc cell exceeds the column
+// allocation so the separator stays put.
 func renderHelpColumns(cols []helpColumn, colWidths []int) string {
 	maxRows := 0
 	for _, c := range cols {
@@ -252,15 +294,20 @@ func renderHelpColumns(cols []helpColumn, colWidths []int) string {
 				w = k
 			}
 		}
+		// Cap key width at half the column so descriptions still fit.
+		if half := colWidths[i] / 2; half > 0 && w > half {
+			w = half
+		}
 		colKeyW[i] = w
 	}
 
+	const sep = " │ "
 	var lines []string
 	{
 		var row strings.Builder
 		for i, c := range cols {
 			if i > 0 {
-				row.WriteString("  ")
+				row.WriteString(sep)
 			}
 			row.WriteString(padRight("── "+c.Title+" ──", colWidths[i]))
 		}
@@ -270,18 +317,48 @@ func renderHelpColumns(cols []helpColumn, colWidths []int) string {
 		var row strings.Builder
 		for i, c := range cols {
 			if i > 0 {
-				row.WriteString("  ")
+				row.WriteString(sep)
 			}
 			cell := ""
 			if r < len(c.Entries) {
 				e := c.Entries[r]
 				cell = padRight(e.key, colKeyW[i]) + "  " + e.desc
 			}
+			// Truncate cells that exceed their allocation so the
+			// next column's separator stays aligned.
+			if visibleLen(cell) > colWidths[i] {
+				cell = truncateAscii(cell, colWidths[i])
+			}
 			row.WriteString(padRight(cell, colWidths[i]))
 		}
 		lines = append(lines, row.String())
 	}
 	return strings.Join(lines, "\n")
+}
+
+func visibleLen(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
+func truncateAscii(s string, width int) string {
+	if visibleLen(s) <= width {
+		return s
+	}
+	if width <= 1 {
+		return "…"
+	}
+	out := make([]rune, 0, width)
+	for _, r := range s {
+		if len(out)+1 >= width {
+			break
+		}
+		out = append(out, r)
+	}
+	return string(out) + "…"
 }
 
 // helpTitle returns the modal heading for a screen name. Unknown names get
@@ -419,11 +496,16 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	}
 }
 
+// padRight pads s with trailing spaces to a visible width of n.
+// Uses rune count rather than byte count so multibyte glyphs (e.g.
+// the "──" header rules) don't under-pad and skew the column
+// separators in the help modal.
 func padRight(s string, n int) string {
-	if len(s) >= n {
+	w := visibleLen(s)
+	if w >= n {
 		return s
 	}
-	return s + strings.Repeat(" ", n-len(s))
+	return s + strings.Repeat(" ", n-w)
 }
 
 // --- Confirm (SCR-903) -------------------------------------------------------

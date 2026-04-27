@@ -484,7 +484,17 @@ func clampBodyLines(h int) int {
 // which compose alongside the screen.
 func (m Model) composeBody() string {
 	if m.overlay == OverlayHelp && m.helpModel != nil {
-		return centerInBody(m.helpModel.View(), clampWidth(m.width)-3)
+		// Issue #147: hand the modal as much width as the chrome
+		// can spare — content area minus a small breathing-room
+		// gutter — so it fills the screen instead of clinging to
+		// the top-left corner.
+		contentWidth := clampWidth(m.width) - 3
+		modalWidth := contentWidth - 4
+		if modalWidth < 60 {
+			modalWidth = 60
+		}
+		sized := m.helpModel.WithWidth(modalWidth)
+		return centerInBody(sized.View(), contentWidth)
 	}
 	if child, ok := m.screens[m.active]; ok {
 		return child.View()
