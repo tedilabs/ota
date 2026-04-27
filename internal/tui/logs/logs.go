@@ -38,6 +38,13 @@ type Deps struct {
 
 type logsLoadedMsg struct{ events []domain.LogEvent }
 
+// LoadedForTest synthesises the (unexported) logsLoadedMsg so black-box
+// tests can deliver a deterministic event slice through Update without
+// running the network fetch path.
+func LoadedForTest(events []domain.LogEvent) tea.Msg {
+	return logsLoadedMsg{events: events}
+}
+
 // logsErrMsg surfaces a fetch failure (TUI_DESIGN §17).
 type logsErrMsg struct{ err error }
 
@@ -103,6 +110,16 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logsLoadedMsg:
 		m.events = msg.events
 		m.lastErr = nil
+		// Logs render newest-at-bottom, so the operator's mental model
+		// is: open the screen → land on the most recent entry, scroll
+		// upward (k) to view older ones. Park the cursor on the last
+		// row whenever a fresh batch arrives (issue #127).
+		if n := len(m.events); n > 0 {
+			m.cursor = n - 1
+		} else {
+			m.cursor = 0
+		}
+		m.viewportTop = 0
 		return m, nil
 	case logsErrMsg:
 		m.lastErr = msg.err
@@ -171,6 +188,13 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "f":
 			m.ggChord.Reset()
 			m.follow = !m.follow
+		case "r":
+			// Manual refresh — operator wants the current window
+			// re-fetched (e.g., after firing a write op elsewhere).
+			m.ggChord.Reset()
+			if m.deps.Service != nil {
+				return m, fetchHistoryWindowCmd(m.deps.Service, m.timeRange)
+			}
 		case "j":
 			m.ggChord.Reset()
 			if m.cursor < len(m.events)-1 {
@@ -415,17 +439,20 @@ func timeRangeLabel(d time.Duration) string {
 	return "Last " + d.String()
 }
 
-// tailIndicator returns the top-right status for the tail mode
-// (`[TAIL 7s] ▶` or `[TAIL OFF]`), plus follow state.
+// tailIndicator returns a two-segment status string surfacing both the
+// `s`-tail and `f`-follow toggles independently. Each segment is always
+// rendered so operators can see which key flipped what state — the
+// previous "TAIL OFF only" form hid follow's effect when tail was off.
 func tailIndicator(tail bool, interval time.Duration, follow bool) string {
-	if !tail {
-		return "[TAIL OFF]"
+	tailSeg := "[TAIL OFF]"
+	if tail {
+		tailSeg = fmt.Sprintf("[TAIL %ds]", int(interval/time.Second))
 	}
-	follow_s := "follow"
+	followSeg := "[FOLLOW]"
 	if !follow {
-		follow_s = "paused-scroll"
+		followSeg = "[PAUSED]"
 	}
-	return fmt.Sprintf("[TAIL %ds] ▶ %s", int(interval/time.Second), follow_s)
+	return tailSeg + " " + followSeg
 }
 
 func formatTime(t time.Time) string {

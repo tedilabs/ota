@@ -1,4 +1,4 @@
-System Logs  [Last 30m]  [TAIL OFF]
+System Logs  [Last 30m]  [TAIL OFF] [FOLLOW]
   WHEN          SEV       EVENTTYPE                 ACTOR               OUTCOME    IP             
 ▸ 2h ago        [i] INFO  user.session.start        alice@acme.com      FAILURE    10.0.1.5       
   3h ago        [i] INFO  user.session.start        bob@acme.com        FAILURE    10.0.1.6       
