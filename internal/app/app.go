@@ -785,19 +785,27 @@ func itoaSimple(n int) string {
 	return string(buf[i:])
 }
 
-// modalBox renders a single rounded-border box of the given inner
-// width around body — no key-hint footer (issue #129; key
-// discoverability lives in the `?` modal). Used by both renderPaletteBox
-// and renderFilterBox so the palette and filter inputs share chrome.
-func modalBox(body string, innerWidth int, tk shared.Tokens) string {
-	if innerWidth < 10 {
-		innerWidth = 10
+// modalBox renders a single rounded-border box whose OUTER width
+// equals contentWidth — i.e. the cells the chrome reserves for the
+// body. lipgloss `.Width(N)` sizes the inside-of-border area
+// (padding included), so the outer width works out to N + 2 (one
+// border cell on each side). To make the rendered box land at
+// exactly contentWidth so its `╮` corner butts up against the
+// chrome's right `│` border, set `.Width(contentWidth - 2)`.
+//
+// Issue #151: the previous form passed `.Width(contentWidth)`
+// which over-shot by 2 cells, and an even earlier form under-shot
+// by 4 cells leaving a visible gap between the modal's right edge
+// and the chrome's right border.
+func modalBox(body string, contentWidth int, tk shared.Tokens) string {
+	if contentWidth < 10 {
+		contentWidth = 10
 	}
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#5e81ac")).
 		Padding(0, 1).
-		Width(innerWidth)
+		Width(contentWidth - 2)
 	return border.Render(body)
 }
 
