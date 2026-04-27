@@ -199,6 +199,15 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Esc on the list (after the `/` prompt closed) clears any active
+	// filter (issue #131).
+	if msg.Type == tea.KeyEsc && m.filter != "" {
+		m.filter = ""
+		m.cursor = 0
+		m.viewportTop = 0
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyCtrlF:
 		page := shared.ListBodyRowBudget(m.height)

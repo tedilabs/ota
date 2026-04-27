@@ -302,6 +302,18 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Esc on a list with an active filter clears the filter and
+	// restores the full row set (issue #131). The `/` input is closed
+	// by Enter — at that point m.filtering is false but m.filter still
+	// drives the visible() projection. Without this, operators had no
+	// way to escape a filter besides backspacing through it.
+	if msg.Type == tea.KeyEsc && m.filter != "" {
+		m.filter = ""
+		m.cursor = 0
+		m.viewportTop = 0
+		return m, nil
+	}
+
 	// Vim page nav (TUI_DESIGN §3.2). Ctrl-f / Ctrl-b move a full page,
 	// Ctrl-d / Ctrl-u move half a page. Page size mirrors the body
 	// row budget so the cursor lands in the same relative spot after a
