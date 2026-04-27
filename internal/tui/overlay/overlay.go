@@ -146,19 +146,18 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the help modal — a RoundedBorder box grouped into the
-// k9s-style sections Resource / General / Navigation (issue #120). The
-// optional `/` filter narrows the list in place; section headers are
-// dropped when their group has no matching rows.
+// View renders the help modal — a RoundedBorder box laying out the
+// three k9s-style sections (Resource / General / Navigation) as
+// side-by-side columns (issue #132). The optional `/` filter narrows
+// every column in place; sections with no matching rows still keep
+// their header so the layout stays stable.
 func (m HelpModel) View() string {
-	var body strings.Builder
 	header := "Press Esc to close"
 	if m.filtering {
 		header = "filter: /" + m.filter
 	} else if m.filter != "" {
 		header = "[filter=" + m.filter + "]"
 	}
-	body.WriteString(header + "\n\n")
 
 	needle := strings.ToLower(m.filter)
 	matches := func(e helpEntry) bool {
@@ -167,33 +166,122 @@ func (m HelpModel) View() string {
 		}
 		return strings.Contains(strings.ToLower(e.key+" "+e.desc), needle)
 	}
-	writeGroup := func(title string, entries []helpEntry, first *bool) {
-		var rows []helpEntry
+	filtered := func(entries []helpEntry) []helpEntry {
+		out := make([]helpEntry, 0, len(entries))
 		for _, e := range entries {
 			if matches(e) {
-				rows = append(rows, e)
+				out = append(out, e)
 			}
 		}
-		if len(rows) == 0 {
-			return
-		}
-		if !*first {
-			body.WriteByte('\n')
-		}
-		body.WriteString("── " + title + " ──\n")
-		for _, e := range rows {
-			body.WriteString(padRight(e.key, 16) + e.desc + "\n")
-		}
-		*first = false
+		return out
 	}
 
-	first := true
-	writeGroup("Resource", screenSpecificHelpEntries(m.screen), &first)
-	writeGroup("General", generalHelpEntries(), &first)
-	writeGroup("Navigation", navigationHelpEntries(), &first)
+	resource := filtered(screenSpecificHelpEntries(m.screen))
+	general := filtered(generalHelpEntries())
+	navigation := filtered(navigationHelpEntries())
 
-	body.WriteString("\n<Esc> close · </> filter")
-	return shared.Modal(helpTitle(m.screen), body.String(), 70)
+	cols := []helpColumn{
+		{Title: "Resource", Entries: resource},
+		{Title: "General", Entries: general},
+		{Title: "Navigation", Entries: navigation},
+	}
+	// Each column auto-fits to its widest "key  desc" cell (header
+	// included) so neighbouring sections don't bleed into each other.
+	colWidths := make([]int, len(cols))
+	for i, c := range cols {
+		colWidths[i] = helpColumnWidth(c)
+	}
+
+	var body strings.Builder
+	body.WriteString(header + "\n\n")
+	body.WriteString(renderHelpColumns(cols, colWidths))
+	body.WriteString("\n\n<Esc> close · </> filter")
+
+	const gutter = 2
+	const padding = 4 // box padding (1+1) + border (1+1)
+	totalWidth := padding + (len(cols)-1)*gutter
+	for _, w := range colWidths {
+		totalWidth += w
+	}
+	return shared.Modal(helpTitle(m.screen), body.String(), totalWidth)
+}
+
+// helpColumnWidth picks the rendered width for one help column —
+// max("── Title ──", every "key + 2 spaces + desc" entry).
+func helpColumnWidth(c helpColumn) int {
+	const minKey = 6
+	keyW := minKey
+	for _, e := range c.Entries {
+		if w := len(e.key); w > keyW {
+			keyW = w
+		}
+	}
+	headerW := len("── " + c.Title + " ──")
+	w := headerW
+	for _, e := range c.Entries {
+		row := keyW + 2 + len(e.desc)
+		if row > w {
+			w = row
+		}
+	}
+	return w
+}
+
+type helpColumn struct {
+	Title   string
+	Entries []helpEntry
+}
+
+// renderHelpColumns lays out N columns side-by-side. Each column gets
+// its own pre-computed width via colWidths[i] (auto-fit, computed by
+// helpColumnWidth). Rows pack to the longest section's row count so
+// the columns line up; shorter sections pad with blank rows.
+func renderHelpColumns(cols []helpColumn, colWidths []int) string {
+	maxRows := 0
+	for _, c := range cols {
+		if len(c.Entries) > maxRows {
+			maxRows = len(c.Entries)
+		}
+	}
+	colKeyW := make([]int, len(cols))
+	for i, c := range cols {
+		const minKey = 6
+		w := minKey
+		for _, e := range c.Entries {
+			if k := len(e.key); k > w {
+				w = k
+			}
+		}
+		colKeyW[i] = w
+	}
+
+	var lines []string
+	{
+		var row strings.Builder
+		for i, c := range cols {
+			if i > 0 {
+				row.WriteString("  ")
+			}
+			row.WriteString(padRight("── "+c.Title+" ──", colWidths[i]))
+		}
+		lines = append(lines, row.String())
+	}
+	for r := 0; r < maxRows; r++ {
+		var row strings.Builder
+		for i, c := range cols {
+			if i > 0 {
+				row.WriteString("  ")
+			}
+			cell := ""
+			if r < len(c.Entries) {
+				e := c.Entries[r]
+				cell = padRight(e.key, colKeyW[i]) + "  " + e.desc
+			}
+			row.WriteString(padRight(cell, colWidths[i]))
+		}
+		lines = append(lines, row.String())
+	}
+	return strings.Join(lines, "\n")
 }
 
 // helpTitle returns the modal heading for a screen name. Unknown names get

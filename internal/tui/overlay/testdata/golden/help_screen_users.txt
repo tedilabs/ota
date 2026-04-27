@@ -1,35 +1,18 @@
-╭────────────────────────────────────────────────────────────────────╮
-│ Help · Users List                                                  │
-├────────────────────────────────────────────────────────────────────┤
-│ Press Esc to close                                                 │
-│                                                                    │
-│ ── Resource ──                                                     │
-│ Enter / d       open detail (all attributes)                       │
-│ Shift+S         sort by STATUS                                     │
-│ Shift+N         sort by NAME (login)                               │
-│ Shift+L         sort by LAST LOGIN                                 │
-│ Shift+C         sort by CREATED / CHANGED                          │
-│ :reset-password send reset-password email                          │
-│ :unlock         clear LOCKED_OUT state                             │
-│ :reset-mfa      remove enrolled MFA factors                        │
-│                                                                    │
-│ ── General ──                                                      │
-│ :               open command palette                               │
-│ /               incremental search (lists)                         │
-│ ?               this help                                          │
-│ Esc             cancel mode / close overlay                        │
-│ q               close screen / quit (with confirm)                 │
-│ Ctrl-c          soft quit (tail confirm)                           │
-│ Ctrl-l          force redraw                                       │
-│ R               refresh (cache invalidate)                         │
-│ :quit           quit ota                                           │
-│                                                                    │
-│ ── Navigation ──                                                   │
-│ j / k           cursor down / up                                   │
-│ h / l           scroll columns left / right                        │
-│ gg / G          top / bottom                                       │
-│ Ctrl-d / Ctrl-u half-page down / up                                │
-│ Ctrl-f / Ctrl-b page down / up                                     │
-│                                                                    │
-│ <Esc> close · </> filter                                           │
-╰────────────────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Help · Users List                                                                                                                       │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Press Esc to close                                                                                                                      │
+│                                                                                                                                         │
+│ ── Resource ──                         ── General ──                       ── Navigation ──                                             │
+│ Enter / d        open detail (all attributes)  :       open command palette                j / k            cursor down / up            │
+│ Shift+S          sort by STATUS                /       incremental search (lists)          h / l            scroll columns left / right │
+│ Shift+N          sort by NAME (login)          ?       this help                           gg / G           top / bottom                │
+│ Shift+L          sort by LAST LOGIN            Esc     cancel mode / close overlay         Ctrl-d / Ctrl-u  half-page down / up         │
+│ Shift+C          sort by CREATED / CHANGED     q       close screen / quit (with confirm)  Ctrl-f / Ctrl-b  page down / up              │
+│ :reset-password  send reset-password email     Ctrl-c  soft quit (tail confirm)                                                         │
+│ :unlock          clear LOCKED_OUT state        Ctrl-l  force redraw                                                                     │
+│ :reset-mfa       remove enrolled MFA factors   R       refresh (cache invalidate)                                                       │
+│                                                :quit   quit ota                                                                         │
+│                                                                                                                                         │
+│ <Esc> close · </> filter                                                                                                                │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

@@ -480,12 +480,38 @@ func clampBodyLines(h int) int {
 // which compose alongside the screen.
 func (m Model) composeBody() string {
 	if m.overlay == OverlayHelp && m.helpModel != nil {
-		return m.helpModel.View()
+		return centerInBody(m.helpModel.View(), clampWidth(m.width)-3)
 	}
 	if child, ok := m.screens[m.active]; ok {
 		return child.View()
 	}
 	return "(loading…)"
+}
+
+// centerInBody horizontally centers a multi-line block inside the
+// chrome's content width. Each line gets enough leading spaces to push
+// the block to the visual center; lines wider than contentWidth are
+// returned unchanged so the chrome can decide what to truncate.
+func centerInBody(block string, contentWidth int) string {
+	if contentWidth <= 0 {
+		return block
+	}
+	lines := strings.Split(block, "\n")
+	maxW := 0
+	for _, l := range lines {
+		if w := shared.VisibleWidth(l); w > maxW {
+			maxW = w
+		}
+	}
+	if maxW >= contentWidth {
+		return block
+	}
+	pad := strings.Repeat(" ", (contentWidth-maxW)/2)
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = pad + l
+	}
+	return strings.Join(out, "\n")
 }
 
 // resourceLabel returns the resource segment shown in the ContextBar.
