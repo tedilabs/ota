@@ -410,22 +410,26 @@ func (m Model) View() string {
 			}
 		}
 	}
+	visible, total, hasCount := m.activeChildCount()
 	chrome := shared.ChromeInput{
-		Tokens:    tokens,
-		Width:     width,
-		Brand:     "ota",
-		Tenant:    tenantFromOrgURL(m.deps.OrgURL),
-		Profile:   m.profileLabel(),
-		Principal: m.principalLogin,
-		Version:   version.Tag,
-		Timezone:  "UTC",
-		RateLimit: m.rateLimitState(),
-		Resource:  m.resourceLabel(),
-		Filter:    m.activeChildFilter(),
-		Body:      body,
-		BodyLines: bodyLines,
-		KeyHints:  m.keyHints(tokens),
-		Offline:   m.offline,
+		Tokens:       tokens,
+		Width:        width,
+		Brand:        "ota",
+		Tenant:       tenantFromOrgURL(m.deps.OrgURL),
+		Profile:      m.profileLabel(),
+		Principal:    m.principalLogin,
+		Version:      version.Tag,
+		Timezone:     "UTC",
+		RateLimit:    m.rateLimitState(),
+		Resource:     m.resourceLabel(),
+		Filter:       m.activeChildFilter(),
+		CountVisible: visible,
+		CountTotal:   total,
+		HasCount:     hasCount,
+		Body:         body,
+		BodyLines:    bodyLines,
+		KeyHints:     m.keyHints(tokens),
+		Offline:      m.offline,
 	}
 	return shared.RenderChrome(chrome)
 }
@@ -623,6 +627,15 @@ type FilterStater interface {
 	Filter() string
 }
 
+// Counter is implemented by list screens that publish a "N of M"
+// count to the chrome so it can stamp the count next to the resource
+// label in the upper divider (issue #136). Returning ("", "") signals
+// the screen has no count to show — the divider falls back to just
+// the resource label.
+type Counter interface {
+	Count() (visible int, total int)
+}
+
 // activeChildIsFiltering reports whether the active list child is
 // currently in `/` filter input mode.
 func (m Model) activeChildIsFiltering() bool {
@@ -648,6 +661,24 @@ func (m Model) activeChildFilter() string {
 		return ""
 	}
 	return fs.Filter()
+}
+
+// activeChildCount returns the (visible, total, ok) triple for the
+// active child screen — drives the "N of M" segment the chrome stamps
+// next to the resource label in the upper divider (issue #136).
+// ok is false for screens that don't implement Counter (detail
+// surfaces) so the chrome leaves the segment off entirely.
+func (m Model) activeChildCount() (visible, total int, ok bool) {
+	child, found := m.screens[m.active]
+	if !found {
+		return 0, 0, false
+	}
+	c, isCounter := child.(Counter)
+	if !isCounter {
+		return 0, 0, false
+	}
+	v, t := c.Count()
+	return v, t, true
 }
 
 // renderFilterBox builds the floating input box for `/` filter mode.

@@ -316,13 +316,9 @@ func (m ListModel) View() string {
 	rows := m.visible()
 
 	var b strings.Builder
-	// Resource label + filter both live in the chrome's upper divider
-	// now (issue #133); body just surfaces the visible count.
-	b.WriteString(fmt.Sprintf("%d of %d", len(rows), len(m.rules)))
-	b.WriteByte('\n')
-	// Inline "filter:" dropped in v0.1.5-6 — App Shell renders a floating
-	// input box for `/`.
-	// 2-cell cursor gutter on the header keeps it aligned with data rows.
+	// Resource label, count, and filter all live in the chrome's
+	// upper divider (issues #133 + #136); the body opens straight
+	// with the column header.
 	b.WriteString("  ")
 	b.WriteString(tk.Header.Render(m.formatRulesColumns(
 		rulesSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
@@ -559,6 +555,12 @@ func rulesSortLabel(title string, active, key SortKey, dir SortDir, tk shared.To
 // render its floating filter box (issue #123).
 func (m ListModel) Filtering() bool { return m.filtering }
 func (m ListModel) Filter() string  { return m.filter }
+
+// Count returns the visible/total counts for the App Shell's upper
+// divider (issue #136).
+func (m ListModel) Count() (visible, total int) {
+	return len(m.visible()), len(m.rules)
+}
 
 // cursorBy moves the cursor by delta rows, clamped to the visible range
 // (issue #119).

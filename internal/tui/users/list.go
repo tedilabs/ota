@@ -2,7 +2,6 @@ package users
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"log/slog"
 	"sort"
@@ -490,15 +489,12 @@ func (m ListModel) View() string {
 	tk := activeTokens()
 
 	rows := m.visible()
-	hint := m.contextLine(rows)
 
 	var b strings.Builder
-	b.WriteString(hint)
-	b.WriteByte('\n')
-	// Inline "filter:" dropped in v0.1.5-6 — App Shell renders a
-	// floating input box for `/` so the body no longer needs to echo it.
-	// Header carries the same 2-cell cursor gutter every data row uses so
-	// column titles align with their values (issue #107).
+	// Resource label, count, and filter all live in the chrome's
+	// upper divider now (issues #133 + #136); the body opens straight
+	// with the column header. 2-cell cursor gutter on the header
+	// keeps it aligned with data rows.
 	b.WriteString("  ")
 	b.WriteString(m.renderUsersHeader(tk))
 	b.WriteByte('\n')
@@ -529,6 +525,13 @@ func (m ListModel) Filtering() bool { return m.filtering }
 
 // Filter returns the current filter string (echoed in the floating box).
 func (m ListModel) Filter() string { return m.filter }
+
+// Count returns the visible/total counts so the App Shell can stamp
+// "N of M" into the chrome's upper divider (issue #136). Implements
+// app.Counter.
+func (m ListModel) Count() (visible, total int) {
+	return len(m.visible()), len(m.users)
+}
 
 // DetailLine returns the active line cursor inside the detail body.
 // Exported so tests can assert cursor movement without depending on a
@@ -650,12 +653,12 @@ func (m ListModel) windowBounds(total int) (int, int) {
 	return shared.WindowBounds(m.cursor, m.viewportTop, total, shared.ListBodyRowBudget(m.height))
 }
 
-// contextLine renders the "5 of N" count above the column header.
-// The resource label and filter both moved into the chrome's upper
-// divider (issue #133), so the body just shows the visible count —
-// no more "Users " prefix duplicating what the chrome already says.
+// contextLine returns "" — the resource label, count, and filter all
+// live in the chrome's upper divider now (issues #133 + #136). Kept
+// as a method so existing callers compile unchanged; their `\n` after
+// it gives the view a one-row gap above the column header.
 func (m ListModel) contextLine(visible []domain.User) string {
-	return fmt.Sprintf("%d of %d", len(visible), len(m.users))
+	return ""
 }
 
 // renderUsersHeader returns the column header row, width-aware

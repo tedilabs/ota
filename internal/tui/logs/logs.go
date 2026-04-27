@@ -91,6 +91,13 @@ func NewSearchModel(deps Deps) SearchModel {
 // other models that need to mirror the operator's selection.
 func (m SearchModel) TimeRange() time.Duration { return m.timeRange }
 
+// Count returns the visible/total event counts for the App Shell's
+// upper divider (issue #136). Logs has no inline filter so visible
+// always equals total.
+func (m SearchModel) Count() (visible, total int) {
+	return len(m.events), len(m.events)
+}
+
 // Init fetches the history list.
 func (m SearchModel) Init() tea.Cmd {
 	if len(m.events) > 0 || m.deps.Service == nil {

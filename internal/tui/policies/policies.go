@@ -164,6 +164,13 @@ func (m ListModel) Init() tea.Cmd {
 	return fetchPoliciesCmd(m.deps.Port, m.policyType)
 }
 
+// Count returns the visible/total counts for the App Shell's upper
+// divider (issue #136). Policies has no inline filter today so
+// visible always equals total.
+func (m ListModel) Count() (visible, total int) {
+	return len(m.policies), len(m.policies)
+}
+
 // Update handles list navigation and detail transitions.
 func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -268,17 +275,12 @@ func (m ListModel) View() string {
 	now := m.now()
 
 	var b strings.Builder
-	// Resource label moved to chrome's upper divider (issue #133); the
-	// policy type subcategory is still surfaced inline so the operator
-	// knows which policy kind they drilled into.
+	// Resource label, count, and filter all live in the chrome's
+	// upper divider (issues #133 + #136); the body opens straight
+	// with the policy-type subcategory then the column header.
 	b.WriteString("› ")
 	b.WriteString(string(m.policyType))
-	b.WriteString("  ")
-	b.WriteString(itoa(len(m.policies)))
-	b.WriteString(" of ")
-	b.WriteString(itoa(len(m.policies)))
 	b.WriteByte('\n')
-	// 2-cell cursor gutter on the header keeps it aligned with data rows.
 	b.WriteString("  ")
 	b.WriteString(tk.Header.Render(m.formatPoliciesColumns("PRI", "STATUS", "NAME", "SYSTEM", "UPDATED")))
 	b.WriteByte('\n')

@@ -71,10 +71,21 @@ type ChromeInput struct {
 	// "Policies › OKTA_SIGN_ON").
 	Resource string
 
-	// Counter shows the count line (e.g., "5 of 5", "loading…", "(error)").
+	// Counter shows a legacy free-form count line (unused as of issue
+	// #136 — superseded by CountVisible / CountTotal which the chrome
+	// stamps into the upper divider next to the resource label).
 	Counter string
 
-	// Filter, if non-empty, is appended to the counter line as " · q=\"...\"".
+	// CountVisible / CountTotal feed the "N of M" segment in the
+	// upper divider. CountTotal == 0 disables the segment entirely
+	// (detail surfaces, screens without a count).
+	CountVisible int
+	CountTotal   int
+	HasCount     bool
+
+	// Filter, if non-empty, gets appended to the divider label as
+	// ` · q="..."` so the operator always sees what's narrowing the
+	// visible row set.
 	Filter string
 
 	// Body is the active child Screen body. Caller is responsible for sizing
@@ -134,7 +145,7 @@ func RenderChrome(in ChromeInput) string {
 	titleBar := joinLR(left, right, contentWidth)
 
 	// ---- Upper divider with embedded resource label --------------------
-	resourceLabel := buildResourceLabel(in.Resource, in.Filter, tk)
+	resourceLabel := buildResourceLabel(in.Resource, in.Filter, in.CountVisible, in.CountTotal, in.HasCount, tk)
 	upperDivider := dividerWithLabel(width, resourceLabel)
 
 	// ---- Body -----------------------------------------------------------
@@ -223,17 +234,52 @@ func envBadgeBracketed(profile string, tk Tokens) string {
 }
 
 // buildResourceLabel assembles the text that gets stamped into the
-// upper divider — `Users` plain, `Users · q="alice"` when filter
-// active. Returns the styled string ready for dividerWithLabel.
-func buildResourceLabel(resource, filter string, tk Tokens) string {
+// upper divider. Composes (resource, count, filter) into one styled
+// string ready for dividerWithLabel:
+//
+//	Users
+//	Users · 81 of 81
+//	Users · 3 of 81 · q="alice"
+//
+// Each segment is added only when present so detail surfaces (no
+// count, no filter) render as just the resource name.
+func buildResourceLabel(resource, filter string, visible, total int, hasCount bool, tk Tokens) string {
 	if resource == "" {
 		resource = "—"
 	}
 	label := tk.Header.Render(resource)
+	if hasCount && total > 0 {
+		count := itoaCount(visible) + " of " + itoaCount(total)
+		label = label + tk.Muted.Render(" · ") + tk.Muted.Render(count)
+	}
 	if filter != "" {
 		label = label + tk.Muted.Render(` · q="`+filter+`"`)
 	}
 	return label
+}
+
+// itoaCount is a tiny strconv shim local to chrome — keeps strconv
+// out of this file's import set.
+func itoaCount(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 // dividerWithLabel returns `├─ <label> ──────────┤` of total `width`
