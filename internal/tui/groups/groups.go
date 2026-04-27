@@ -400,6 +400,7 @@ func (m ListModel) View() string {
 		"TYPE",
 		groupsSortLabel("NAME", m.sortBy, SortName, m.sortDir, tk),
 		"DESCRIPTION",
+		"MEMBERS",
 		"UPDATED",
 	)))
 	b.WriteByte('\n')
@@ -419,12 +420,22 @@ func (m ListModel) View() string {
 
 // renderGroupsRow formats one group as a row.
 func (m ListModel) renderGroupsRow(g domain.Group, now time.Time, tk shared.Tokens) string {
-	typeBadge := shared.GroupTypeBadge(string(g.Type), tk).Mono
+	// v0.1.12 surfaces the full type label (OKTA / APP / BUILT_IN)
+	// instead of the one-letter mono so operators don't have to
+	// memorize the legend (issue #160).
+	typeBadge := shared.GroupTypeBadge(string(g.Type), tk).Label
 	updated := shared.RelativeTime(&g.LastUpdated, now)
 	if g.LastUpdated.IsZero() {
 		updated = "—"
 	}
-	return m.formatGroupsColumns(typeBadge, g.Profile.Name, g.Profile.Description, updated)
+	// MEMBERS — populated when the list query enabled expand=stats
+	// (issue #161). nil means the API didn't surface a count, so
+	// render "—" rather than a misleading "0".
+	members := "—"
+	if g.MemberCount != nil {
+		members = itoaG(*g.MemberCount)
+	}
+	return m.formatGroupsColumns(typeBadge, g.Profile.Name, g.Profile.Description, members, updated)
 }
 
 // groupsColumnSpecs returns the column definitions for the Groups
@@ -436,9 +447,10 @@ func (m ListModel) renderGroupsRow(g domain.Group, now time.Time, tk shared.Toke
 // fields.
 func groupsColumnSpecs() []shared.ColumnSpec {
 	return []shared.ColumnSpec{
-		{Title: "TYPE", Kind: shared.ColumnFixed, Min: 4, DropPriority: 0},
+		{Title: "TYPE", Kind: shared.ColumnFixed, Min: 8, DropPriority: 0},
 		{Title: "NAME", Kind: shared.ColumnFlex, Min: 18, Weight: 2, DropPriority: 0},
 		{Title: "DESCRIPTION", Kind: shared.ColumnFlex, Min: 16, Weight: 2, DropPriority: 2},
+		{Title: "MEMBERS", Kind: shared.ColumnFixed, Min: 7, DropPriority: 4, AlignRight: true},
 		{Title: "UPDATED", Kind: shared.ColumnFixed, Min: 10, DropPriority: 3, AlignRight: true},
 	}
 }

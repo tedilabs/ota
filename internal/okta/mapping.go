@@ -106,10 +106,17 @@ type wireGroup struct {
 	Created               string `json:"created"`
 	LastUpdated           string `json:"lastUpdated"`
 	LastMembershipUpdated string `json:"lastMembershipUpdated"`
+	// _embedded.stats.usersCount when the request enables
+	// `expand=stats` (issue #161 / Okta Groups API).
+	Embedded *struct {
+		Stats *struct {
+			UsersCount *int `json:"usersCount"`
+		} `json:"stats"`
+	} `json:"_embedded"`
 }
 
 func mapGroup(wg *wireGroup) domain.Group {
-	return domain.Group{
+	g := domain.Group{
 		ID:                    wg.ID,
 		Type:                  domain.GroupType(wg.Type),
 		Profile:               domain.GroupProfile{Name: wg.Profile.Name, Description: wg.Profile.Description},
@@ -117,6 +124,11 @@ func mapGroup(wg *wireGroup) domain.Group {
 		LastUpdated:           parseOktaTime(wg.LastUpdated),
 		LastMembershipUpdated: parseOktaTimePtr(wg.LastMembershipUpdated),
 	}
+	if wg.Embedded != nil && wg.Embedded.Stats != nil && wg.Embedded.Stats.UsersCount != nil {
+		v := *wg.Embedded.Stats.UsersCount
+		g.MemberCount = &v
+	}
+	return g
 }
 
 // --- Group Rules ---------------------------------------------------------

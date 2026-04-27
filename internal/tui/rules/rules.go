@@ -84,6 +84,10 @@ type ListModel struct {
 	// hScroll — horizontal column offset (issue #122). h/l move the
 	// column slice when the natural row exceeds the viewport.
 	hScroll int
+	// groupNames caches id→name lookups for the TARGETS column
+	// (issue #163). Populated lazily on first render via a Cmd.
+	groupNames        map[string]string
+	groupNamesFetched bool
 }
 
 // RuleDetailTab indexes the Group Rule Detail tab bar. v0.1.2 collapsed
@@ -133,9 +137,27 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case rulesLoadedMsg:
 		m.rules = msg.rules
 		m.lastErr = nil
+		// Once rules are loaded, fire a Cmd that resolves target
+		// group IDs → names so TARGETS reads as a list of human
+		// names rather than 00g_… opaque IDs (issue #163).
+		if !m.groupNamesFetched {
+			m.groupNamesFetched = true
+			ids := collectTargetGroupIDs(m.rules)
+			if len(ids) > 0 && m.deps.Groups != nil {
+				return m, fetchGroupNamesCmd(m.deps.Groups, ids)
+			}
+		}
 		return m, nil
 	case rulesErrMsg:
 		m.lastErr = msg.err
+		return m, nil
+	case groupNamesLoadedMsg:
+		if m.groupNames == nil {
+			m.groupNames = map[string]string{}
+		}
+		for k, v := range msg.names {
+			m.groupNames[k] = v
+		}
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -325,6 +347,7 @@ func (m ListModel) View() string {
 	b.WriteString(tk.Header.Render(m.formatRulesColumns(
 		rulesSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
 		rulesSortLabel("NAME", m.sortBy, SortName, m.sortDir, tk),
+		"EXPRESSION",
 		"TARGETS",
 		"UPDATED",
 	)))
@@ -367,33 +390,48 @@ func (m ListModel) View() string {
 // renderRulesRow formats one rule.
 func (m ListModel) renderRulesRow(r domain.GroupRule, now time.Time, tk shared.Tokens) string {
 	status := shared.RuleStatusBadge(string(r.Status), tk).Render(tk)
-	targets := formatTargets(r.TargetGroupIDs)
+	targets := m.formatTargets(r.TargetGroupIDs)
 	updated := shared.RelativeTime(&r.LastUpdated, now)
 	if r.LastUpdated.IsZero() {
 		updated = "—"
 	}
-	return m.formatRulesColumns(status, r.Name, targets, updated)
+	expr := r.Expression
+	if expr == "" {
+		expr = "—"
+	}
+	return m.formatRulesColumns(status, r.Name, expr, targets, updated)
 }
 
-// formatTargets joins target group IDs for the TARGETS column. The service
-// layer resolves IDs→names (REQ-R03 AC-4); when only IDs are present we
-// surface them so operators still know how many groups are touched.
-func formatTargets(ids []string) string {
+// formatTargets joins target group IDs for the TARGETS column,
+// resolving IDs to group names via the in-process cache when
+// available (issue #163). Falls back to the raw ID when the cache
+// has no entry.
+func (m ListModel) formatTargets(ids []string) string {
 	if len(ids) == 0 {
 		return "—"
 	}
-	return strings.Join(ids, ", ")
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if name, ok := m.groupNames[id]; ok {
+			out = append(out, name)
+		} else {
+			out = append(out, id)
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
-// rulesColumnSpecs returns the §15.0a.4 column definitions in declaration
-// order: STATUS, NAME, TARGETS, UPDATED. Drop priorities (low first):
-// TARGETS (1) → UPDATED (2); STATUS / NAME never drop.
+// rulesColumnSpecs returns the column definitions:
+// STATUS, NAME, EXPRESSION, TARGETS, UPDATED. Drop priorities (low
+// first): EXPRESSION (1) → TARGETS (2) → UPDATED (3); STATUS / NAME
+// never drop.
 func rulesColumnSpecs() []shared.ColumnSpec {
 	return []shared.ColumnSpec{
 		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 10, DropPriority: 0, AlignCenter: true},
 		{Title: "NAME", Kind: shared.ColumnFlex, Min: 22, Weight: 2, DropPriority: 0},
-		{Title: "TARGETS", Kind: shared.ColumnFlex, Min: 16, Weight: 2, DropPriority: 1},
-		{Title: "UPDATED", Kind: shared.ColumnFixed, Min: 10, DropPriority: 2, AlignRight: true},
+		{Title: "EXPRESSION", Kind: shared.ColumnFlex, Min: 24, Weight: 3, DropPriority: 1},
+		{Title: "TARGETS", Kind: shared.ColumnFlex, Min: 16, Weight: 2, DropPriority: 2},
+		{Title: "UPDATED", Kind: shared.ColumnFixed, Min: 10, DropPriority: 3, AlignRight: true},
 	}
 }
 
@@ -763,6 +801,47 @@ func renderRuleDetail(r domain.GroupRule) string {
 	b.WriteString("\n⚠ Deactivating this rule would remove all memberships it created.\n")
 	b.WriteString("   This action is disabled in read-only mode.\n")
 	return b.String()
+}
+
+// groupNamesLoadedMsg delivers the id→name resolution for the
+// TARGETS column (issue #163).
+type groupNamesLoadedMsg struct{ names map[string]string }
+
+// collectTargetGroupIDs deduplicates target group IDs across all
+// rules so the resolution Cmd issues exactly one Get per group.
+func collectTargetGroupIDs(rules []domain.GroupRule) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, r := range rules {
+		for _, id := range r.TargetGroupIDs {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// fetchGroupNamesCmd resolves a batch of group IDs to display names
+// via GroupsPort.Get. Errors per-id are silently dropped — the
+// caller renders the bare ID for any unresolved entry.
+func fetchGroupNamesCmd(port domain.GroupsPort, ids []string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		out := make(map[string]string, len(ids))
+		for _, id := range ids {
+			g, err := port.Get(ctx, id)
+			if err != nil {
+				continue
+			}
+			if g.Profile.Name != "" {
+				out[id] = g.Profile.Name
+			}
+		}
+		return groupNamesLoadedMsg{names: out}
+	}
 }
 
 // --- Cmd factories -----------------------------------------------------------

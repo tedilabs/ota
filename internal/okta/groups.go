@@ -98,6 +98,9 @@ func buildGroupsQuery(q domain.GroupsQuery) string {
 	if q.After != "" {
 		v.Set("after", q.After)
 	}
+	// expand=stats wires the _embedded.stats.usersCount the list
+	// surfaces in the MEMBERS column (issue #161).
+	v.Set("expand", "stats")
 	return "?" + v.Encode()
 }
 

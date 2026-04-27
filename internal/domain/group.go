@@ -23,6 +23,10 @@ type Group struct {
 	// (the RULE badge in REQ-R02 AC-1). Derived at runtime, not returned by the
 	// Okta API directly.
 	DynamicTargeted bool
+	// MemberCount carries _embedded.stats.usersCount when the list
+	// query enables expand=stats (issue #161). nil means "unknown"
+	// — render "—" in the list rather than "0".
+	MemberCount *int
 }
 
 // GroupProfile carries the human-facing fields of a group.
