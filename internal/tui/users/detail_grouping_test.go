@@ -63,29 +63,41 @@ func Test_UsersDetail_PrettyMode_GroupsByOktaSection(t *testing.T) {
 
 	view := renderDetailFor(t, detailFixture())
 
-	// All four section headers must surface.
-	for _, h := range []string{"Identity", "Contact", "Organization", "Custom"} {
+	// All six section headers must surface (issue #140 added Status
+	// at the top and split Address from Contact).
+	for _, h := range []string{"Status", "Identity", "Contact", "Address", "Organization", "Custom"} {
 		assert.Containsf(t, view, h, "Pretty mode must render %q section header", h)
 	}
 
-	// Sanity: standard fields land in their named section. We assert
-	// ordering by index — Identity first, Custom last.
+	// Section order: Status first, Custom last; Address sits between
+	// Contact and Organization.
+	idxStatus := strings.Index(view, "Status")
 	idxIdentity := strings.Index(view, "Identity")
 	idxContact := strings.Index(view, "Contact")
+	idxAddress := strings.Index(view, "Address")
 	idxOrg := strings.Index(view, "Organization")
 	idxCustom := strings.Index(view, "Custom")
-	require.GreaterOrEqual(t, idxIdentity, 0)
+	require.GreaterOrEqual(t, idxStatus, 0)
+	require.Greater(t, idxIdentity, idxStatus, "Status must come BEFORE Identity (issue #140)")
 	require.Greater(t, idxContact, idxIdentity)
-	require.Greater(t, idxOrg, idxContact)
+	require.Greater(t, idxAddress, idxContact, "Address must come AFTER Contact")
+	require.Greater(t, idxOrg, idxAddress, "Organization must come AFTER Address")
 	require.Greater(t, idxCustom, idxOrg)
 
-	// Okta-standard Extras keys must land BEFORE the Custom header.
-	for _, k := range []string{"city", "state", "manager"} {
+	// Address-class Extras land in the Address section, between
+	// Contact and Organization.
+	for _, k := range []string{"city", "state"} {
 		idx := strings.Index(view, k)
 		require.GreaterOrEqual(t, idx, 0, "key %q must render", k)
-		assert.Less(t, idx, idxCustom,
-			"%q is an Okta-standard field — must land before the Custom section", k)
+		assert.Greater(t, idx, idxAddress, "%q must land under Address", k)
+		assert.Less(t, idx, idxOrg, "%q must land BEFORE Organization", k)
 	}
+
+	// Organization-class Extras (manager) land in Organization.
+	idxManager := strings.Index(view, "manager")
+	require.GreaterOrEqual(t, idxManager, 0)
+	assert.Greater(t, idxManager, idxOrg, "manager must land under Organization")
+	assert.Less(t, idxManager, idxCustom)
 
 	// Genuine custom fields must land AFTER the Custom header.
 	for _, k := range []string{"githubId", "startDate"} {
@@ -93,5 +105,37 @@ func Test_UsersDetail_PrettyMode_GroupsByOktaSection(t *testing.T) {
 		require.GreaterOrEqual(t, idx, 0, "key %q must render", k)
 		assert.Greater(t, idx, idxCustom,
 			"%q is a tenant-specific field — must sit under the Custom section", k)
+	}
+}
+
+// Test_UsersDetail_PrettyMode_OrganizationFixedOrder pins the
+// organization > division > department > title > manager >
+// employeeNumber sequence requested in issue #140 — even when the
+// underlying domain populates only a subset, the order of present
+// fields must reflect the spec.
+func Test_UsersDetail_PrettyMode_OrganizationFixedOrder(t *testing.T) {
+	t.Parallel()
+
+	view := renderDetailFor(t, detailFixture())
+	// Find positions inside the Organization slice.
+	orgStart := strings.Index(view, "Organization")
+	require.GreaterOrEqual(t, orgStart, 0)
+	custStart := strings.Index(view, "Custom")
+	if custStart < 0 {
+		custStart = len(view)
+	}
+	orgSlice := view[orgStart:custStart]
+
+	// Every field present in the fixture must appear in the canonical
+	// order: division, department, title, manager, employeeNumber.
+	// (The fixture omits "organization" so we skip it here.)
+	canonical := []string{"division", "department", "title", "manager", "employeeNumber"}
+	prev := -1
+	for _, k := range canonical {
+		idx := strings.Index(orgSlice, k)
+		require.GreaterOrEqual(t, idx, 0, "expected %q inside Organization slice", k)
+		assert.Greaterf(t, idx, prev,
+			"%q must appear AFTER the previous canonical field (issue #140)", k)
+		prev = idx
 	}
 }

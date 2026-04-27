@@ -152,12 +152,23 @@ func renderTabBar(active DetailTab) string {
 }
 
 // renderProfileTab groups the user's profile attributes into semantic
-// sections — Identity / Contact / Organization / Status / Custom —
-// rather than dumping every extra field under a single "Custom"
-// header (issue #130). The named domain fields are placed into their
-// section first; the Extras map is then partitioned by key against
-// the Okta-standard schema so address blocks and manager metadata
-// land alongside their kin instead of polluting Custom.
+// sections — Status / Identity / Contact / Address / Organization /
+// Custom (issues #130 + #140). Section order, internal field order,
+// and partition rules are all explicit so the rendering is stable
+// across runs and easy to scan.
+//
+//	Status        status + lifecycle timestamps (created, activated,
+//	              statusChanged, lastLogin, lastUpdated, passwordChanged)
+//	Identity      login / email / firstName / lastName / displayName
+//	              / nickName + identity-class Extras
+//	Contact       mobilePhone / primaryPhone / secondEmail + locale-ish
+//	              extras (preferredLanguage / locale / timezone)
+//	Address       streetAddress / city / state / zipCode / countryCode /
+//	              postalAddress
+//	Organization  organization / division / department / title /
+//	              manager / employeeNumber (fixed order per #140) +
+//	              org-class Extras (costCenter / userType / managerId)
+//	Custom        anything we don't recognise as Okta-standard
 func (m DetailModel) renderProfileTab() string {
 	u := m.user
 	const keyWidth = 16
@@ -166,7 +177,16 @@ func (m DetailModel) renderProfileTab() string {
 	tk := activeTokens()
 	statusCell := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
 
-	// section -> ordered (key, formatted-value) pairs.
+	// --- Status (top, issue #140) ---------------------------------------
+	statusKV := orderedKV{}
+	statusKV.add("status", statusCell)
+	statusKV.add("created", formatTime(&u.Created))
+	statusKV.add("activated", formatTimePtr(u.Activated))
+	statusKV.add("statusChanged", formatTimePtr(u.StatusChanged))
+	statusKV.add("lastLogin", formatTimePtr(u.LastLogin))
+	statusKV.add("lastUpdated", formatTime(&u.LastUpdated))
+	statusKV.add("passwordChanged", formatTimePtr(u.PasswordChanged))
+
 	identity := orderedKV{}
 	identity.add("login", u.Profile.Login)
 	identity.add("email", u.Profile.Email)
@@ -183,18 +203,22 @@ func (m DetailModel) renderProfileTab() string {
 		contact.add("secondEmail", maskedField("secondEmail", v, m.unmasked, mask.Email))
 	}
 
+	address := orderedKV{}
+
+	// --- Organization in fixed order per #140 ---------------------------
+	// organization > division > department > title > manager >
+	// employeeNumber. Domain fields populate first; Extras-sourced
+	// values append after their named slot via the partition below.
 	organization := orderedKV{}
-	organization.add("title", u.Profile.Title)
+	// Pre-load the named domain fields in spec order; Extras may push
+	// additional rows for organization / manager which the domain
+	// doesn't carry today.
 	organization.add("division", u.Profile.Division)
 	organization.add("department", u.Profile.Department)
+	organization.add("title", u.Profile.Title)
 	organization.add("employeeNumber", u.Profile.EmployeeNumber)
 
-	status := orderedKV{}
-	status.add("status", statusCell)
-
 	custom := orderedKV{}
-	// Partition Extras by classifying each key against the Okta
-	// standard schema. Anything we don't recognise drops into Custom.
 	if len(u.Profile.Extras) > 0 {
 		extraKeys := make([]string, 0, len(u.Profile.Extras))
 		for k := range u.Profile.Extras {
@@ -208,6 +232,8 @@ func (m DetailModel) renderProfileTab() string {
 				identity.add(k, val)
 			case sectionContact:
 				contact.add(k, val)
+			case sectionAddress:
+				address.add(k, val)
 			case sectionOrganization:
 				organization.add(k, val)
 			default:
@@ -215,6 +241,11 @@ func (m DetailModel) renderProfileTab() string {
 			}
 		}
 	}
+
+	// Re-order Organization so Extras-sourced "organization" /
+	// "manager" rows respect the spec sequence even though they
+	// arrived after the named domain fields.
+	organization = sortOrganization(organization)
 
 	var b strings.Builder
 	writeSection := func(title string, kv orderedKV, first *bool) {
@@ -234,12 +265,57 @@ func (m DetailModel) renderProfileTab() string {
 	}
 
 	first := true
+	writeSection("Status", statusKV, &first)
 	writeSection("Identity", identity, &first)
 	writeSection("Contact", contact, &first)
+	writeSection("Address", address, &first)
 	writeSection("Organization", organization, &first)
-	writeSection("Status", status, &first)
 	writeSection("Custom", custom, &first)
 	return b.String()
+}
+
+// formatTime / formatTimePtr render Okta timestamps in a stable,
+// operator-friendly format. Empty / zero values come back as "" so
+// orderedKV.add skips them and the Status section doesn't pad with
+// blank rows for users that are missing fields like passwordChanged.
+func formatTime(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format("2006-01-02 15:04:05Z")
+}
+
+func formatTimePtr(t *time.Time) string { return formatTime(t) }
+
+// sortOrganization re-shuffles an Organization orderedKV so its rows
+// appear in the spec sequence (organization > division > department >
+// title > manager > employeeNumber). Anything outside the canonical
+// list keeps its existing order at the tail.
+func sortOrganization(in orderedKV) orderedKV {
+	canonical := []string{
+		"organization", "division", "department",
+		"title", "manager", "employeeNumber",
+	}
+	rank := make(map[string]int, len(canonical))
+	for i, k := range canonical {
+		rank[k] = i
+	}
+	out := orderedKV{}
+	for _, k := range canonical {
+		for _, p := range in.pairs {
+			if p.key == k {
+				out.pairs = append(out.pairs, p)
+				break
+			}
+		}
+	}
+	for _, p := range in.pairs {
+		if _, ok := rank[p.key]; ok {
+			continue
+		}
+		out.pairs = append(out.pairs, p)
+	}
+	return out
 }
 
 // orderedKV is a tiny helper that captures key/value pairs in
@@ -269,21 +345,21 @@ func maskedField(field, raw string, unmasked map[string]bool, masker func(string
 }
 
 // detailSection enumerates the Pretty-mode buckets that classify
-// Okta-standard profile keys (issue #130).
+// Okta-standard profile keys (issues #130 + #140).
 type detailSection int
 
 const (
 	sectionCustom detailSection = iota
 	sectionIdentity
 	sectionContact
+	sectionAddress
 	sectionOrganization
 )
 
 // sectionForOktaKey maps an Okta profile key (camelCase as the API
-// returns it) to the Pretty-mode section it belongs in. Unrecognised
-// keys land in Custom — matching the semantics the user asked for:
-// "githubId / startDate stay in Custom, the standard Okta address +
-// org fields cluster with their kin."
+// returns it) to the Pretty-mode section it belongs in. Address
+// fields split out of Contact per issue #140 ("Contact에서 Address
+// 섹션 따로 분리해줘").
 func sectionForOktaKey(k string) detailSection {
 	switch k {
 	case "login", "email", "firstName", "lastName", "middleName",
@@ -291,9 +367,11 @@ func sectionForOktaKey(k string) detailSection {
 		"profileUrl":
 		return sectionIdentity
 	case "mobilePhone", "primaryPhone", "secondEmail",
-		"streetAddress", "city", "state", "zipCode", "countryCode",
-		"postalAddress", "preferredLanguage", "locale", "timezone":
+		"preferredLanguage", "locale", "timezone":
 		return sectionContact
+	case "streetAddress", "city", "state", "zipCode", "countryCode",
+		"postalAddress":
+		return sectionAddress
 	case "organization", "division", "department", "costCenter",
 		"title", "userType", "employeeNumber",
 		"manager", "managerId":
