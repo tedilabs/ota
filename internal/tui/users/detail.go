@@ -151,84 +151,155 @@ func renderTabBar(active DetailTab) string {
 	return strings.Join(parts, " ")
 }
 
-// renderProfileTab is the v0.1.0 Profile body, kept verbatim.
+// renderProfileTab groups the user's profile attributes into semantic
+// sections — Identity / Contact / Organization / Status / Custom —
+// rather than dumping every extra field under a single "Custom"
+// header (issue #130). The named domain fields are placed into their
+// section first; the Extras map is then partitioned by key against
+// the Okta-standard schema so address blocks and manager metadata
+// land alongside their kin instead of polluting Custom.
 func (m DetailModel) renderProfileTab() string {
 	u := m.user
 	const keyWidth = 16
-	var b strings.Builder
+	const sectionWidth = 56
 
-	b.WriteString(shared.KVRow("login", u.Profile.Login, keyWidth))
-	b.WriteByte('\n')
-	if u.Profile.Email != "" {
-		b.WriteString(shared.KVRow("email", u.Profile.Email, keyWidth))
-		b.WriteByte('\n')
-	}
-	if u.Profile.FirstName != "" {
-		b.WriteString(shared.KVRow("firstName", u.Profile.FirstName, keyWidth))
-		b.WriteByte('\n')
-	}
-	if u.Profile.LastName != "" {
-		b.WriteString(shared.KVRow("lastName", u.Profile.LastName, keyWidth))
-		b.WriteByte('\n')
-	}
-	if u.Profile.DisplayName != "" {
-		b.WriteString(shared.KVRow("displayName", u.Profile.DisplayName, keyWidth))
-		b.WriteByte('\n')
-	}
 	tk := activeTokens()
 	statusCell := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
-	b.WriteString(shared.KVRow("status", statusCell, keyWidth))
-	b.WriteByte('\n')
 
+	// section -> ordered (key, formatted-value) pairs.
+	identity := orderedKV{}
+	identity.add("login", u.Profile.Login)
+	identity.add("email", u.Profile.Email)
+	identity.add("firstName", u.Profile.FirstName)
+	identity.add("lastName", u.Profile.LastName)
+	identity.add("displayName", u.Profile.DisplayName)
+	identity.add("nickName", u.Profile.NickName)
+
+	contact := orderedKV{}
 	if v := u.Profile.MobilePhone; v != "" {
-		val := mask.Phone(v)
-		hint := "<- masked · :unmask mobilePhone"
-		if m.unmasked["mobilePhone"] {
-			val = v + "  [M!]"
-			hint = ""
-		}
-		row := shared.KVRow("mobilePhone", val, keyWidth)
-		if hint != "" {
-			row = row + "       " + hint
-		}
-		b.WriteString(row)
-		b.WriteByte('\n')
+		contact.add("mobilePhone", maskedField("mobilePhone", v, m.unmasked, mask.Phone))
 	}
 	if v := u.Profile.SecondEmail; v != "" {
-		val := mask.Email(v)
-		hint := "<- masked"
-		if m.unmasked["secondEmail"] {
-			val = v + "  [M!]"
-			hint = ""
-		}
-		row := shared.KVRow("secondEmail", val, keyWidth)
-		if hint != "" {
-			row = row + "    " + hint
-		}
-		b.WriteString(row)
-		b.WriteByte('\n')
+		contact.add("secondEmail", maskedField("secondEmail", v, m.unmasked, mask.Email))
 	}
 
+	organization := orderedKV{}
+	organization.add("title", u.Profile.Title)
+	organization.add("division", u.Profile.Division)
+	organization.add("department", u.Profile.Department)
+	organization.add("employeeNumber", u.Profile.EmployeeNumber)
+
+	status := orderedKV{}
+	status.add("status", statusCell)
+
+	custom := orderedKV{}
+	// Partition Extras by classifying each key against the Okta
+	// standard schema. Anything we don't recognise drops into Custom.
 	if len(u.Profile.Extras) > 0 {
-		b.WriteByte('\n')
-		b.WriteString(shared.SectionHeader("Custom fields", 56))
-		b.WriteByte('\n')
-		// Sort keys so the order is stable across renders. Without this
-		// Go's map iteration randomises every keypress, which the user
-		// reported as "Pretty 뷰에서 무슨 키를 눌러도 custom field
-		// 섹션이 계속 움직임" (issue #108).
 		extraKeys := make([]string, 0, len(u.Profile.Extras))
 		for k := range u.Profile.Extras {
 			extraKeys = append(extraKeys, k)
 		}
 		sort.Strings(extraKeys)
 		for _, k := range extraKeys {
-			b.WriteString(shared.KVRow(k, formatExtra(u.Profile.Extras[k]), keyWidth))
-			b.WriteByte('\n')
+			val := formatExtra(u.Profile.Extras[k])
+			switch sectionForOktaKey(k) {
+			case sectionIdentity:
+				identity.add(k, val)
+			case sectionContact:
+				contact.add(k, val)
+			case sectionOrganization:
+				organization.add(k, val)
+			default:
+				custom.add(k, val)
+			}
 		}
 	}
 
+	var b strings.Builder
+	writeSection := func(title string, kv orderedKV, first *bool) {
+		if kv.empty() {
+			return
+		}
+		if !*first {
+			b.WriteByte('\n')
+		}
+		b.WriteString(shared.SectionHeader(title, sectionWidth))
+		b.WriteByte('\n')
+		for _, p := range kv.pairs {
+			b.WriteString(shared.KVRow(p.key, p.value, keyWidth))
+			b.WriteByte('\n')
+		}
+		*first = false
+	}
+
+	first := true
+	writeSection("Identity", identity, &first)
+	writeSection("Contact", contact, &first)
+	writeSection("Organization", organization, &first)
+	writeSection("Status", status, &first)
+	writeSection("Custom", custom, &first)
 	return b.String()
+}
+
+// orderedKV is a tiny helper that captures key/value pairs in
+// insertion order while skipping empty values — the Pretty view
+// only renders fields the operator actually has data for.
+type orderedKV struct {
+	pairs []kvPair
+}
+type kvPair struct{ key, value string }
+
+func (o *orderedKV) add(k, v string) {
+	if v == "" {
+		return
+	}
+	o.pairs = append(o.pairs, kvPair{key: k, value: v})
+}
+func (o orderedKV) empty() bool { return len(o.pairs) == 0 }
+
+// maskedField returns the value Pretty mode should display for a PII
+// field — masked by default, raw with a `[M!]` tag once the operator
+// has run `:unmask <field>` for the current session.
+func maskedField(field, raw string, unmasked map[string]bool, masker func(string) string) string {
+	if unmasked[field] {
+		return raw + "  [M!]"
+	}
+	return masker(raw) + "  <- masked · :unmask " + field
+}
+
+// detailSection enumerates the Pretty-mode buckets that classify
+// Okta-standard profile keys (issue #130).
+type detailSection int
+
+const (
+	sectionCustom detailSection = iota
+	sectionIdentity
+	sectionContact
+	sectionOrganization
+)
+
+// sectionForOktaKey maps an Okta profile key (camelCase as the API
+// returns it) to the Pretty-mode section it belongs in. Unrecognised
+// keys land in Custom — matching the semantics the user asked for:
+// "githubId / startDate stay in Custom, the standard Okta address +
+// org fields cluster with their kin."
+func sectionForOktaKey(k string) detailSection {
+	switch k {
+	case "login", "email", "firstName", "lastName", "middleName",
+		"honorificPrefix", "honorificSuffix", "displayName", "nickName",
+		"profileUrl":
+		return sectionIdentity
+	case "mobilePhone", "primaryPhone", "secondEmail",
+		"streetAddress", "city", "state", "zipCode", "countryCode",
+		"postalAddress", "preferredLanguage", "locale", "timezone":
+		return sectionContact
+	case "organization", "division", "department", "costCenter",
+		"title", "userType", "employeeNumber",
+		"manager", "managerId":
+		return sectionOrganization
+	}
+	return sectionCustom
 }
 
 // renderRawTab returns the §15.7 v1.2.0 Raw JSON tab content. The user
