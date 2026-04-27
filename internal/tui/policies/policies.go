@@ -402,35 +402,89 @@ func (m ListModel) renderPolicyRow(p domain.Policy, now time.Time, tk shared.Tok
 //   - W ≥ 120 / 0 : PRI, STATUS, NAME, SYSTEM, UPDATED
 //   - 100..119    : drop UPDATED
 //   - 90..99      : drop UPDATED + SYSTEM
-//   - 80..89      : PRI + STATUS + NAME (NAME shorter)
-//   - <80         : PRI + STATUS + NAME (very short)
+// Issue #157: ports policies onto the shared column-spec system so
+// rows auto-fit observed data widths the same way Users does.
 func (m ListModel) formatPoliciesColumns(pri, status, name, system, updated string) string {
-	w := m.width
-	const (
-		wPri     = 4
-		wStatus  = 14
-		wName    = 30
-		wSystem  = 6
-		wUpdated = 10
-	)
-	switch {
-	case w >= 120 || w == 0:
-		return padLeftP(pri, wPri) + "  " + padRightP(status, wStatus) + "  " +
-			padRightP(name, wName) + "  " + padRightP(system, wSystem) + "  " +
-			padLeftP(updated, wUpdated)
-	case w >= 100:
-		return padLeftP(pri, wPri) + "  " + padRightP(status, wStatus) + "  " +
-			padRightP(name, wName) + "  " + padRightP(system, wSystem)
-	case w >= 90:
-		return padLeftP(pri, wPri) + "  " + padRightP(status, wStatus) + "  " +
-			padRightP(name, wName)
-	case w >= 80:
-		return padLeftP(pri, wPri) + "  " + padRightP(status, wStatus) + "  " +
-			padRightP(name, max(0, w-22))
-	default:
-		return padLeftP(pri, wPri) + "  " + padRightP(status, wStatus) + "  " +
-			padRightP(name, max(0, w-22))
+	specs := policiesColumnSpecs()
+	specs = shared.ShrinkSpecsToFit(specs, m.observedColumnWidths())
+	widths := m.policiesWidths(specs)
+	cells := []string{pri, status, name, system, updated}
+	full := make([]string, len(specs))
+	for i := range specs {
+		if i < len(cells) {
+			full[i] = cells[i]
+		} else {
+			full[i] = "—"
+		}
 	}
+	return shared.FormatRow(specs, widths, full, 2)
+}
+
+func policiesColumnSpecs() []shared.ColumnSpec {
+	return []shared.ColumnSpec{
+		{Title: "PRI", Kind: shared.ColumnFixed, Min: 4, DropPriority: 0, AlignRight: true},
+		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 10, DropPriority: 0, AlignCenter: true},
+		{Title: "NAME", Kind: shared.ColumnFlex, Min: 22, Weight: 3, DropPriority: 0},
+		{Title: "SYSTEM", Kind: shared.ColumnFixed, Min: 6, DropPriority: 1, AlignCenter: true},
+		{Title: "UPDATED", Kind: shared.ColumnFixed, Min: 10, DropPriority: 2, AlignRight: true},
+	}
+}
+
+// policiesWidths picks the layout — tight first, hScroll fallback —
+// matching the Users approach (issue #138).
+func (m ListModel) policiesWidths(specs []shared.ColumnSpec) []int {
+	inner := m.policiesInnerWidth()
+	if w := shared.LayoutColumnsTight(specs, inner, 2); w != nil {
+		return w
+	}
+	return shared.LayoutColumnsHScroll(specs, inner, 2, 0)
+}
+
+func (m ListModel) policiesInnerWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	inner := w - 2 - 1 - 2
+	if inner < 20 {
+		inner = 20
+	}
+	return inner
+}
+
+// observedColumnWidths returns the widest observed-cell width per
+// column across the visible policies. Powers ShrinkSpecsToFit so
+// columns auto-fit to actual data instead of padding to declared Min.
+func (m ListModel) observedColumnWidths() []int {
+	if len(m.policies) == 0 {
+		return nil
+	}
+	now := m.now()
+	tk := activeTokens()
+	out := make([]int, 5)
+	for _, p := range m.policies {
+		pri := itoa(p.Priority)
+		status := shared.PolicyStatusBadge(string(p.Status), tk).Render(tk)
+		name := p.Name
+		system := ""
+		if p.System {
+			system = "[SYS]"
+		}
+		updated := shared.RelativeTime(&p.LastUpdated, now)
+		if p.LastUpdated.IsZero() {
+			updated = "—"
+		}
+		cells := []string{pri, status, name, system, updated}
+		for i, c := range cells {
+			if w := shared.VisibleWidth(c); w > out[i] {
+				out[i] = w
+			}
+		}
+	}
+	return out
 }
 
 // padRightP / padLeftP / visibleLenP / max are local helpers mirroring the

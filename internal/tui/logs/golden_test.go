@@ -85,16 +85,17 @@ func Test_LogsDetailGolden_Default(t *testing.T) {
 
 // --- Spec lock-in (Active, Fail-First) --------------------------------------
 
-// Test_LogsList_HasColumnHeaders locks in TUI_DESIGN §16.8: WHEN / SEV /
-// EVENTTYPE / ACTOR / OUTCOME / IP. Today's View prints PUBLISHED / SEV /
-// EVENT / ACTOR — the expected `WHEN` / `EVENTTYPE` / `OUTCOME` / `IP`
-// rename comes from the spec.
+// Test_LogsList_HasColumnHeaders pins the v0.1.12 column lineup
+// (issue #158): PUBLISHED / SEV / MESSAGE / ACTOR TYPE / ACTOR /
+// OUTCOME / IP / WHEN.
 func Test_LogsList_HasColumnHeaders(t *testing.T) {
 	t.Parallel()
-	m := logs.NewSearchModel(logs.Deps{InitialEvents: sampleLogsFixture(), Width: 120, Height: 30})
+	m := logs.NewSearchModel(logs.Deps{InitialEvents: sampleLogsFixture(), Width: 200, Height: 30})
 	got := testfx.StripANSI(m.View())
-	for _, h := range []string{"WHEN", "SEV", "EVENTTYPE", "ACTOR", "OUTCOME", "IP"} {
-		assert.Contains(t, got, h, "Logs list must show %q column header (TUI_DESIGN §16.8)", h)
+	for _, h := range []string{
+		"PUBLISHED", "SEV", "MESSAGE", "ACTOR TYPE", "ACTOR", "OUTCOME", "IP", "WHEN",
+	} {
+		assert.Contains(t, got, h, "Logs list must show %q column header (issue #158)", h)
 	}
 }
 

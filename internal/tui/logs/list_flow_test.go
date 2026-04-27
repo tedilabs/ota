@@ -45,15 +45,17 @@ func Test_LogsSearchFlow_Render_ShowsEventType(t *testing.T) {
 	model := logs.NewSearchModel(logs.Deps{Service: svc, Clock: clock.NewFake(time.Now())})
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(120, 30))
 
+	// v0.1.12 (#158): the row's MESSAGE column prefers DisplayMsg
+	// over EventType so "User login" is what surfaces on screen.
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte("user.session.start"))
+		return bytes.Contains(b, []byte("User login"))
 	}, teatest.WithCheckInterval(10*time.Millisecond), teatest.WithDuration(2*time.Second))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 	out, err := io.ReadAll(tm.FinalOutput(t, teatest.WithFinalTimeout(3*time.Second)))
 	require.NoError(t, err)
-	require.Contains(t, string(out), "user.session.start",
-		"eventType이 리스트에 렌더 (REQ-R05 AC-1)")
+	require.Contains(t, string(out), "User login",
+		"DisplayMsg이 리스트의 MESSAGE 컬럼에 렌더 (REQ-R05 AC-1)")
 }
 
 // REQ-R05 AC-3 — `s` 키로 tail on/off 토글이 되어야 하고, on 상태에서 tail 인디케이터가 노출.

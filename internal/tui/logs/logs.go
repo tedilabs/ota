@@ -426,7 +426,9 @@ func (m SearchModel) View() string {
 	b.WriteByte('\n')
 	// 2-cell cursor gutter on the header keeps it aligned with data rows.
 	b.WriteString("  ")
-	b.WriteString(tk.Header.Render(m.formatLogsColumns("WHEN", "SEV", "EVENTTYPE", "ACTOR", "OUTCOME", "IP")))
+	b.WriteString(tk.Header.Render(m.formatLogsColumns(
+		"PUBLISHED", "SEV", "MESSAGE", "ACTOR TYPE", "ACTOR", "OUTCOME", "IP", "WHEN",
+	)))
 	b.WriteByte('\n')
 	rows := m.visible()
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
@@ -443,64 +445,163 @@ func (m SearchModel) View() string {
 	return b.String()
 }
 
-// renderLogsRow formats one event row.
+// renderLogsRow formats one event row in the issue #158 column
+// order: PUBLISHED > SEV > MESSAGE > ACTOR TYPE > ACTOR > OUTCOME
+// > IP > WHEN. MESSAGE prefers DisplayMsg (the human-friendly
+// summary Okta provides) and falls back to EventType when empty.
+// OUTCOME concatenates result + reason so "FAILURE - bad password"
+// reads inline.
 func (m SearchModel) renderLogsRow(e domain.LogEvent, now time.Time, tk shared.Tokens) string {
-	when := shared.RelativeTime(&e.Published, now)
-	if e.Published.IsZero() {
-		when = "—"
+	published := "—"
+	if !e.Published.IsZero() {
+		published = e.Published.UTC().Format("2006-01-02 15:04:05")
 	}
 	sev := shared.SeverityBadge(string(e.Severity), tk).Render(tk)
-	outcome := string(e.Outcome.Result)
-	if outcome == "" {
-		outcome = "—"
+	message := e.DisplayMsg
+	if message == "" {
+		message = e.EventType
+	}
+	actorType := string(e.Actor.Type)
+	if actorType == "" {
+		actorType = "—"
 	}
 	actor := e.Actor.DisplayName
 	if actor == "" {
 		actor = e.Actor.AlternateID
 	}
-	return m.formatLogsColumns(when, sev, e.EventType, actor, outcome, e.Client.IPAddress)
+	if actor == "" {
+		actor = "—"
+	}
+	outcome := string(e.Outcome.Result)
+	if outcome == "" {
+		outcome = "—"
+	}
+	if e.Outcome.Reason != "" {
+		outcome = outcome + " — " + e.Outcome.Reason
+	}
+	ip := e.Client.IPAddress
+	if ip == "" {
+		ip = "—"
+	}
+	when := shared.RelativeTime(&e.Published, now)
+	if e.Published.IsZero() {
+		when = "—"
+	}
+	return m.formatLogsColumns(published, sev, message, actorType, actor, outcome, ip, when)
 }
 
-// formatLogsColumns lays out 6 columns (TUI_DESIGN §15.6) with responsive
-// drop:
-//
-//   - W ≥ 120 : all 6 columns
-//   - 100..119: drop IP
-//   - 90..99  : drop IP + OUTCOME
-//   - 80..89  : drop IP + OUTCOME + ACTOR
-//   - <80     : WHEN + SEV + EVENTTYPE
-func (m SearchModel) formatLogsColumns(when, sev, etype, actor, outcome, ip string) string {
-	w := m.width
-	const (
-		wWhen    = 12
-		wSev     = 8
-		wEvent   = 24
-		wActor   = 18
-		wOutcome = 9
-		wIP      = 15
-	)
-	switch {
-	case w >= 120 || w == 0:
-		return padRightLog(when, wWhen) + "  " + padRightLog(sev, wSev) + "  " +
-			padRightLog(shared.Truncate(etype, wEvent), wEvent) + "  " +
-			padRightLog(shared.Truncate(actor, wActor), wActor) + "  " +
-			padRightLog(outcome, wOutcome) + "  " + padRightLog(ip, wIP)
-	case w >= 100:
-		return padRightLog(when, wWhen) + "  " + padRightLog(sev, wSev) + "  " +
-			padRightLog(shared.Truncate(etype, wEvent), wEvent) + "  " +
-			padRightLog(shared.Truncate(actor, wActor), wActor) + "  " +
-			padRightLog(outcome, wOutcome)
-	case w >= 90:
-		return padRightLog(when, wWhen) + "  " + padRightLog(sev, wSev) + "  " +
-			padRightLog(shared.Truncate(etype, wEvent), wEvent) + "  " +
-			padRightLog(shared.Truncate(actor, wActor), wActor)
-	case w >= 80:
-		return padRightLog(when, wWhen) + "  " + padRightLog(sev, wSev) + "  " +
-			padRightLog(shared.Truncate(etype, wEvent), wEvent)
-	default:
-		return padRightLog(when, wWhen) + "  " + padRightLog(sev, wSev) + "  " +
-			padRightLog(shared.Truncate(etype, max(0, w-22)), max(0, w-22))
+// formatLogsColumns lays out the 8-column row in the issue #158
+// order using the shared column-spec system (#157), so widths
+// auto-fit observed data the same way Users does.
+func (m SearchModel) formatLogsColumns(cells ...string) string {
+	specs := logsColumnSpecs()
+	specs = shared.ShrinkSpecsToFit(specs, m.observedColumnWidths())
+	widths := m.logsWidths(specs)
+	full := make([]string, len(specs))
+	for i := range specs {
+		if i < len(cells) {
+			full[i] = cells[i]
+		} else {
+			full[i] = "—"
+		}
 	}
+	return shared.FormatRow(specs, widths, full, 2)
+}
+
+// logsColumnSpecs — issue #158 order. Drop priorities degrade from
+// the right so PUBLISHED + MESSAGE stay visible longest.
+func logsColumnSpecs() []shared.ColumnSpec {
+	return []shared.ColumnSpec{
+		{Title: "PUBLISHED", Kind: shared.ColumnFixed, Min: 19, DropPriority: 0},
+		{Title: "SEV", Kind: shared.ColumnFixed, Min: 5, DropPriority: 0, AlignCenter: true},
+		{Title: "MESSAGE", Kind: shared.ColumnFlex, Min: 24, Weight: 3, DropPriority: 0},
+		{Title: "ACTOR TYPE", Kind: shared.ColumnFixed, Min: 12, DropPriority: 4},
+		{Title: "ACTOR", Kind: shared.ColumnFlex, Min: 16, Weight: 1, DropPriority: 5},
+		{Title: "OUTCOME", Kind: shared.ColumnFlex, Min: 12, Weight: 1, DropPriority: 3},
+		{Title: "IP", Kind: shared.ColumnFixed, Min: 13, DropPriority: 2},
+		{Title: "WHEN", Kind: shared.ColumnFixed, Min: 8, DropPriority: 1, AlignRight: true},
+	}
+}
+
+// logsWidths picks the layout — tight first, hScroll fallback.
+func (m SearchModel) logsWidths(specs []shared.ColumnSpec) []int {
+	inner := m.logsInnerWidth()
+	if w := shared.LayoutColumnsTight(specs, inner, 2); w != nil {
+		return w
+	}
+	return shared.LayoutColumnsHScroll(specs, inner, 2, 0)
+}
+
+func (m SearchModel) logsInnerWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	inner := w - 2 - 1 - 2
+	if inner < 20 {
+		inner = 20
+	}
+	return inner
+}
+
+// observedColumnWidths returns the widest cell width per column
+// across the visible event slice. Powers ShrinkSpecsToFit so logs
+// auto-fit observed data the same way Users does.
+func (m SearchModel) observedColumnWidths() []int {
+	rows := m.visible()
+	if len(rows) == 0 {
+		return nil
+	}
+	now := m.now()
+	tk := activeTokens()
+	out := make([]int, 8)
+	for _, e := range rows {
+		published := "—"
+		if !e.Published.IsZero() {
+			published = e.Published.UTC().Format("2006-01-02 15:04:05")
+		}
+		sev := shared.SeverityBadge(string(e.Severity), tk).Render(tk)
+		message := e.DisplayMsg
+		if message == "" {
+			message = e.EventType
+		}
+		actorType := string(e.Actor.Type)
+		if actorType == "" {
+			actorType = "—"
+		}
+		actor := e.Actor.DisplayName
+		if actor == "" {
+			actor = e.Actor.AlternateID
+		}
+		if actor == "" {
+			actor = "—"
+		}
+		outcome := string(e.Outcome.Result)
+		if outcome == "" {
+			outcome = "—"
+		}
+		if e.Outcome.Reason != "" {
+			outcome = outcome + " — " + e.Outcome.Reason
+		}
+		ip := e.Client.IPAddress
+		if ip == "" {
+			ip = "—"
+		}
+		when := shared.RelativeTime(&e.Published, now)
+		if e.Published.IsZero() {
+			when = "—"
+		}
+		cells := []string{published, sev, message, actorType, actor, outcome, ip, when}
+		for i, c := range cells {
+			if w := shared.VisibleWidth(c); w > out[i] {
+				out[i] = w
+			}
+		}
+	}
+	return out
 }
 
 func max(a, b int) int {

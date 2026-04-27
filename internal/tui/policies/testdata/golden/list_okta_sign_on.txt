@@ -1,5 +1,5 @@
 › OKTA_SIGN_ON
-   PRI  STATUS          NAME                            SYSTEM     UPDATED
-▸    1  ACTIVE          Default Policy                  [SYS]        never
-     2  ACTIVE          Require MFA for admins          -            never
-     3  INACTIVE        Legacy Contractor Rule          -            never
+   PRI   STATUS   NAME                    SYSTEM  UPDATED
+▸    1   ACTIVE   Default Policy          [SYS]     never
+     2   ACTIVE   Require MFA for admins    -       never
+     3  INACTIVE  Legacy Contractor Rule    -       never
