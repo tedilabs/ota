@@ -384,16 +384,20 @@ func detailScreenFor(kind string) (Screen, bool) {
 func (m Model) View() string {
 	tokens := activeTokens()
 
+	width := clampWidth(m.width)
+	bodyLines := clampBodyLines(m.height)
 	body := m.composeBody()
-	// Floating palette: when : is open the input box renders ABOVE the
-	// body — k9s-style, list still visible behind it (issue #123). Help
-	// still owns the full body via composeBody. QuitConfirm + other
-	// small overlays continue to append below the body.
+	// Floating palette / filter: render the input box as an overlay
+	// stamped onto the TOP of the body region — replaces the first
+	// few body lines instead of prepending and pushing the chrome
+	// off-screen (issue #129). The list stays visible behind the
+	// overlay, k9s-style, and the chrome's BodyLines budget is
+	// honored regardless of suggestion-list length.
 	switch {
 	case m.overlay == OverlayPalette:
-		body = m.renderPaletteBox(tokens) + "\n" + body
+		body = stampOverlayOnTop(m.renderPaletteBox(tokens, width-3), body)
 	case m.activeChildIsFiltering():
-		body = m.renderFilterBox(tokens) + "\n" + body
+		body = stampOverlayOnTop(m.renderFilterBox(tokens, width-3), body)
 		fallthrough
 	default:
 		if m.overlay != OverlayNone {
@@ -406,9 +410,6 @@ func (m Model) View() string {
 			}
 		}
 	}
-
-	width := clampWidth(m.width)
-	bodyLines := clampBodyLines(m.height)
 	chrome := shared.ChromeInput{
 		Tokens:    tokens,
 		Width:     width,
@@ -624,9 +625,9 @@ func (m Model) activeChildFilter() string {
 }
 
 // renderFilterBox builds the floating input box for `/` filter mode.
-// Sibling of renderPaletteBox; same chrome, different prompt and hint.
-func (m Model) renderFilterBox(tk shared.Tokens) string {
-	const innerWidth = 60
+// Sibling of renderPaletteBox — same chrome, different prompt — sized
+// to the data box width so the boxes line up vertically (issue #129).
+func (m Model) renderFilterBox(tk shared.Tokens, innerWidth int) string {
 	prompt := tk.Accent.Render("/")
 	input := ""
 	if child, ok := m.screens[m.active]; ok {
@@ -635,27 +636,25 @@ func (m Model) renderFilterBox(tk shared.Tokens) string {
 		}
 	}
 	cursor := tk.RowHighlight.Render(" ")
-	body := prompt + input + cursor
-	hint := tk.Muted.Render("<Enter> apply · <Esc> cancel")
-	return lipglossModalBox(body, hint, innerWidth, tk)
+	return modalBox(prompt+input+cursor, innerWidth, tk)
 }
 
-// renderPaletteBox builds the small framed input box that appears above
-// the body when : is open (issue #123). v0.1.5-4 added an inline
-// suggestion column under the prompt — Tab cycles, Enter accepts the
-// highlight (or the raw input when nothing is highlighted).
-func (m Model) renderPaletteBox(tk shared.Tokens) string {
-	const innerWidth = 60
+// renderPaletteBox builds the floating input box for the `:` palette.
+// The key-hint footer was dropped (issue #129) — discoverability lives
+// in the `?` modal, not on every palette press. Suggestions render
+// downward inside the same box, capped so the modal never grows
+// taller than maxPaletteHeight rows.
+func (m Model) renderPaletteBox(tk shared.Tokens, innerWidth int) string {
 	prompt := tk.Accent.Render(":")
 	input := m.paletteInput
 	cursor := tk.RowHighlight.Render(" ")
-	body := prompt + input + cursor
 
 	var b strings.Builder
-	b.WriteString(body)
+	b.WriteString(prompt + input + cursor)
 	if sugs := m.paletteSuggestions(); len(sugs) > 0 {
 		b.WriteByte('\n')
-		max := 6
+		const maxSugs = 6
+		max := maxSugs
 		if max > len(sugs) {
 			max = len(sugs)
 		}
@@ -676,8 +675,23 @@ func (m Model) renderPaletteBox(tk shared.Tokens) string {
 			b.WriteString(tk.Muted.Render("  … " + itoaSimple(len(sugs)-max) + " more"))
 		}
 	}
-	hint := tk.Muted.Render("<Tab>/<Shift-Tab> cycle · <Enter> run · <Esc> cancel")
-	return lipglossModalBox(b.String(), hint, innerWidth, tk)
+	return modalBox(b.String(), innerWidth, tk)
+}
+
+// stampOverlayOnTop replaces the first N lines of body with overlay's
+// lines (where N == overlay's line count). Used so the floating
+// palette / filter input boxes overlap the data body instead of
+// pushing it down — keeps the chrome's row budget honoured even when
+// the suggestion list is long (issue #134).
+func stampOverlayOnTop(overlay, body string) string {
+	overlayLines := strings.Split(overlay, "\n")
+	bodyLines := strings.Split(body, "\n")
+	out := make([]string, 0, len(bodyLines))
+	out = append(out, overlayLines...)
+	if len(overlayLines) < len(bodyLines) {
+		out = append(out, bodyLines[len(overlayLines):]...)
+	}
+	return strings.Join(out, "\n")
 }
 
 // itoaSimple is a tiny strconv shim local to app/ so renderPaletteBox
@@ -704,16 +718,20 @@ func itoaSimple(n int) string {
 	return string(buf[i:])
 }
 
-// lipglossModalBox renders a small two-line box with body on the first
-// line and hint on the second, using lipgloss.RoundedBorder. Centralised
-// here so the palette input shares chrome with the future filter prompt.
-func lipglossModalBox(body, hint string, innerWidth int, tk shared.Tokens) string {
+// modalBox renders a single rounded-border box of the given inner
+// width around body — no key-hint footer (issue #129; key
+// discoverability lives in the `?` modal). Used by both renderPaletteBox
+// and renderFilterBox so the palette and filter inputs share chrome.
+func modalBox(body string, innerWidth int, tk shared.Tokens) string {
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#5e81ac")).
 		Padding(0, 1).
 		Width(innerWidth)
-	return border.Render(body + "\n" + hint)
+	return border.Render(body)
 }
 
 // tenantFromOrgURL extracts the host segment from a tenant URL. Handles the
