@@ -390,10 +390,17 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"f", "toggle auto-follow"},
 			{"r", "toggle rich ↔ raw JSON"},
 		}
-	case "user-detail", "group-detail", "rule-detail":
+	case "user-detail", "rule-detail":
 		return []helpEntry{
 			{"Tab / Shift-Tab", "cycle detail tabs"},
 			{"r", "jump to / from [Raw] tab"},
+			{"Esc", "back to list"},
+		}
+	case "group-detail":
+		return []helpEntry{
+			{"Tab / Shift-Tab", "cycle detail tabs"},
+			{"r", "jump to / from [Raw] tab"},
+			{"m", "Members tab (lazy load)"},
 			{"Esc", "back to list"},
 		}
 	case "policy-detail", "log-detail":

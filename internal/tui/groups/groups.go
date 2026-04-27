@@ -80,6 +80,14 @@ type ListModel struct {
 	// hScroll — horizontal column offset (issue #122). h/l move the
 	// column slice when the natural row exceeds the viewport.
 	hScroll int
+	// detailMembers is the lazy-loaded member list rendered on the
+	// Members detail tab (issue #142). Nil until the operator visits
+	// the tab; once loaded, future Tab cycles re-show without
+	// re-fetching.
+	detailMembers       []domain.User
+	detailMembersGroup  string // group ID the cached list belongs to
+	detailMembersErr    error
+	detailMembersLoaded bool
 }
 
 // GroupDetailTab indexes the Group Detail tab bar. v0.1.2 collapsed the
@@ -92,6 +100,11 @@ const (
 	GroupDetailTabPretty GroupDetailTab = iota
 	GroupDetailTabJSON
 	GroupDetailTabYAML
+	// GroupDetailTabMembers lists the users that belong to this group
+	// (issue #142). Populated lazily — entering the tab fires a Cmd
+	// against GroupsPort.Members; the result lands on the model via
+	// groupMembersLoadedMsg.
+	GroupDetailTabMembers
 )
 
 const (
@@ -99,11 +112,22 @@ const (
 	GroupDetailTabRaw     = GroupDetailTabJSON
 )
 
-var groupDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
+var groupDetailTabLabels = []string{"Pretty", "JSON", "YAML", "Members"}
 var groupDetailTabCount = GroupDetailTab(len(groupDetailTabLabels))
 
 // groupsErrMsg surfaces a fetch failure to View() (TUI_DESIGN §17).
 type groupsErrMsg struct{ err error }
+
+// groupMembersLoadedMsg / groupMembersErrMsg deliver the result of a
+// Group Detail Members tab fetch (issue #142).
+type groupMembersLoadedMsg struct {
+	groupID string
+	members []domain.User
+}
+type groupMembersErrMsg struct {
+	groupID string
+	err     error
+}
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
@@ -137,6 +161,22 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case groupsErrMsg:
 		m.lastErr = msg.err
 		return m, nil
+	case groupMembersLoadedMsg:
+		// Only accept if it matches the currently-open group — a stale
+		// fetch from a previously-opened detail must not overwrite.
+		if m.opened && m.detail.ID == msg.groupID {
+			m.detailMembers = msg.members
+			m.detailMembersGroup = msg.groupID
+			m.detailMembersErr = nil
+			m.detailMembersLoaded = true
+		}
+		return m, nil
+	case groupMembersErrMsg:
+		if m.opened && m.detail.ID == msg.groupID {
+			m.detailMembersErr = msg.err
+			m.detailMembersLoaded = true
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -157,15 +197,25 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detail = domain.Group{}
 			m.detailTab = GroupDetailTabProfile
 			m.detailRawReturn = GroupDetailTabProfile
+			m.detailMembers = nil
+			m.detailMembersGroup = ""
+			m.detailMembersErr = nil
+			m.detailMembersLoaded = false
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = (m.detailTab + 1) % groupDetailTabCount
-			return m, nil
+			return m.maybeFetchMembers()
 		case tea.KeyShiftTab:
 			m.detailTab = (m.detailTab + groupDetailTabCount - 1) % groupDetailTabCount
-			return m, nil
+			return m.maybeFetchMembers()
 		case tea.KeyRunes:
-			if string(msg.Runes) == "r" {
+			runes := string(msg.Runes)
+			if runes == "m" {
+				// Direct shortcut to the Members tab (issue #142).
+				m.detailTab = GroupDetailTabMembers
+				return m.maybeFetchMembers()
+			}
+			if runes == "r" {
 				if m.detailTab == GroupDetailTabRaw {
 					m.detailTab = m.detailRawReturn
 				} else {
@@ -328,7 +378,8 @@ func (m *ListModel) cycleSort(target SortKey) {
 // Shell.
 func (m ListModel) View() string {
 	if m.opened {
-		return renderGroupDetailTabbed(m.detail, m.detailTab)
+		return renderGroupDetailTabbed(m.detail, m.detailTab,
+			m.detailMembers, m.detailMembersLoaded, m.detailMembersErr)
 	}
 	if m.lastErr != nil {
 		return "Groups  (error)\n" + shared.ErrorPanel("groups", m.lastErr)
@@ -588,13 +639,15 @@ func (m DetailModel) Init() tea.Cmd { return nil }
 func (m DetailModel) Update(_ tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
 
 // View renders the group detail with profile + type + membership hint.
-func (m DetailModel) View() string { return renderGroupDetailTabbed(m.group, GroupDetailTabProfile) }
+func (m DetailModel) View() string {
+	return renderGroupDetailTabbed(m.group, GroupDetailTabProfile, nil, false, nil)
+}
 
 // renderGroupDetailTabbed wraps the legacy single-surface view with a
-// §15.7 v1.2.0 tab bar. The Profile tab body remains the v0.1.0 layout;
-// the Raw tab serialises domain.Group as JSON. Other tabs (Members /
-// Apps / Rules) surface a placeholder note until v0.2 fills them.
-func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab) string {
+// §15.7 v1.2.0 tab bar. Pretty / JSON / YAML tabs render off the
+// passed group; the Members tab renders the (lazily fetched) member
+// list passed in via members + loaded.
+func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab, members []domain.User, loaded bool, memberErr error) string {
 	var b strings.Builder
 	b.WriteString("Group Detail\n")
 	b.WriteString(renderGroupTabBar(active))
@@ -606,10 +659,72 @@ func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab) string {
 		b.WriteString(renderGroupRawTab(g))
 	case GroupDetailTabYAML:
 		b.WriteString(renderGroupYAMLTab(g))
+	case GroupDetailTabMembers:
+		b.WriteString(renderGroupMembersTab(members, loaded, memberErr))
 	default:
 		b.WriteString(renderGroupDetail(g))
 	}
 	return b.String()
+}
+
+// renderGroupMembersTab renders the lazily-fetched member list for
+// the Members detail tab (issue #142). Three states:
+//
+//   - !loaded && err == nil: "loading…"
+//   - err != nil: ErrorPanel with the failure detail
+//   - loaded: a column table of members (status badge + login)
+func renderGroupMembersTab(members []domain.User, loaded bool, err error) string {
+	if err != nil {
+		return shared.ErrorPanel("group members", err) + "\n"
+	}
+	if !loaded {
+		return "loading members…\n"
+	}
+	if len(members) == 0 {
+		return "(group has no members)\n"
+	}
+	tk := activeTokens()
+	var b strings.Builder
+	b.WriteString("Members  ")
+	b.WriteString(itoaG(len(members)))
+	b.WriteByte('\n')
+	for _, u := range members {
+		status := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
+		login := u.Profile.Login
+		if login == "" {
+			login = u.ID
+		}
+		b.WriteString("  ")
+		b.WriteString(status)
+		b.WriteString("  ")
+		b.WriteString(login)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// itoaG is a tiny strconv shim local to groups (matches itoa shims
+// in the other list packages — keeps strconv out of the import set).
+func itoaG(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 // renderGroupYAMLTab marshals the same groupJSONShape projection as the
@@ -742,6 +857,57 @@ func fetchGroupsCmd(port domain.GroupsPort) tea.Cmd {
 		}
 		return groupsLoadedMsg{groups: out}
 	}
+}
+
+// fetchGroupMembersCmd drains GroupsPort.Members for the given group
+// and returns a groupMembersLoadedMsg / groupMembersErrMsg. The
+// groupID is round-tripped through the message so a stale fetch from
+// a previously-opened detail can't overwrite the current one.
+func fetchGroupMembersCmd(port domain.GroupsPort, groupID string) tea.Cmd {
+	return func() tea.Msg {
+		if port == nil {
+			return groupMembersErrMsg{groupID: groupID, err: domain.ErrNotFound}
+		}
+		ctx := context.Background()
+		iter, err := port.Members(ctx, domain.GroupMembersQuery{GroupID: groupID, Limit: 200})
+		if err != nil {
+			return groupMembersErrMsg{groupID: groupID, err: err}
+		}
+		defer iter.Close()
+		var out []domain.User
+		for {
+			u, hasMore, err := iter.Next(ctx)
+			if err != nil {
+				return groupMembersErrMsg{groupID: groupID, err: err}
+			}
+			if !hasMore {
+				break
+			}
+			out = append(out, u)
+		}
+		return groupMembersLoadedMsg{groupID: groupID, members: out}
+	}
+}
+
+// maybeFetchMembers fires a Cmd to load the Members tab for the
+// currently-open group when (a) the operator is on the Members tab
+// and (b) the cache is empty or belongs to a different group. No-op
+// otherwise so flipping back to a previously-loaded Members view
+// doesn't burn rate-limit budget.
+func (m ListModel) maybeFetchMembers() (tea.Model, tea.Cmd) {
+	if m.detailTab != GroupDetailTabMembers {
+		return m, nil
+	}
+	if m.detailMembersGroup == m.detail.ID && m.detailMembersLoaded {
+		return m, nil
+	}
+	// Reset cache so the View renders a "loading…" placeholder while
+	// the Cmd is in flight.
+	m.detailMembersGroup = m.detail.ID
+	m.detailMembersLoaded = false
+	m.detailMembers = nil
+	m.detailMembersErr = nil
+	return m, fetchGroupMembersCmd(m.deps.Port, m.detail.ID)
 }
 
 var (
