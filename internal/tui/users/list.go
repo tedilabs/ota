@@ -348,15 +348,13 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.clampedCursor(), nil
 	}
 
-	// Horizontal scroll (issue #122). `l` advances the column slice
-	// right when the natural row exceeds the viewport; `h` retreats.
-	// Clamped to [0, MaxHScroll] so the user can't scroll into an
-	// empty row.
-	if msg.Type == tea.KeyRunes && string(msg.Runes) == "l" {
+	// Horizontal scroll (issue #122 + #159). `l` / Right advance the
+	// column slice; `h` / Left retreat. Clamped to [0, MaxHScroll].
+	if msg.Type == tea.KeyRight || (msg.Type == tea.KeyRunes && string(msg.Runes) == "l") {
 		m.hScroll = m.clampHScroll(m.hScroll + 1)
 		return m, nil
 	}
-	if msg.Type == tea.KeyRunes && string(msg.Runes) == "h" {
+	if msg.Type == tea.KeyLeft || (msg.Type == tea.KeyRunes && string(msg.Runes) == "h") {
 		if m.hScroll > 0 {
 			m.hScroll--
 		}

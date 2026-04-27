@@ -198,6 +198,13 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Arrow keys map to Vim-style runes (issue #159) — but NOT
+	// while the filter prompt is in input mode, where arrow keys
+	// should still pass through (the `j` rune is meaningful as
+	// content there).
+	if !m.filtering {
+		km = shared.NormalizeArrowKey(km)
+	}
 	// Filter-input mode (issue #153). `/` opens the prompt; the
 	// chrome renders the floating box. Enter applies, Esc cancels,
 	// Backspace backs out a char, runes append.

@@ -1086,7 +1086,7 @@ func paletteCommandPool() []string {
 	return []string{
 		"user",
 		"group",
-		"rule",
+		"group-rule",
 		"policy",
 		"log",
 		"unmask", "mask",

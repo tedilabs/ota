@@ -53,9 +53,9 @@ func openPaletteAndType(t *testing.T, m app.Model, prefix string) app.Model {
 }
 
 // Test_Palette_Suggestions_DropPluralAliases verifies typing `:gr`
-// surfaces ONLY `group` (not grouprules / group-rule / etc.). The
-// 2-char prefix gate is honoured — `:g` alone still doesn't unlock
-// the list; `:gr` does, but the only suggestion is `group`.
+// surfaces both `group` and `group-rule` (issue #164 added the
+// hyphenated rules canonical) but NOT plural variants. The 2-char
+// prefix gate is honoured.
 func Test_Palette_Suggestions_DropPluralAliases(t *testing.T) {
 	t.Parallel()
 
@@ -63,16 +63,18 @@ func Test_Palette_Suggestions_DropPluralAliases(t *testing.T) {
 	m = openPaletteAndType(t, m, "gr")
 
 	view := testfx.StripANSI(m.View())
-	// `group` must surface as the suggestion.
+	// Both canonicals must surface as suggestions.
 	assert.Contains(t, view, "group",
 		"`:gr` autocomplete must include the singular canonical 'group'")
-	// Plural / hyphenated / underscore variants must NOT surface.
+	assert.Contains(t, view, "group-rule",
+		"`:gr` autocomplete must include 'group-rule' (issue #164)")
+	// Plural / underscore variants must NOT surface.
 	for _, blocklisted := range []string{
-		"grouprules", "grouprule", "group-rule", "group-rules",
+		"grouprules", "grouprule", "group-rules",
 		"group_rule", "group_rules", "groups",
 	} {
 		assert.NotContainsf(t, view, blocklisted,
-			"alias %q must NOT appear in the autocomplete list (issue #150)", blocklisted)
+			"alias %q must NOT appear in the autocomplete list", blocklisted)
 	}
 }
 

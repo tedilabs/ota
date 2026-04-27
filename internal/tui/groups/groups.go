@@ -187,6 +187,9 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
 	}
+	// Arrow keys map to Vim-style runes so the rune switch below
+	// handles both (issue #159).
+	msg = shared.NormalizeArrowKey(msg)
 	// Detail mode (TUI_DESIGN §3.6 + §15.7): Esc returns to the list; Tab /
 	// Shift-Tab cycle through tabs; `r` toggles the Raw tab against the
 	// last-visited non-Raw tab.

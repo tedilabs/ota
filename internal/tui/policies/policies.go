@@ -226,6 +226,8 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Arrow keys map to Vim-style runes (issue #159).
+	km = shared.NormalizeArrowKey(km)
 	// Esc inside detail takes precedence over other keys so operators
 	// always have a way back to the list (TUI_DESIGN §3.6 / §3.6a Note).
 	if m.opened && km.Type == tea.KeyEsc {
