@@ -1,5 +1,5 @@
 3 of 3
-  TYPE  NAME                                   DESCRIPTION                               UPDATED  TAGS               
-▸ [O]   Engineering                            All engineers                                   —  [RULE]             
-  [A]   Jira Users                             Synced from Atlassian                           —                     
-  [B]   Everyone                               All organization members                        —  [SYS][LARGE]       
+  TYPE  NAME                                             DESCRIPTION                                          UPDATED
+▸ [O]   Engineering                                      All engineers                                              —
+  [A]   Jira Users                                       Synced from Atlassian                                      —
+  [B]   Everyone                                         All organization members                                   —

@@ -352,7 +352,6 @@ func (m ListModel) View() string {
 		groupsSortLabel("NAME", m.sortBy, SortName, m.sortDir, tk),
 		"DESCRIPTION",
 		"UPDATED",
-		"TAGS",
 	))
 	b.WriteByte('\n')
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
@@ -376,32 +375,22 @@ func (m ListModel) renderGroupsRow(g domain.Group, now time.Time, tk shared.Toke
 	if g.LastUpdated.IsZero() {
 		updated = "—"
 	}
-	tags := groupTags(g)
-	return m.formatGroupsColumns(typeBadge, g.Profile.Name, g.Profile.Description, updated, tags)
+	return m.formatGroupsColumns(typeBadge, g.Profile.Name, g.Profile.Description, updated)
 }
 
-// groupTags concatenates the badge column for a group.
-func groupTags(g domain.Group) string {
-	var parts []string
-	if g.DynamicTargeted {
-		parts = append(parts, "[RULE]")
-	}
-	if g.Type == domain.GroupTypeBuiltIn {
-		parts = append(parts, "[SYS]", "[LARGE]")
-	}
-	return strings.Join(parts, "")
-}
-
-// groupsColumnSpecs returns the §15.0a.3 column definitions in declaration
-// order: TYPE, NAME, DESCRIPTION, UPDATED, TAGS. Drop priorities (low first):
-// TAGS (1) → DESCRIPTION (2) → UPDATED (3); TYPE / NAME never drop.
+// groupsColumnSpecs returns the column definitions for the Groups
+// list. v0.1.7 dropped the TAGS column (issue #141): the user pointed
+// out Groups don't actually carry a tags attribute — the column was
+// surfacing derived [RULE] / [SYS] flags under a name that promised
+// something else. Either fold those flags into TYPE later or expose
+// them on Group Detail; for now the list is just the four core
+// fields.
 func groupsColumnSpecs() []shared.ColumnSpec {
 	return []shared.ColumnSpec{
 		{Title: "TYPE", Kind: shared.ColumnFixed, Min: 4, DropPriority: 0},
 		{Title: "NAME", Kind: shared.ColumnFlex, Min: 18, Weight: 2, DropPriority: 0},
 		{Title: "DESCRIPTION", Kind: shared.ColumnFlex, Min: 16, Weight: 2, DropPriority: 2},
 		{Title: "UPDATED", Kind: shared.ColumnFixed, Min: 10, DropPriority: 3, AlignRight: true},
-		{Title: "TAGS", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 1},
 	}
 }
 

@@ -73,22 +73,9 @@ func Test_GroupsList_HasColumnHeaders(t *testing.T) {
 	}
 }
 
-// Test_GroupsList_RuleTargetedShowsBadge locks in REQ-R02 AC-1: dynamic-targeted
-// groups display a [RULE] badge in the TAGS column.
-func Test_GroupsList_RuleTargetedShowsBadge(t *testing.T) {
-	t.Parallel()
-	m := groups.NewListModel(groups.Deps{InitialGroups: sampleGroupsFixture(), Width: 120, Height: 30})
-	got := testfx.StripANSI(m.View())
-	assert.Contains(t, got, "[RULE]",
-		"groups targeted by Group Rules must show the [RULE] badge (REQ-R02 AC-1 / TUI_DESIGN §16.5)")
-}
-
-// Test_GroupsList_LargeBuiltinShowsBadges locks in TUI_DESIGN §16.5: built-in
-// groups (e.g., Everyone) carry [SYS][LARGE] badges.
-func Test_GroupsList_LargeBuiltinShowsBadges(t *testing.T) {
-	t.Parallel()
-	m := groups.NewListModel(groups.Deps{InitialGroups: sampleGroupsFixture(), Width: 120, Height: 30})
-	got := testfx.StripANSI(m.View())
-	assert.Contains(t, got, "[SYS]", "built-in group must show [SYS] badge (TUI_DESIGN §16.5)")
-	assert.Contains(t, got, "[LARGE]", "built-in (Everyone) must show [LARGE] warning (TUI_DESIGN §16.5)")
-}
+// Tests pinning the old TAGS column ([RULE] / [SYS] / [LARGE]) were
+// removed alongside the column itself (issue #141). The user pointed
+// out "Tags" wasn't a real Group attribute — the column surfaced
+// derived flags under a misleading name. The flags can come back as
+// a properly-named column or as TYPE prefix later if the use case
+// resurfaces; for now the Groups list is just TYPE/NAME/DESC/UPDATED.
