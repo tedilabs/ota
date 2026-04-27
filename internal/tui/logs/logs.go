@@ -5,12 +5,14 @@ package logs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"gopkg.in/yaml.v3"
 
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
@@ -49,6 +51,21 @@ func LoadedForTest(events []domain.LogEvent) tea.Msg {
 type logsErrMsg struct{ err error }
 
 // SearchModel is SCR-050.
+// LogDetailTab indexes the visible tab on a log-event detail screen
+// (issue #135). The Pretty tab keeps the v0.1.0 curated layout; JSON
+// and YAML render the full Raw payload from Okta with shared syntax
+// highlighting so operators can pull any field they need.
+type LogDetailTab int
+
+const (
+	LogDetailTabPretty LogDetailTab = iota
+	LogDetailTabJSON
+	LogDetailTabYAML
+)
+
+var logDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
+var logDetailTabCount = LogDetailTab(len(logDetailTabLabels))
+
 type SearchModel struct {
 	deps         Deps
 	events       []domain.LogEvent
@@ -58,6 +75,11 @@ type SearchModel struct {
 	pollInterval time.Duration
 	opened       bool
 	detail       domain.LogEvent
+	// detailTab tracks the active Pretty / JSON / YAML tab on the
+	// log-event detail screen (issue #135). Tab cycles, `r` jumps to
+	// JSON and back to the previous non-JSON tab.
+	detailTab       LogDetailTab
+	detailRawReturn LogDetailTab
 	lastErr      error
 	width        int
 	height       int
@@ -138,11 +160,34 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Esc inside detail takes precedence so operators always have a way
-	// back to the list (TUI_DESIGN §3.6 / §3.6a Note).
-	if m.opened && km.Type == tea.KeyEsc {
-		m.opened = false
-		m.detail = domain.LogEvent{}
+	// Detail-mode keys (issue #135). Esc backs out, Tab / Shift-Tab
+	// cycle through Pretty / JSON / YAML, `r` jumps to / from JSON
+	// against the previously-visited non-JSON tab.
+	if m.opened {
+		switch km.Type {
+		case tea.KeyEsc:
+			m.opened = false
+			m.detail = domain.LogEvent{}
+			m.detailTab = LogDetailTabPretty
+			m.detailRawReturn = LogDetailTabPretty
+			return m, nil
+		case tea.KeyTab:
+			m.detailTab = (m.detailTab + 1) % logDetailTabCount
+			return m, nil
+		case tea.KeyShiftTab:
+			m.detailTab = (m.detailTab + logDetailTabCount - 1) % logDetailTabCount
+			return m, nil
+		case tea.KeyRunes:
+			if string(km.Runes) == "r" {
+				if m.detailTab == LogDetailTabJSON {
+					m.detailTab = m.detailRawReturn
+				} else {
+					m.detailRawReturn = m.detailTab
+					m.detailTab = LogDetailTabJSON
+				}
+				return m, nil
+			}
+		}
 		return m, nil
 	}
 	switch km.Type {
@@ -262,7 +307,7 @@ func (m SearchModel) setRange(window time.Duration) (tea.Model, tea.Cmd) {
 // AC-3).
 func (m SearchModel) View() string {
 	if m.opened {
-		return renderLogDetail(m.detail)
+		return renderLogDetailTabbed(m.detail, m.detailTab)
 	}
 	if m.lastErr != nil {
 		return "Logs  (error)\n" + shared.ErrorPanel("events", m.lastErr)
@@ -492,8 +537,129 @@ func (m DetailModel) Init() tea.Cmd { return nil }
 func (m DetailModel) Update(_ tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
 
 // View renders the structured sections (Actor/Target/Client/Outcome) plus
-// the full event UUID.
-func (m DetailModel) View() string { return renderLogDetail(m.event) }
+// the full event UUID. Renders the Pretty tab — the standalone
+// DetailModel is used by tests that don't carry a tab cursor.
+func (m DetailModel) View() string { return renderLogDetailTabbed(m.event, LogDetailTabPretty) }
+
+// renderLogDetailTabbed dispatches to the active tab body. Pretty is
+// the curated v0.1.0 layout; JSON dumps the full Raw payload from
+// Okta with shared syntax highlighting; YAML reformats the same
+// payload at 2-space indent.
+func renderLogDetailTabbed(e domain.LogEvent, active LogDetailTab) string {
+	var b strings.Builder
+	b.WriteString("Log Event\n")
+	b.WriteString(renderLogTabBar(active))
+	b.WriteByte('\n')
+	b.WriteString(strings.Repeat("─", 78))
+	b.WriteByte('\n')
+	switch active {
+	case LogDetailTabJSON:
+		b.WriteString(renderLogJSONTab(e))
+	case LogDetailTabYAML:
+		b.WriteString(renderLogYAMLTab(e))
+	default:
+		b.WriteString(renderLogDetail(e))
+	}
+	return b.String()
+}
+
+// renderLogTabBar mirrors the tab-bar style used by users / groups /
+// rules detail views. Active tab gets the bracketed-tight form, the
+// rest read as breathing-room labels.
+func renderLogTabBar(active LogDetailTab) string {
+	parts := make([]string, 0, len(logDetailTabLabels))
+	for i, label := range logDetailTabLabels {
+		if LogDetailTab(i) == active {
+			parts = append(parts, "["+label+"]")
+		} else {
+			parts = append(parts, "[ "+label+" ]")
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// renderLogJSONTab emits the full event payload (LogEvent.Raw — what
+// Okta returned over the wire) with shared.HighlightJSON applied so
+// keys / strings / numbers / booleans get their colour tokens.
+// Falls back to a curated projection when Raw is empty so unit tests
+// without a wire fixture still get a useful body.
+func renderLogJSONTab(e domain.LogEvent) string {
+	body := prettyJSONForLog(e)
+	return shared.HighlightJSON(body, activeTokens()) + "\n"
+}
+
+// renderLogYAMLTab decodes the same payload as the JSON tab and
+// re-emits it as YAML at 2-space indent (issue #109 carried over).
+func renderLogYAMLTab(e domain.LogEvent) string {
+	raw := prettyJSONForLog(e)
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return "(yaml render error: " + err.Error() + ")\n"
+	}
+	var buf strings.Builder
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		return "(yaml render error: " + err.Error() + ")\n"
+	}
+	if err := enc.Close(); err != nil {
+		return "(yaml render error: " + err.Error() + ")\n"
+	}
+	return shared.HighlightYAML(strings.TrimRight(buf.String(), "\n"), activeTokens()) + "\n"
+}
+
+// prettyJSONForLog returns a 2-space-indent JSON string for the
+// supplied event. Prefers LogEvent.Raw (Okta's wire payload) so
+// operators see the canonical fields; falls back to a curated
+// projection when Raw is empty (e.g. seeded test fixtures).
+func prettyJSONForLog(e domain.LogEvent) string {
+	if len(e.Raw) > 0 {
+		var v any
+		if err := json.Unmarshal(e.Raw, &v); err == nil {
+			if buf, err := json.MarshalIndent(v, "", "  "); err == nil {
+				return string(buf)
+			}
+		}
+	}
+	curated := map[string]any{
+		"uuid":       e.UUID,
+		"published":  e.Published.UTC().Format(time.RFC3339),
+		"severity":   string(e.Severity),
+		"eventType":  e.EventType,
+		"displayMsg": e.DisplayMsg,
+		"actor": map[string]any{
+			"id":          e.Actor.ID,
+			"type":        string(e.Actor.Type),
+			"displayName": e.Actor.DisplayName,
+			"alternateId": e.Actor.AlternateID,
+		},
+		"client": map[string]any{
+			"ipAddress": e.Client.IPAddress,
+			"userAgent": e.Client.UserAgent,
+		},
+		"outcome": map[string]any{
+			"result": string(e.Outcome.Result),
+			"reason": e.Outcome.Reason,
+		},
+	}
+	if len(e.Targets) > 0 {
+		ts := make([]map[string]any, 0, len(e.Targets))
+		for _, t := range e.Targets {
+			ts = append(ts, map[string]any{
+				"id":          t.ID,
+				"type":        t.Type,
+				"displayName": t.DisplayName,
+				"alternateId": t.AlternateID,
+			})
+		}
+		curated["targets"] = ts
+	}
+	buf, err := json.MarshalIndent(curated, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(buf)
+}
 
 func renderLogDetail(e domain.LogEvent) string {
 	var b strings.Builder

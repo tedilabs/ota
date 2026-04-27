@@ -403,9 +403,15 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"m", "Members tab (lazy load)"},
 			{"Esc", "back to list"},
 		}
-	case "policy-detail", "log-detail":
+	case "policy-detail":
 		return []helpEntry{
 			{"r", "toggle rich ↔ raw JSON"},
+			{"Esc", "back to list"},
+		}
+	case "log-detail":
+		return []helpEntry{
+			{"Tab / Shift-Tab", "cycle detail tabs"},
+			{"r", "jump to / from JSON tab"},
 			{"Esc", "back to list"},
 		}
 	default:
