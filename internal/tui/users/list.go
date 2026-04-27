@@ -650,7 +650,12 @@ func (m ListModel) renderDetailWithCursor() string {
 // flags) so :unmask survives across renders. Centralised so the detail
 // view and detailBodyLines stay in lockstep.
 func (m ListModel) newDetail() DetailModel {
-	d := NewDetailModel(m.deps, m.detailUser).WithActiveTab(m.detailTab)
+	// Pipe the live terminal width into Deps so the detail view's
+	// 2-column layout sizes to the current window (issue #149).
+	deps := m.deps
+	deps.Width = m.width
+	deps.Height = m.height
+	d := NewDetailModel(deps, m.detailUser).WithActiveTab(m.detailTab)
 	for field, on := range m.detailUnmasked {
 		if on {
 			d.ToggleUnmask(field)

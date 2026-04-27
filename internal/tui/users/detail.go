@@ -171,8 +171,11 @@ func renderTabBar(active DetailTab) string {
 //	Custom        anything we don't recognise as Okta-standard
 func (m DetailModel) renderProfileTab() string {
 	u := m.user
+	// Section widths are computed from the available terminal width
+	// (issue #149) so the 2-column layout fills the screen rather
+	// than clinging to a 56-cell hardcoded slot in the top-left.
 	const keyWidth = 16
-	const sectionWidth = 56
+	sectionWidth := pickPrettySectionWidth(m.deps.Width)
 
 	tk := activeTokens()
 	statusCell := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
@@ -347,6 +350,30 @@ func composeColumns(left, right string, colWidth int) string {
 		b.WriteByte('\n')
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// pickPrettySectionWidth turns a terminal width into a per-column
+// section width for the 2-column Pretty layout. Splits the inner
+// body in half (minus the 2-cell gutter between columns) so the
+// detail view fills the chrome's available area at any size.
+func pickPrettySectionWidth(termWidth int) int {
+	const minSection = 32
+	const maxSection = 90
+	if termWidth <= 0 {
+		return 56
+	}
+	// Chrome trim: borders (2) + left padding (1) + right padding (1)
+	// + cursor gutter (2) ≈ 6 cells. Then split in half across the
+	// 2-cell column gutter.
+	inner := termWidth - 6
+	if inner < 2*minSection+2 {
+		return minSection
+	}
+	per := (inner - 2) / 2
+	if per > maxSection {
+		per = maxSection
+	}
+	return per
 }
 
 // formatTime / formatTimePtr render Okta timestamps in a stable,
