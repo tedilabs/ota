@@ -857,27 +857,16 @@ func (m ListModel) observedColumnWidths() []int {
 	return out
 }
 
-// visibleCellWidth approximates the rendered width of a cell after the
-// shared chrome's ANSI stripping — falls back to len(s) for ASCII which
-// covers our column data today (logins, dates, statuses).
+// visibleCellWidth returns the rendered cell width of s, delegating
+// to the shared package's CSI-aware stripper. Earlier versions tried
+// to hand-roll the escape skip and miscounted because the CSI
+// introducer `[` (0x5b) sits inside the 0x40-0x7e final-byte range —
+// it exited escape mode on the introducer itself, then counted the
+// SGR parameters (digits, semicolons, `m`) as visible cells. The
+// resulting over-estimate kept ShrinkSpecsToFit from actually
+// shrinking columns, leaving rows wider than the viewport (issue #128).
 func visibleCellWidth(s string) int {
-	// Stay conservative: count runes after stripping ANSI escapes.
-	n := 0
-	inEsc := false
-	for _, r := range s {
-		if inEsc {
-			if r >= '@' && r <= '~' {
-				inEsc = false
-			}
-			continue
-		}
-		if r == 0x1b {
-			inEsc = true
-			continue
-		}
-		n++
-	}
-	return n
+	return shared.VisibleWidth(s)
 }
 
 // usersSortColumnIdx maps a SortKey to its index in usersColumnSpecs.

@@ -345,6 +345,14 @@ func truncateVisible(s string, width int) string {
 	return b.String()
 }
 
+// VisibleWidth is the exported counterpart of visibleWidth — returns
+// the rendered cell count of a (possibly ANSI-styled) string. Use this
+// instead of len() or hand-rolled escape skippers when measuring
+// columns; the latter routinely miscount because the CSI introducer
+// `[` itself sits in the 0x40-0x7e final-byte range and naive scanners
+// exit escape mode prematurely.
+func VisibleWidth(s string) int { return visibleWidth(s) }
+
 // visibleWidth returns the visible cell count of s, ignoring ANSI escapes.
 // We strip CSI sequences (lipgloss uses these) so width math survives styled
 // segments. A full grapheme/runewidth pass would be more correct; this is
