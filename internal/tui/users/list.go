@@ -596,15 +596,34 @@ func (m ListModel) renderDetailWithCursor() string {
 	// shared RowHighlight token adds a background tint over the bold accent
 	// so the cursor row reads at-a-glance even from the corner of the eye
 	// (issue #112).
-	cursorStyle := tk.RowHighlight
+	//
+	// Issue #139: pad each highlighted line with trailing spaces up to
+	// the widest body line before styling, so the bg tint extends across
+	// the full row instead of stopping at the cell content (e.g.
+	// `"login":` would be highlighted but the rest of the row stayed
+	// flat). The pad width is the max visible width of the SELECTABLE
+	// body so the highlight is uniform across cursor moves.
+	maxBodyWidth := 0
+	for i := headerLines; i < len(lines); i++ {
+		if w := shared.VisibleWidth(lines[i]); w > maxBodyWidth {
+			maxBodyWidth = w
+		}
+	}
+	highlight := func(line string) string {
+		w := shared.VisibleWidth(line)
+		if w < maxBodyWidth {
+			line = line + strings.Repeat(" ", maxBodyWidth-w)
+		}
+		return tk.RowHighlight.Render(line)
+	}
 	for i, line := range lines {
 		switch {
 		case i < headerLines:
 			b.WriteString(line)
 		case m.detailVisual && i >= start && i <= end:
-			b.WriteString(cursorStyle.Render(line))
+			b.WriteString(highlight(line))
 		case i == cursor:
-			b.WriteString(cursorStyle.Render(line))
+			b.WriteString(highlight(line))
 		default:
 			b.WriteString(line)
 		}
