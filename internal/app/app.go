@@ -324,6 +324,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updated, cmd
 		}
 		return m, nil
+	case OpenPolicyTypeMsg:
+		// Issue #165 — replace the Policies wrapper with one scoped
+		// to the requested type so the picker doesn't render
+		// underneath the typed list.
+		m.active = ScreenPolicies
+		m.overlay = OverlayNone
+		mdl := policies.NewWrapperForType(policies.Deps{
+			Port:   m.deps.PoliciesPort,
+			Clock:  m.deps.Clock,
+			Logger: m.deps.Logger,
+			Keys:   m.deps.Keys,
+			Width:  m.width,
+			Height: m.height,
+		}, domain.PolicyType(msg.Type))
+		m.screens[ScreenPolicies] = mdl
+		return m, mdl.Init()
 	}
 	// Non-routing messages: delegate to the active child screen so background
 	// fetch results (usersLoadedMsg, etc.) reach the right Model.
@@ -1041,6 +1057,11 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openActionConfirm(UserActionUnlock)
 		case paletteCmdResetFactors:
 			return m.openActionConfirm(UserActionResetFactors)
+		case paletteCmdPolicyType:
+			// Issue #165: jump straight to the typed list, replacing
+			// any existing Policies wrapper so the picker doesn't
+			// reappear underneath.
+			return m, openPolicyTypeCmd(domain.PolicyType(arg))
 		}
 		return m, nil
 	case tea.KeyBackspace:
@@ -1088,6 +1109,16 @@ func paletteCommandPool() []string {
 		"group",
 		"group-rule",
 		"policy",
+		// Direct policy-type routes (issue #165). Operators that
+		// know which kind of policy they're after can skip the
+		// picker; the autocomplete surfaces every supported type.
+		"okta-sign-on",
+		"access-policy",
+		"password-policy",
+		"mfa-enroll",
+		"profile-enrollment",
+		"post-auth-session",
+		"idp-discovery",
 		"log",
 		"unmask", "mask",
 		"reset-password", "unlock", "reset-mfa",
@@ -1162,6 +1193,10 @@ const (
 	paletteCmdResetPassword
 	paletteCmdUnlock
 	paletteCmdResetFactors
+	// paletteCmdPolicyType opens ScreenPolicies straight on a list
+	// for the given PolicyType — issue #165 (`:okta-sign-on`,
+	// `:password-policy`, etc.).
+	paletteCmdPolicyType
 )
 
 // UnmaskFieldMsg / MaskAllMsg are re-exported from the shared msgs
@@ -1204,6 +1239,13 @@ func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, arg 
 	case "reset-mfa", "reset-factors", "reset_mfa", "reset_factors", "resetfactors":
 		return paletteCmdResetFactors, 0, "", true
 	}
+	// Direct policy-type routes (issue #165). The verb arg field
+	// carries the canonical PolicyType so the App Shell can build a
+	// type-scoped Wrapper without forcing the operator through the
+	// type-select picker.
+	if pt, ok := policyTypeFromName(strings.ToLower(cmd)); ok {
+		return paletteCmdPolicyType, 0, string(pt), true
+	}
 	if s, found := screenFromName(strings.ToLower(cmd)); found {
 		return paletteCmdScreen, s, "", true
 	}
@@ -1212,6 +1254,30 @@ func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, arg 
 		return paletteCmdScreen, ScreenPolicies, "", true
 	}
 	return paletteCmdNone, 0, "", false
+}
+
+// policyTypeFromName maps a palette verb to a domain.PolicyType.
+// Recognises every alias an operator might naturally type — both
+// the canonical Okta SDK names (OKTA_SIGN_ON) and the friendlier
+// hyphenated forms (`okta-sign-on`).
+func policyTypeFromName(name string) (domain.PolicyType, bool) {
+	switch name {
+	case "okta-sign-on", "okta_sign_on", "oktasignon", "sign-on", "signon":
+		return domain.PolicyTypeOktaSignOn, true
+	case "access", "access-policy", "access_policy", "accesspolicy":
+		return domain.PolicyTypeAccessPolicy, true
+	case "password", "password-policy", "password_policy":
+		return domain.PolicyTypePassword, true
+	case "mfa", "mfa-enroll", "mfa_enroll", "mfaenroll":
+		return domain.PolicyTypeMFAEnroll, true
+	case "profile-enrollment", "profile_enrollment", "profileenrollment":
+		return domain.PolicyTypeProfileEnrollment, true
+	case "post-auth-session", "post_auth_session", "postauthsession":
+		return domain.PolicyTypePostAuthSession, true
+	case "idp-discovery", "idp_discovery", "idpdiscovery":
+		return domain.PolicyTypeIDPDiscovery, true
+	}
+	return "", false
 }
 
 // openActionConfirm queues a Users lifecycle action (issue #125) for
@@ -1307,6 +1373,13 @@ func openCmdPaletteCmd() tea.Cmd {
 
 func openHelpCmd() tea.Cmd {
 	return func() tea.Msg { return openHelpMsg{} }
+}
+
+// openPolicyTypeCmd returns a Cmd that wraps the requested policy
+// type into an OpenPolicyTypeMsg the App Shell handles by rebuilding
+// the Policies wrapper directly on the typed list (issue #165).
+func openPolicyTypeCmd(t domain.PolicyType) tea.Cmd {
+	return func() tea.Msg { return OpenPolicyTypeMsg{Type: string(t)} }
 }
 
 func screenChangeCmd(target Screen) tea.Cmd {

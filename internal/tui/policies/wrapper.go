@@ -39,8 +39,27 @@ func NewWrapper(deps Deps) Wrapper {
 	}
 }
 
-// Init implements tea.Model.
-func (w Wrapper) Init() tea.Cmd { return w.selector.Init() }
+// NewWrapperForType constructs a Wrapper that opens directly on the
+// list view for the given type (issue #165 — palette routes like
+// `:okta-sign-on`, `:password-policy` skip the picker).
+func NewWrapperForType(deps Deps, t domain.PolicyType) Wrapper {
+	return Wrapper{
+		deps:   deps,
+		mode:   wrapperModeList,
+		picked: t,
+		list:   NewListModel(deps, t),
+	}
+}
+
+// Init implements tea.Model. When the wrapper opens directly on a
+// typed list (issue #165), delegate to the list's Init so the
+// initial fetch fires; otherwise delegate to the selector.
+func (w Wrapper) Init() tea.Cmd {
+	if w.mode == wrapperModeList {
+		return w.list.Init()
+	}
+	return w.selector.Init()
+}
 
 // Update routes incoming messages to the active inner model and
 // handles the TypeSelect → List transition when Enter selects a type.

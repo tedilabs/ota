@@ -81,6 +81,15 @@ type SwitchScreenMsg struct {
 	Target string
 }
 
+// OpenPolicyTypeMsg jumps directly to the Policies list scoped to a
+// specific PolicyType — issue #165's `:okta-sign-on` /
+// `:password-policy` / etc. palette routes. The App Shell rebuilds
+// the Policies Wrapper with NewWrapperForType so the type picker
+// doesn't reappear.
+type OpenPolicyTypeMsg struct {
+	Type string // domain.PolicyType as string for cross-package compat
+}
+
 // OpenResourceMsg requests a drill-down to a resource's detail view
 // (REQ-U05 AC-1). Kind is one of "user", "group", "rule", "policy",
 // "log"; ID is the Okta resource identifier.
