@@ -8,7 +8,7 @@ package version
 //	                  -X github.com/tedilabs/ota/internal/version.Commit=<sha> \
 //	                  -X github.com/tedilabs/ota/internal/version.BuildTime=<iso>"
 var (
-	Tag       = "v0.1.9"
+	Tag       = "v0.1.10"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
