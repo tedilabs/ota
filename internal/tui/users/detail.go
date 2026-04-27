@@ -195,12 +195,18 @@ func (m DetailModel) renderProfileTab() string {
 	identity.add("displayName", u.Profile.DisplayName)
 	identity.add("nickName", u.Profile.NickName)
 
+	// Contact spec order (#144): secondEmail > primaryPhone >
+	// mobilePhone > preferredLanguage > locale. mobilePhone /
+	// secondEmail are domain-named; everything else flows through
+	// the Extras partition below.
 	contact := orderedKV{}
-	if v := u.Profile.MobilePhone; v != "" {
-		contact.add("mobilePhone", maskedField("mobilePhone", v, m.unmasked, mask.Phone))
-	}
 	if v := u.Profile.SecondEmail; v != "" {
 		contact.add("secondEmail", maskedField("secondEmail", v, m.unmasked, mask.Email))
+	}
+	// primaryPhone arrives only via Extras today (no domain field) —
+	// the partition below routes it into Contact at the right slot.
+	if v := u.Profile.MobilePhone; v != "" {
+		contact.add("mobilePhone", maskedField("mobilePhone", v, m.unmasked, mask.Phone))
 	}
 
 	address := orderedKV{}
@@ -242,36 +248,105 @@ func (m DetailModel) renderProfileTab() string {
 		}
 	}
 
-	// Re-order Organization so Extras-sourced "organization" /
-	// "manager" rows respect the spec sequence even though they
-	// arrived after the named domain fields.
-	organization = sortOrganization(organization)
+	// Re-order each section so Extras-sourced rows respect the spec
+	// sequence even though they arrived after the named domain
+	// fields. Organization (#140), Contact + Address (#144).
+	contact = sortKV(contact, []string{
+		"secondEmail", "primaryPhone", "mobilePhone",
+		"preferredLanguage", "locale",
+	})
+	address = sortKV(address, []string{
+		"countryCode", "state", "city",
+		"streetAddress", "zipCode", "postalAddress", "timezone",
+	})
+	organization = sortKV(organization, []string{
+		"organization", "division", "department",
+		"title", "manager", "employeeNumber",
+	})
 
+	// Two-column layout (#143): left column packs Identity >
+	// Organization > Status; right column packs Contact > Address >
+	// Custom. Each column composes its sections via writeColumn,
+	// then composeColumns aligns them side-by-side.
+	left := writeColumn([]prettySection{
+		{"Identity", identity},
+		{"Organization", organization},
+		{"Status", statusKV},
+	}, sectionWidth, keyWidth)
+	right := writeColumn([]prettySection{
+		{"Contact", contact},
+		{"Address", address},
+		{"Custom", custom},
+	}, sectionWidth, keyWidth)
+	return composeColumns(left, right, sectionWidth)
+}
+
+type prettySection struct {
+	Title string
+	KV    orderedKV
+}
+
+// writeColumn lays out the supplied sections vertically (one section
+// at a time, separated by a blank line). Empty sections are skipped
+// — the user's profile shouldn't render headers with no rows under
+// them. Returns a multi-line string ready for composeColumns.
+func writeColumn(sections []prettySection, sectionWidth, keyWidth int) string {
 	var b strings.Builder
-	writeSection := func(title string, kv orderedKV, first *bool) {
-		if kv.empty() {
-			return
+	first := true
+	for _, s := range sections {
+		if s.KV.empty() {
+			continue
 		}
-		if !*first {
+		if !first {
 			b.WriteByte('\n')
 		}
-		b.WriteString(shared.SectionHeader(title, sectionWidth))
+		b.WriteString(shared.SectionHeader(s.Title, sectionWidth))
 		b.WriteByte('\n')
-		for _, p := range kv.pairs {
+		for _, p := range s.KV.pairs {
 			b.WriteString(shared.KVRow(p.key, p.value, keyWidth))
 			b.WriteByte('\n')
 		}
-		*first = false
+		first = false
 	}
+	return strings.TrimRight(b.String(), "\n")
+}
 
-	first := true
-	writeSection("Status", statusKV, &first)
-	writeSection("Identity", identity, &first)
-	writeSection("Contact", contact, &first)
-	writeSection("Address", address, &first)
-	writeSection("Organization", organization, &first)
-	writeSection("Custom", custom, &first)
-	return b.String()
+// composeColumns lays two multi-line columns side-by-side, padding
+// the left column to colWidth+2 cells before the right column starts
+// so the two stay visually aligned regardless of section heights.
+// Either column may be longer; the shorter side simply ends earlier.
+func composeColumns(left, right string, colWidth int) string {
+	gutter := 2
+	leftLines := strings.Split(left, "\n")
+	rightLines := strings.Split(right, "\n")
+	rows := len(leftLines)
+	if len(rightLines) > rows {
+		rows = len(rightLines)
+	}
+	gut := strings.Repeat(" ", gutter)
+	var b strings.Builder
+	for i := 0; i < rows; i++ {
+		var l, r string
+		if i < len(leftLines) {
+			l = leftLines[i]
+		}
+		if i < len(rightLines) {
+			r = rightLines[i]
+		}
+		// Pad left to colWidth so right column's left edge stays
+		// stable even when the left line is shorter.
+		w := shared.VisibleWidth(l)
+		if w < colWidth {
+			l = l + strings.Repeat(" ", colWidth-w)
+		}
+		b.WriteString(l)
+		if r != "" {
+			b.WriteString(gut)
+			b.WriteString(r)
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // formatTime / formatTimePtr render Okta timestamps in a stable,
@@ -287,15 +362,12 @@ func formatTime(t *time.Time) string {
 
 func formatTimePtr(t *time.Time) string { return formatTime(t) }
 
-// sortOrganization re-shuffles an Organization orderedKV so its rows
-// appear in the spec sequence (organization > division > department >
-// title > manager > employeeNumber). Anything outside the canonical
-// list keeps its existing order at the tail.
-func sortOrganization(in orderedKV) orderedKV {
-	canonical := []string{
-		"organization", "division", "department",
-		"title", "manager", "employeeNumber",
-	}
+// sortKV re-shuffles an orderedKV so its rows appear in the order
+// listed in `canonical`. Anything outside the canonical list keeps
+// its existing order at the tail. Used to enforce the section
+// orderings the user pinned in #140 (Organization) and #144
+// (Contact, Address).
+func sortKV(in orderedKV, canonical []string) orderedKV {
 	rank := make(map[string]int, len(canonical))
 	for i, k := range canonical {
 		rank[k] = i
@@ -357,9 +429,10 @@ const (
 )
 
 // sectionForOktaKey maps an Okta profile key (camelCase as the API
-// returns it) to the Pretty-mode section it belongs in. Address
-// fields split out of Contact per issue #140 ("Contact에서 Address
-// 섹션 따로 분리해줘").
+// returns it) to the Pretty-mode section it belongs in. timezone
+// moved from Contact into Address per issue #144 — operators
+// reading "where does this person work from?" expect locale + tz
+// adjacent to the address block.
 func sectionForOktaKey(k string) detailSection {
 	switch k {
 	case "login", "email", "firstName", "lastName", "middleName",
@@ -367,10 +440,10 @@ func sectionForOktaKey(k string) detailSection {
 		"profileUrl":
 		return sectionIdentity
 	case "mobilePhone", "primaryPhone", "secondEmail",
-		"preferredLanguage", "locale", "timezone":
+		"preferredLanguage", "locale":
 		return sectionContact
 	case "streetAddress", "city", "state", "zipCode", "countryCode",
-		"postalAddress":
+		"postalAddress", "timezone":
 		return sectionAddress
 	case "organization", "division", "department", "costCenter",
 		"title", "userType", "employeeNumber",

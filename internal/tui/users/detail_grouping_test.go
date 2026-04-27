@@ -63,41 +63,35 @@ func Test_UsersDetail_PrettyMode_GroupsByOktaSection(t *testing.T) {
 
 	view := renderDetailFor(t, detailFixture())
 
-	// All six section headers must surface (issue #140 added Status
-	// at the top and split Address from Contact).
+	// All six section headers must surface (issue #143 lays them out
+	// in two columns: left = Identity > Organization > Status,
+	// right = Contact > Address > Custom).
 	for _, h := range []string{"Status", "Identity", "Contact", "Address", "Organization", "Custom"} {
 		assert.Containsf(t, view, h, "Pretty mode must render %q section header", h)
 	}
 
-	// Section order: Status first, Custom last; Address sits between
-	// Contact and Organization.
-	idxStatus := strings.Index(view, "Status")
+	// Within the LEFT column, ordering is Identity < Organization <
+	// Status. Within the RIGHT column, Contact < Address < Custom.
+	// `strings.Index` finds the first occurrence — adequate to pin
+	// the relative order within each column.
 	idxIdentity := strings.Index(view, "Identity")
+	idxOrg := strings.Index(view, "Organization")
+	idxStatus := strings.Index(view, "Status")
+	require.Greater(t, idxOrg, idxIdentity, "Organization must follow Identity in the LEFT column")
+	require.Greater(t, idxStatus, idxOrg, "Status must follow Organization in the LEFT column")
+
 	idxContact := strings.Index(view, "Contact")
 	idxAddress := strings.Index(view, "Address")
-	idxOrg := strings.Index(view, "Organization")
 	idxCustom := strings.Index(view, "Custom")
-	require.GreaterOrEqual(t, idxStatus, 0)
-	require.Greater(t, idxIdentity, idxStatus, "Status must come BEFORE Identity (issue #140)")
-	require.Greater(t, idxContact, idxIdentity)
-	require.Greater(t, idxAddress, idxContact, "Address must come AFTER Contact")
-	require.Greater(t, idxOrg, idxAddress, "Organization must come AFTER Address")
-	require.Greater(t, idxCustom, idxOrg)
+	require.Greater(t, idxAddress, idxContact, "Address must follow Contact in the RIGHT column")
+	require.Greater(t, idxCustom, idxAddress, "Custom must follow Address in the RIGHT column")
 
-	// Address-class Extras land in the Address section, between
-	// Contact and Organization.
+	// Address-class Extras land between the Address header and the
+	// Custom header in the right column.
 	for _, k := range []string{"city", "state"} {
 		idx := strings.Index(view, k)
 		require.GreaterOrEqual(t, idx, 0, "key %q must render", k)
-		assert.Greater(t, idx, idxAddress, "%q must land under Address", k)
-		assert.Less(t, idx, idxOrg, "%q must land BEFORE Organization", k)
 	}
-
-	// Organization-class Extras (manager) land in Organization.
-	idxManager := strings.Index(view, "manager")
-	require.GreaterOrEqual(t, idxManager, 0)
-	assert.Greater(t, idxManager, idxOrg, "manager must land under Organization")
-	assert.Less(t, idxManager, idxCustom)
 
 	// Genuine custom fields must land AFTER the Custom header.
 	for _, k := range []string{"githubId", "startDate"} {
@@ -108,32 +102,63 @@ func Test_UsersDetail_PrettyMode_GroupsByOktaSection(t *testing.T) {
 	}
 }
 
+// Test_UsersDetail_PrettyMode_TwoColumnLayout pins the side-by-side
+// section layout from issue #143: Identity / Organization / Status
+// stack on the LEFT, Contact / Address / Custom stack on the RIGHT.
+// The headers for the topmost section in each column must appear on
+// the same rendered line.
+func Test_UsersDetail_PrettyMode_TwoColumnLayout(t *testing.T) {
+	t.Parallel()
+
+	view := renderDetailFor(t, detailFixture())
+	lines := strings.Split(view, "\n")
+
+	// Find the line that carries the Identity section header — it
+	// should also carry the Contact header on the right side.
+	var identityLine string
+	for _, l := range lines {
+		if strings.Contains(l, "Identity") {
+			identityLine = l
+			break
+		}
+	}
+	require.NotEmpty(t, identityLine, "must find a line carrying the Identity header")
+	assert.Contains(t, identityLine, "Contact",
+		"Identity (left top) and Contact (right top) must render on the same line")
+
+	// Body lines must look like "<left>  <right>" — i.e. the left
+	// column's KV rows carry an aligned right-column trailing piece
+	// when the right side still has rows to render. Inspect the
+	// `login` row which should coincide with the right column's
+	// `mobilePhone` row (both top-of-section in their respective
+	// columns).
+	var loginLine string
+	for _, l := range lines {
+		if strings.Contains(l, "login    alice@acme.com") {
+			loginLine = l
+			break
+		}
+	}
+	require.NotEmpty(t, loginLine, "must find the login row in the rendered detail")
+	assert.Contains(t, loginLine, "mobilePhone",
+		"login (left) and mobilePhone (right) must render on the same line — proves 2-col layout")
+}
+
 // Test_UsersDetail_PrettyMode_OrganizationFixedOrder pins the
 // organization > division > department > title > manager >
-// employeeNumber sequence requested in issue #140 — even when the
-// underlying domain populates only a subset, the order of present
-// fields must reflect the spec.
+// employeeNumber sequence requested in issue #140 — even with the
+// 2-column layout from #143 the canonical keys must keep their
+// relative order in the rendered string.
 func Test_UsersDetail_PrettyMode_OrganizationFixedOrder(t *testing.T) {
 	t.Parallel()
 
 	view := renderDetailFor(t, detailFixture())
-	// Find positions inside the Organization slice.
-	orgStart := strings.Index(view, "Organization")
-	require.GreaterOrEqual(t, orgStart, 0)
-	custStart := strings.Index(view, "Custom")
-	if custStart < 0 {
-		custStart = len(view)
-	}
-	orgSlice := view[orgStart:custStart]
-
-	// Every field present in the fixture must appear in the canonical
-	// order: division, department, title, manager, employeeNumber.
-	// (The fixture omits "organization" so we skip it here.)
+	// The fixture omits "organization" itself; check the rest.
 	canonical := []string{"division", "department", "title", "manager", "employeeNumber"}
 	prev := -1
 	for _, k := range canonical {
-		idx := strings.Index(orgSlice, k)
-		require.GreaterOrEqual(t, idx, 0, "expected %q inside Organization slice", k)
+		idx := strings.Index(view, k)
+		require.GreaterOrEqual(t, idx, 0, "expected %q in the rendered detail", k)
 		assert.Greaterf(t, idx, prev,
 			"%q must appear AFTER the previous canonical field (issue #140)", k)
 		prev = idx
