@@ -90,6 +90,14 @@ type OpenPolicyTypeMsg struct {
 	Type string // domain.PolicyType as string for cross-package compat
 }
 
+// OpenAppTypeMsg jumps directly to the Apps list scoped to a
+// specific AppType — issue #166's `:saml-app` / `:oidc-app` /
+// `:bookmark-app` etc. palette routes. The App Shell rebuilds the
+// Apps Wrapper with NewWrapperForType so the picker doesn't render.
+type OpenAppTypeMsg struct {
+	Type string // domain.AppType as string for cross-package compat
+}
+
 // OpenResourceMsg requests a drill-down to a resource's detail view
 // (REQ-U05 AC-1). Kind is one of "user", "group", "rule", "policy",
 // "log"; ID is the Okta resource identifier.

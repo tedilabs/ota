@@ -110,6 +110,7 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 		GroupRulesPort: oktaClient.GroupRules(),
 		PoliciesPort:   oktaClient.Policies(),
 		LogsPort:       oktaClient.Logs(),
+		AppsPort:       oktaClient.Apps(),
 	})
 	return model, cfg, nil
 }

@@ -106,6 +106,18 @@ func SeverityBadge(sev string, tk Tokens) StatusBadge {
 	}
 }
 
+// AppStatusBadge maps a domain.AppStatus per issue #166.
+func AppStatusBadge(status string, tk Tokens) StatusBadge {
+	switch status {
+	case "ACTIVE":
+		return StatusBadge{Label: "ACTIVE", Icon: "●", Mono: "[+]", Style: tk.Success}
+	case "INACTIVE":
+		return StatusBadge{Label: "INACTIVE", Icon: "○", Mono: "[-]", Style: tk.Muted}
+	default:
+		return StatusBadge{Label: status, Icon: "?", Mono: "[?]", Style: tk.Muted}
+	}
+}
+
 // GroupTypeBadge maps a domain.GroupType per TUI_DESIGN §15.3.
 func GroupTypeBadge(t string, tk Tokens) StatusBadge {
 	switch t {

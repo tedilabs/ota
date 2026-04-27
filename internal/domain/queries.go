@@ -52,6 +52,17 @@ type PoliciesQuery struct {
 	After string
 }
 
+// AppsQuery parameterizes AppsPort.List. Type, when non-empty,
+// narrows the result set to that AppType (issue #166's per-type
+// palette routes feed this directly).
+type AppsQuery struct {
+	Type   AppType
+	Q      string
+	Filter string
+	Limit  int
+	After  string
+}
+
 // LogsQuery parameterizes LogsPort.Search (REQ-R05).
 type LogsQuery struct {
 	Since     *time.Time

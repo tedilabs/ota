@@ -14,6 +14,7 @@ import (
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
 	"github.com/tedilabs/ota/internal/service"
+	"github.com/tedilabs/ota/internal/tui/apps"
 	"github.com/tedilabs/ota/internal/tui/groups"
 	"github.com/tedilabs/ota/internal/tui/logs"
 	"github.com/tedilabs/ota/internal/tui/overlay"
@@ -33,6 +34,7 @@ const (
 	ScreenRules
 	ScreenPolicies
 	ScreenLogs
+	ScreenApps
 	ScreenUserDetail
 	ScreenGroupDetail
 	ScreenRuleDetail
@@ -53,6 +55,8 @@ func (s Screen) String() string {
 		return "policies"
 	case ScreenLogs:
 		return "logs"
+	case ScreenApps:
+		return "apps"
 	case ScreenUserDetail:
 		return "user-detail"
 	case ScreenGroupDetail:
@@ -132,6 +136,7 @@ type Deps struct {
 	GroupRulesPort domain.GroupRulesPort
 	PoliciesPort   domain.PoliciesPort
 	LogsPort       domain.LogsPort
+	AppsPort       domain.AppsPort
 
 	// Optional initial state for tests / direct embedding.
 	InitialScreen Screen
@@ -340,6 +345,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}, domain.PolicyType(msg.Type))
 		m.screens[ScreenPolicies] = mdl
 		return m, mdl.Init()
+	case OpenAppTypeMsg:
+		// Issue #166 — same pattern for Apps.
+		m.active = ScreenApps
+		m.overlay = OverlayNone
+		mdl := apps.NewWrapperForType(apps.Deps{
+			Port:   m.deps.AppsPort,
+			Clock:  m.deps.Clock,
+			Logger: m.deps.Logger,
+			Keys:   m.deps.Keys,
+			Width:  m.width,
+			Height: m.height,
+		}, domain.AppType(msg.Type))
+		m.screens[ScreenApps] = mdl
+		return m, mdl.Init()
 	}
 	// Non-routing messages: delegate to the active child screen so background
 	// fetch results (usersLoadedMsg, etc.) reach the right Model.
@@ -373,6 +392,8 @@ func screenFromName(name string) (Screen, bool) {
 		return ScreenPolicies, true
 	case "log", "logs", "l":
 		return ScreenLogs, true
+	case "app", "apps", "a":
+		return ScreenApps, true
 	}
 	return 0, false
 }
@@ -949,6 +970,16 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			Height:  m.height,
 		})
 		return mdl, mdl.Init()
+	case ScreenApps:
+		mdl := apps.NewWrapper(apps.Deps{
+			Port:   m.deps.AppsPort,
+			Clock:  m.deps.Clock,
+			Logger: m.deps.Logger,
+			Keys:   m.deps.Keys,
+			Width:  m.width,
+			Height: m.height,
+		})
+		return mdl, mdl.Init()
 	}
 	// Detail views are populated by drill-down handlers; not auto-built.
 	return nil, nil
@@ -1062,6 +1093,9 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// any existing Policies wrapper so the picker doesn't
 			// reappear underneath.
 			return m, openPolicyTypeCmd(domain.PolicyType(arg))
+		case paletteCmdAppType:
+			// Issue #166: same pattern for Apps.
+			return m, openAppTypeCmd(domain.AppType(arg))
 		}
 		return m, nil
 	case tea.KeyBackspace:
@@ -1120,6 +1154,13 @@ func paletteCommandPool() []string {
 		"post-auth-session",
 		"idp-discovery",
 		"log",
+		// Apps + per-app-type routes (issue #166).
+		"app",
+		"saml-app",
+		"oidc-app",
+		"bookmark-app",
+		"swa-app",
+		"scim-app",
 		"unmask", "mask",
 		"reset-password", "unlock", "reset-mfa",
 		"quit",
@@ -1197,6 +1238,9 @@ const (
 	// for the given PolicyType — issue #165 (`:okta-sign-on`,
 	// `:password-policy`, etc.).
 	paletteCmdPolicyType
+	// paletteCmdAppType opens ScreenApps straight on a list for the
+	// given AppType — issue #166 (`:saml-app`, `:oidc-app`, ...).
+	paletteCmdAppType
 )
 
 // UnmaskFieldMsg / MaskAllMsg are re-exported from the shared msgs
@@ -1246,6 +1290,10 @@ func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, arg 
 	if pt, ok := policyTypeFromName(strings.ToLower(cmd)); ok {
 		return paletteCmdPolicyType, 0, string(pt), true
 	}
+	// Direct app-type routes (issue #166).
+	if at, ok := appTypeFromName(strings.ToLower(cmd)); ok {
+		return paletteCmdAppType, 0, string(at), true
+	}
 	if s, found := screenFromName(strings.ToLower(cmd)); found {
 		return paletteCmdScreen, s, "", true
 	}
@@ -1254,6 +1302,28 @@ func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, arg 
 		return paletteCmdScreen, ScreenPolicies, "", true
 	}
 	return paletteCmdNone, 0, "", false
+}
+
+// appTypeFromName maps a palette verb to a domain.AppType — the
+// per-app-type palette routes (issue #166). Plurals + canonical
+// Okta signOnMode names both resolve so muscle memory routes.
+func appTypeFromName(name string) (domain.AppType, bool) {
+	switch name {
+	case "saml-app", "saml_app", "samlapp", "saml":
+		return domain.AppTypeSAML, true
+	case "oidc-app", "oidc_app", "oidcapp", "oidc",
+		"openid-connect", "openidconnect", "openid_connect":
+		return domain.AppTypeOIDC, true
+	case "bookmark-app", "bookmark_app", "bookmarkapp", "bookmark":
+		return domain.AppTypeBookmark, true
+	case "swa-app", "swa_app", "swaapp", "swa", "auto-login", "auto_login":
+		return domain.AppTypeSWA, true
+	case "scim-app", "scim_app", "scimapp", "scim":
+		return domain.AppTypeSCIM, true
+	case "other-app", "other_app", "otherapp":
+		return domain.AppTypeOther, true
+	}
+	return "", false
 }
 
 // policyTypeFromName maps a palette verb to a domain.PolicyType.
@@ -1380,6 +1450,13 @@ func openHelpCmd() tea.Cmd {
 // the Policies wrapper directly on the typed list (issue #165).
 func openPolicyTypeCmd(t domain.PolicyType) tea.Cmd {
 	return func() tea.Msg { return OpenPolicyTypeMsg{Type: string(t)} }
+}
+
+// openAppTypeCmd returns a Cmd that wraps the requested app type
+// into an OpenAppTypeMsg the App Shell handles by rebuilding the
+// Apps wrapper directly on the typed list (issue #166).
+func openAppTypeCmd(t domain.AppType) tea.Cmd {
+	return func() tea.Msg { return OpenAppTypeMsg{Type: string(t)} }
 }
 
 func screenChangeCmd(target Screen) tea.Cmd {

@@ -138,6 +138,9 @@ func (c *Client) Policies() *PoliciesAdapter { return &PoliciesAdapter{client: c
 // Logs returns a LogsAdapter bound to this client.
 func (c *Client) Logs() *LogsAdapter { return &LogsAdapter{client: c} }
 
+// Apps returns an AppsAdapter bound to this client (issue #166).
+func (c *Client) Apps() *AppsAdapter { return &AppsAdapter{client: c} }
+
 // doGet performs a GET, applying auth, rate-limit observation, and 429 retry.
 // The caller owns the returned response body and MUST close it.
 func (c *Client) doGet(ctx context.Context, urlStr string) (*http.Response, error) {

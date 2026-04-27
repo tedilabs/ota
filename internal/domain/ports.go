@@ -57,6 +57,13 @@ type PoliciesPort interface {
 	Rules(ctx context.Context, policyID string) ([]PolicyRule, error)
 }
 
+// AppsPort is the outbound boundary for Okta Applications. Powers
+// the Apps screen's type-select → list → detail flow (issue #166).
+type AppsPort interface {
+	List(ctx context.Context, q AppsQuery) (Iterator[App], error)
+	Get(ctx context.Context, id string) (App, error)
+}
+
 // LogsPort is the outbound boundary for Okta System Logs.
 // Search is the single entrypoint for both history and tail modes — tail is
 // implemented at the service layer by repeatedly calling Search with an

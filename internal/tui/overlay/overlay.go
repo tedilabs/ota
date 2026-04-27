@@ -461,6 +461,18 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"Esc", "back to type select / list"},
 			{"r", "toggle rich ↔ raw JSON in detail"},
 		}
+	case "apps":
+		return []helpEntry{
+			{"Enter / d", "pick type / open detail"},
+			{"Esc", "back to type select / list"},
+			{"/", "filter apps by label / name / mode"},
+			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
+			{"r", "toggle to / from JSON tab"},
+			{":saml-app", "jump straight to SAML 2.0 list"},
+			{":oidc-app", "jump straight to OpenID Connect list"},
+			{":bookmark-app", "jump straight to Bookmark list"},
+			{":swa-app", "jump straight to SWA / Auto-login list"},
+		}
 	case "logs":
 		return []helpEntry{
 			{"Enter / d", "open log event detail"},
