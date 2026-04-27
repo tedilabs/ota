@@ -78,11 +78,11 @@ func Test_LogsSearchFlow_TailToggleKey_S_EnablesIndicator(t *testing.T) {
 	out, err := io.ReadAll(tm.FinalOutput(t, teatest.WithFinalTimeout(3*time.Second)))
 	require.NoError(t, err)
 
-	// tail on → "[TAIL Ns]" 세그먼트가 나타나야 한다 (issue #126: 가시
-	// 피드백을 명확히 — 이전 "▶" / "tail" 검사는 OFF 상태와 구분이 약했다).
+	// tail on → "tail ON" 세그먼트가 나타나야 한다 (issue #152 status
+	// line은 "tail OFF" / "tail ON Ns" 형태로 표시).
 	s := string(out)
 	require.True(t,
-		bytes.Contains([]byte(s), []byte("[TAIL ")) &&
-			!bytes.Contains([]byte(s), []byte("[TAIL OFF]")),
-		"'s' 키 입력 후 tail 인디케이터가 [TAIL Ns] 형태로 변해야 한다 (TUI_DESIGN §3.3, REQ-R05 AC-3)")
+		bytes.Contains([]byte(s), []byte("tail ON")) &&
+			!bytes.Contains([]byte(s), []byte("tail OFF")),
+		"'s' 키 입력 후 tail 상태가 'tail ON' 으로 변해야 한다 (TUI_DESIGN §3.3, REQ-R05 AC-3)")
 }

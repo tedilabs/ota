@@ -51,13 +51,13 @@ func Test_LogsSearch_F_TogglesFollowVisibly(t *testing.T) {
 	})
 
 	before := m.View()
-	assert.Contains(t, before, "[FOLLOW]",
-		"default state must surface [FOLLOW] in the indicator")
+	assert.Contains(t, before, "follow ON",
+		"default state must surface 'follow ON' in the body status line")
 
 	m = runKey(t, m, 'f')
 	after := m.View()
-	assert.Contains(t, after, "[PAUSED]",
-		"`f` must flip the indicator to [PAUSED] regardless of tail state")
+	assert.Contains(t, after, "follow PAUSED",
+		"`f` must flip the indicator to 'follow PAUSED' regardless of tail state")
 }
 
 func Test_LogsSearch_S_TogglesTailVisibly(t *testing.T) {
@@ -70,12 +70,12 @@ func Test_LogsSearch_S_TogglesTailVisibly(t *testing.T) {
 		Clock:         clock.NewFake(time.Now()),
 	})
 
-	require.Contains(t, m.View(), "[TAIL OFF]",
-		"default state must show [TAIL OFF]")
+	require.Contains(t, m.View(), "tail OFF",
+		"default state must show 'tail OFF'")
 
 	m = runKey(t, m, 's')
-	assert.NotContains(t, m.View(), "[TAIL OFF]",
-		"`s` must flip tail off → on (indicator should switch to [TAIL Ns])")
+	assert.Contains(t, m.View(), "tail ON",
+		"`s` must flip tail off → on ('tail ON Ns')")
 }
 
 func Test_LogsSearch_R_RefetchesViaService(t *testing.T) {

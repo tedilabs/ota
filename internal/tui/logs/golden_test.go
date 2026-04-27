@@ -99,12 +99,13 @@ func Test_LogsList_HasColumnHeaders(t *testing.T) {
 }
 
 // Test_LogsList_TailIndicatorOff locks in REQ-R05 AC-3: with tail off, the
-// indicator says `[TAIL OFF]`. Currently passing — keep as regression guard.
+// status line says `tail OFF`. Issue #152 made the status line a labelled
+// "range … · tail … · follow …" form so the toggles read at a glance.
 func Test_LogsList_TailIndicatorOff(t *testing.T) {
 	t.Parallel()
 	m := logs.NewSearchModel(logs.Deps{InitialEvents: sampleLogsFixture(), Width: 120, Height: 30})
 	got := testfx.StripANSI(m.View())
-	assert.Contains(t, got, "TAIL", "Logs list must show TAIL indicator (REQ-R05 AC-3)")
+	assert.Contains(t, got, "tail OFF", "Logs list must show 'tail OFF' (REQ-R05 AC-3)")
 }
 
 // Test_LogsList_RendersFixtureActors guards against a regression where

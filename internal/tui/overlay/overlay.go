@@ -462,10 +462,16 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 		}
 	case "logs":
 		return []helpEntry{
-			{"Enter", "open log event detail"},
-			{"s", "toggle tail mode"},
-			{"f", "toggle auto-follow"},
-			{"r", "toggle rich ↔ raw JSON"},
+			{"Enter / d", "open log event detail"},
+			{"/", "filter events by substring"},
+			{"s", "toggle tail mode (on/off)"},
+			{"f", "toggle auto-follow (live ↔ paused)"},
+			{"r", "refresh — refetch the current window"},
+			{"0", "range: last 30m (default)"},
+			{"1", "range: last 1h"},
+			{"3", "range: last 3h"},
+			{"c", "range: last 12h"},
+			{"e", "range: last 24h"},
 		}
 	case "user-detail", "rule-detail":
 		return []helpEntry{

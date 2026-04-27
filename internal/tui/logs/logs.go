@@ -88,6 +88,11 @@ type SearchModel struct {
 	// timeRange is the active history window (issue #116). Default 30m;
 	// 1h / 3h / 12h / 24h selectable via `1`, `3`, `c`, `e` shortcuts.
 	timeRange time.Duration
+	// filter / filtering carry the `/` incremental filter state
+	// (issue #153). Filter narrows visible events by substring
+	// match on eventType / actor / displayMsg / outcome / IP.
+	filter    string
+	filtering bool
 }
 
 // NewSearchModel constructs a SearchModel with defaults (tail off, follow on,
@@ -114,10 +119,43 @@ func NewSearchModel(deps Deps) SearchModel {
 func (m SearchModel) TimeRange() time.Duration { return m.timeRange }
 
 // Count returns the visible/total event counts for the App Shell's
-// upper divider (issue #136). Logs has no inline filter so visible
-// always equals total.
+// upper divider (issue #136). With the `/` filter applied (#153)
+// `visible` reflects the post-filter row count.
 func (m SearchModel) Count() (visible, total int) {
-	return len(m.events), len(m.events)
+	return len(m.visible()), len(m.events)
+}
+
+// Filtering / Filter implement app.FilterStater so the App Shell can
+// render the floating `/` input box and stamp the active filter
+// into the chrome's upper divider (issues #123 + #153).
+func (m SearchModel) Filtering() bool { return m.filtering }
+func (m SearchModel) Filter() string  { return m.filter }
+
+// visible returns the event slice filtered by the active `/` query.
+// Substring match (case-insensitive) against eventType / displayMsg
+// / actor display+alternateID / outcome / IP — the surface most
+// operators search on.
+func (m SearchModel) visible() []domain.LogEvent {
+	if m.filter == "" {
+		return m.events
+	}
+	needle := strings.ToLower(m.filter)
+	out := make([]domain.LogEvent, 0, len(m.events))
+	for _, e := range m.events {
+		hay := strings.ToLower(strings.Join([]string{
+			e.EventType,
+			e.DisplayMsg,
+			e.Actor.DisplayName,
+			e.Actor.AlternateID,
+			string(e.Outcome.Result),
+			e.Outcome.Reason,
+			e.Client.IPAddress,
+		}, "\x00"))
+		if strings.Contains(hay, needle) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Init fetches the history list.
@@ -160,6 +198,45 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Filter-input mode (issue #153). `/` opens the prompt; the
+	// chrome renders the floating box. Enter applies, Esc cancels,
+	// Backspace backs out a char, runes append.
+	if m.filtering {
+		switch km.Type {
+		case tea.KeyEnter:
+			m.filtering = false
+			if n := len(m.visible()); n > 0 {
+				m.cursor = n - 1
+			} else {
+				m.cursor = 0
+			}
+			m.viewportTop = 0
+			return m, nil
+		case tea.KeyEsc:
+			m.filtering = false
+			m.filter = ""
+			return m, nil
+		case tea.KeyBackspace:
+			if n := len(m.filter); n > 0 {
+				m.filter = m.filter[:n-1]
+			}
+			return m, nil
+		case tea.KeyRunes:
+			m.filter += string(km.Runes)
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// Esc on the list with a stuck filter clears it (issue #131
+	// pattern, ported to logs).
+	if !m.opened && km.Type == tea.KeyEsc && m.filter != "" {
+		m.filter = ""
+		m.cursor = 0
+		m.viewportTop = 0
+		return m, nil
+	}
+
 	// Detail-mode keys (issue #135). Esc backs out, Tab / Shift-Tab
 	// cycle through Pretty / JSON / YAML, `r` jumps to / from JSON
 	// against the previously-visited non-JSON tab.
@@ -190,6 +267,7 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	rows := m.visible()
 	switch km.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
@@ -198,32 +276,38 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if page <= 0 {
 			page = 10
 		}
-		m.cursor = clampLogIdx(m.cursor+page, len(m.events))
+		m.cursor = clampLogIdx(m.cursor+page, len(rows))
 	case tea.KeyCtrlB:
 		page := shared.ListBodyRowBudget(m.height)
 		if page <= 0 {
 			page = 10
 		}
-		m.cursor = clampLogIdx(m.cursor-page, len(m.events))
+		m.cursor = clampLogIdx(m.cursor-page, len(rows))
 	case tea.KeyCtrlD:
 		page := shared.ListBodyRowBudget(m.height) / 2
 		if page < 1 {
 			page = 5
 		}
-		m.cursor = clampLogIdx(m.cursor+page, len(m.events))
+		m.cursor = clampLogIdx(m.cursor+page, len(rows))
 	case tea.KeyCtrlU:
 		page := shared.ListBodyRowBudget(m.height) / 2
 		if page < 1 {
 			page = 5
 		}
-		m.cursor = clampLogIdx(m.cursor-page, len(m.events))
+		m.cursor = clampLogIdx(m.cursor-page, len(rows))
 	case tea.KeyEnter:
-		if m.cursor >= 0 && m.cursor < len(m.events) {
-			m.detail = m.events[m.cursor]
+		if m.cursor >= 0 && m.cursor < len(rows) {
+			m.detail = rows[m.cursor]
 			m.opened = true
 		}
 	case tea.KeyRunes:
 		switch string(km.Runes) {
+		case "/":
+			// Open the `/` filter prompt (issue #153). The chrome
+			// renders the floating input box once Filtering() flips.
+			m.ggChord.Reset()
+			m.filtering = true
+			m.filter = ""
 		case "g":
 			if m.ggChord.Press(m.now()) {
 				m.cursor = 0
@@ -231,7 +315,7 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "G":
 			m.ggChord.Reset()
-			if n := len(m.events); n > 0 {
+			if n := len(rows); n > 0 {
 				m.cursor = n - 1
 			}
 		case "s":
@@ -249,7 +333,7 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "j":
 			m.ggChord.Reset()
-			if m.cursor < len(m.events)-1 {
+			if m.cursor < len(rows)-1 {
 				m.cursor++
 			}
 		case "k":
@@ -259,8 +343,8 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "d":
 			m.ggChord.Reset()
-			if m.cursor >= 0 && m.cursor < len(m.events) {
-				m.detail = m.events[m.cursor]
+			if m.cursor >= 0 && m.cursor < len(rows) {
+				m.detail = rows[m.cursor]
 				m.opened = true
 			}
 		// History window shortcuts (issue #116). Each refetches with the
@@ -317,22 +401,30 @@ func (m SearchModel) View() string {
 	now := m.now()
 
 	var b strings.Builder
-	// Resource label moved to chrome's upper divider (issue #133); the
-	// body now surfaces just the live state — time-range window and
-	// tail/follow toggles — so operators can read the controls at a
-	// glance without the redundant "System Logs" prefix.
-	b.WriteString("[")
-	b.WriteString(timeRangeLabel(m.timeRange))
-	b.WriteString("]  ")
-	b.WriteString(tailIndicator(m.tail, m.pollInterval, m.follow))
+	// Logs status line — surfaces (time-range window | tail | follow)
+	// state at a glance, plus an inline hint for the keys that flip
+	// each one. The user reported they couldn't tell whether `s`/`f`
+	// did anything and didn't know about the time-range shortcuts;
+	// this header makes both visible without leaving the screen
+	// (issue #152).
+	b.WriteString(tk.Muted.Render("range "))
+	b.WriteString(tk.Accent.Render(timeRangeLabel(m.timeRange)))
+	b.WriteString(tk.Muted.Render("  ·  "))
+	b.WriteString(renderTailState(m.tail, m.pollInterval, tk))
+	b.WriteString(tk.Muted.Render("  ·  "))
+	b.WriteString(renderFollowState(m.follow, tk))
+	b.WriteByte('\n')
+	b.WriteString(tk.Muted.Render(
+		"  range: 0=30m 1=1h 3=3h c=12h e=24h  ·  s=toggle tail  ·  f=toggle follow  ·  r=refresh  ·  /=filter"))
 	b.WriteByte('\n')
 	// 2-cell cursor gutter on the header keeps it aligned with data rows.
 	b.WriteString("  ")
 	b.WriteString(tk.Header.Render(m.formatLogsColumns("WHEN", "SEV", "EVENTTYPE", "ACTOR", "OUTCOME", "IP")))
 	b.WriteByte('\n')
-	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(m.events), shared.ListBodyRowBudget(m.height))
+	rows := m.visible()
+	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
 	for i := top; i < end; i++ {
-		row := m.renderLogsRow(m.events[i], now, tk)
+		row := m.renderLogsRow(rows[i], now, tk)
 		if i == m.cursor {
 			row = tk.Accent.Render("▸ " + row)
 		} else {
@@ -494,10 +586,28 @@ func timeRangeLabel(d time.Duration) string {
 	return "Last " + d.String()
 }
 
-// tailIndicator returns a two-segment status string surfacing both the
-// `s`-tail and `f`-follow toggles independently. Each segment is always
-// rendered so operators can see which key flipped what state — the
-// previous "TAIL OFF only" form hid follow's effect when tail was off.
+// renderTailState returns the live tail-mode segment for the body
+// status line — colour-coded green when ON, muted when OFF — so the
+// `s` key's effect is obvious even from the corner of the eye.
+func renderTailState(tail bool, interval time.Duration, tk shared.Tokens) string {
+	if !tail {
+		return tk.Muted.Render("tail OFF")
+	}
+	return tk.Success.Render(fmt.Sprintf("tail ON %ds", int(interval/time.Second)))
+}
+
+// renderFollowState returns the live follow-mode segment, paired
+// with renderTailState in the body's status line. Green = follow,
+// warning = paused (so `f` toggling reads as a state change).
+func renderFollowState(follow bool, tk shared.Tokens) string {
+	if follow {
+		return tk.Success.Render("follow ON")
+	}
+	return tk.Warning.Render("follow PAUSED")
+}
+
+// tailIndicator is the legacy combined status form retained for the
+// existing tests; new callers use renderTailState + renderFollowState.
 func tailIndicator(tail bool, interval time.Duration, follow bool) string {
 	tailSeg := "[TAIL OFF]"
 	if tail {
