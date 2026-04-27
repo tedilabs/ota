@@ -27,10 +27,11 @@ import (
 
 func init() { testfx.PinTestEnvironment() }
 
-// Test_AppShell_Chrome_HasContextBar locks in TUI_DESIGN §15.1: the chrome
-// includes org / profile / count / rl all on screen at once. Today's View
-// only prints `profile=...` and a screen tag — the org tenant, count, and
-// `[RL: ok]` are missing. Stays Red until Phase 6d-3.
+// Test_AppShell_Chrome_HasContextBar locks in TUI_DESIGN §15.1: the
+// chrome must surface program identity, env, and the live rate-limit
+// state. After the k9s-style restructure (issue #133) the env reads
+// as a `[prod]` badge instead of `profile=prod`, and the resource
+// label sits in the upper divider rather than its own row.
 func Test_AppShell_Chrome_HasContextBar(t *testing.T) {
 	t.Parallel()
 
@@ -41,14 +42,13 @@ func Test_AppShell_Chrome_HasContextBar(t *testing.T) {
 	got := testfx.StripANSI(m.View())
 
 	for _, fragment := range []string{
-		// TitleBar fields
-		"ota",
-		"profile=", // current shell uses profile=, the spec uses `· prod`
-		// ContextBar / status fields per §15.1
-		"RL:", // [RL: ok] / [RL: warn] / [RL: limited]
+		"ota",     // brand on the left
+		"[prod]",  // env badge on the left group
+		"[RL: ",   // rate-limit indicator on the right group
+		"─ Users ", // resource label embedded in the upper divider
 	} {
 		assert.Contains(t, got, fragment,
-			"App Shell chrome must include %q (TUI_DESIGN §15.1)", fragment)
+			"App Shell chrome must include %q (TUI_DESIGN §15.1, k9s rework)", fragment)
 	}
 }
 

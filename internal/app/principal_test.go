@@ -94,10 +94,10 @@ func Test_AppShell_PrincipalProbe_RendersInChrome(t *testing.T) {
 	m = updated.(app.Model)
 
 	view := testfx.StripANSI(m.View())
-	assert.Contains(t, view, "as admin@acme.com",
-		"chrome ContextBar must surface the authenticated principal")
-	assert.Contains(t, view, "profile=prod",
-		"chrome ContextBar must keep the profile label after principal lands")
+	assert.Contains(t, view, "admin@acme.com",
+		"chrome TitleBar must surface the authenticated principal")
+	assert.Contains(t, view, "[prod]",
+		"chrome TitleBar must keep the env badge after principal lands")
 }
 
 // Test_AppShell_PrincipalProbe_OnlyFiresOnce — the latch must guard the
@@ -147,8 +147,10 @@ func Test_AppShell_PrincipalProbe_NoUsersPort(t *testing.T) {
 	assert.Nil(t, cmd, "no UsersPort wired → no /me Cmd")
 
 	view := testfx.StripANSI(m.View())
-	assert.Contains(t, view, "profile=prod",
-		"chrome must still show profile=…")
-	assert.NotContains(t, view, "as ",
-		"chrome must not emit a half-rendered 'as ' segment")
+	assert.Contains(t, view, "[prod]",
+		"chrome must still show the env badge")
+	// No principal slot expected when UsersPort is unwired — the
+	// brand·tenant·[prod] segment is the entire left group.
+	assert.NotContains(t, view, "@acme.com",
+		"chrome must not invent a principal when no UsersPort is wired")
 }

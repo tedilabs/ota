@@ -268,7 +268,10 @@ func (m ListModel) View() string {
 	now := m.now()
 
 	var b strings.Builder
-	b.WriteString("Policies › ")
+	// Resource label moved to chrome's upper divider (issue #133); the
+	// policy type subcategory is still surfaced inline so the operator
+	// knows which policy kind they drilled into.
+	b.WriteString("› ")
 	b.WriteString(string(m.policyType))
 	b.WriteString("  ")
 	b.WriteString(itoa(len(m.policies)))

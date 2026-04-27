@@ -97,14 +97,26 @@ type ChromeInput struct {
 // RenderChrome composes the global 3-zone chrome (Header / MainBody /
 // StatusBar) around Body and returns the complete View string. Pure function;
 // safe to call from tea.View().
+//
+// Header (k9s-style):
+//
+//	╭────────────────────────────────────────────────────────╮
+//	│ ota v0.1.6  acme.okta.com  admin@acme.com  [prod]   [RL: ok]  UTC │
+//	├─ Users · q="alice" ────────────────────────────────────┤
+//	│ <body>                                                 │
+//	├────────────────────────────────────────────────────────┤
+//	│ <key hints>                                            │
+//	╰────────────────────────────────────────────────────────╯
+//
+// The resource label sits inside the upper divider — k9s uses the same
+// trick to keep the title visible without spending an extra row. The
+// older 2-row TitleBar/ContextBar combination duplicated env info and
+// burned a content row that the body needed for data.
 func RenderChrome(in ChromeInput) string {
 	width := in.Width
 	if width <= 0 {
 		width = ChromeWidth
 	}
-	// Inner area excludes left+right borders. Content rows are rendered as
-	// "│ <text padded to (inner-1)>│" so a single-cell left padding sits
-	// between border and text — matches TUI_DESIGN §16 golden snapshots.
 	inner := width - 2
 	if inner < 10 {
 		inner = 10
@@ -116,43 +128,14 @@ func RenderChrome(in ChromeInput) string {
 
 	tk := in.Tokens
 
-	// ---- Row 0: TitleBar -------------------------------------------------
-	left := titleLeft(in.Brand, in.Tenant, in.Profile, tk)
-	right := titleRight(in.RateLimit, in.Timezone, in.Version, tk)
+	// ---- TitleBar -------------------------------------------------------
+	left := titleLeftK9s(in.Brand, in.Version, in.Tenant, in.Principal, in.Profile, tk)
+	right := titleRight(in.RateLimit, in.Timezone, "", tk) // version moves to left group
 	titleBar := joinLR(left, right, contentWidth)
 
-	// ---- Row 1: ContextBar ----------------------------------------------
-	resource := in.Resource
-	if resource == "" {
-		resource = "—"
-	}
-	resStyled := tk.Header.Render(resource)
-	counterLine := in.Counter
-	if in.Filter != "" {
-		if counterLine != "" {
-			counterLine = counterLine + " · q=\"" + in.Filter + "\""
-		} else {
-			counterLine = "q=\"" + in.Filter + "\""
-		}
-	}
-	// Left-hand of the ContextBar is the resource label (+ optional
-	// counter / active filter). The counter slot is empty for the
-	// initial v0.1.x lineup — child screens render their own header
-	// inside the body — but we still glue any non-empty counter on so
-	// the slot is available without changing this signature.
-	leftCtx := resStyled
-	if counterLine != "" {
-		leftCtx = resStyled + "  " + tk.Muted.Render(counterLine)
-	}
-	// Right-side of the ContextBar: profile + (when known) the
-	// authenticated Okta principal so the operator can see whose token
-	// is in flight (issue #124). Falls back to profile only when the
-	// /me lookup hasn't completed yet.
-	rightCtx := tk.Muted.Render("profile=" + in.Profile)
-	if in.Principal != "" {
-		rightCtx = tk.Muted.Render("as ") + tk.Accent.Render(in.Principal) + tk.Muted.Render("  profile="+in.Profile)
-	}
-	contextBar := joinLR(leftCtx, rightCtx, contentWidth)
+	// ---- Upper divider with embedded resource label --------------------
+	resourceLabel := buildResourceLabel(in.Resource, in.Filter, tk)
+	upperDivider := dividerWithLabel(width, resourceLabel)
 
 	// ---- Body -----------------------------------------------------------
 	bodyLines := splitLinesPadded(in.Body, contentWidth)
@@ -161,14 +144,11 @@ func RenderChrome(in ChromeInput) string {
 	}
 
 	// ---- KeyHints -------------------------------------------------------
-	// Offline badge takes precedence over the right end of the hints line so
-	// it never gets truncated when the terminal is narrow.
 	hints := in.KeyHints
 	keyHints := hints
 	if in.Offline {
 		offline := tk.Danger.Render("[offline]")
 		offlineWidth := visibleWidth(offline)
-		// Reserve room: trim hints to (contentWidth - offlineWidth - 2 spaces)
 		room := contentWidth - offlineWidth - 2
 		if room < 0 {
 			room = 0
@@ -184,9 +164,7 @@ func RenderChrome(in ChromeInput) string {
 	b.WriteByte('\n')
 	b.WriteString(contentRow(titleBar))
 	b.WriteByte('\n')
-	b.WriteString(contentRow(contextBar))
-	b.WriteByte('\n')
-	b.WriteString(dividerRow(width))
+	b.WriteString(upperDivider)
 	b.WriteByte('\n')
 	for _, line := range bodyLines {
 		b.WriteString(contentRow(line))
@@ -198,6 +176,89 @@ func RenderChrome(in ChromeInput) string {
 	b.WriteByte('\n')
 	b.WriteString(roundedBottom(width))
 	return b.String()
+}
+
+// titleLeftK9s renders the grouped left-hand context segment:
+//
+//	ota v0.1.6  ·  acme.okta.com  ·  admin@acme.com  [prod]
+//
+// brand+version sit together (the program identity); tenant + principal
+// answer "where am I, as whom"; the env badge tags the profile.
+// Principal collapses cleanly when the /me probe hasn't returned yet.
+func titleLeftK9s(brand, version, tenant, principal, profile string, tk Tokens) string {
+	if brand == "" {
+		brand = "ota"
+	}
+	parts := []string{}
+	if version != "" {
+		parts = append(parts, tk.Header.Render(brand+" "+version))
+	} else {
+		parts = append(parts, tk.Header.Render(brand))
+	}
+	if tenant != "" {
+		parts = append(parts, tk.Muted.Render("·")+" "+tk.Muted.Render(tenant))
+	}
+	if principal != "" {
+		parts = append(parts, tk.Muted.Render("·")+" "+tk.Accent.Render(principal))
+	}
+	if profile != "" {
+		parts = append(parts, envBadgeBracketed(profile, tk))
+	}
+	return strings.Join(parts, " ")
+}
+
+// envBadgeBracketed wraps the profile in brackets and color-codes by
+// environment classifier. `[prod]` reads as a tag rather than a path
+// segment.
+func envBadgeBracketed(profile string, tk Tokens) string {
+	body := "[" + profile + "]"
+	switch strings.ToLower(profile) {
+	case "prod", "production":
+		return tk.Header.Render(body)
+	case "staging", "stage":
+		return tk.Warning.Render(body)
+	default:
+		return tk.Muted.Render(body)
+	}
+}
+
+// buildResourceLabel assembles the text that gets stamped into the
+// upper divider — `Users` plain, `Users · q="alice"` when filter
+// active. Returns the styled string ready for dividerWithLabel.
+func buildResourceLabel(resource, filter string, tk Tokens) string {
+	if resource == "" {
+		resource = "—"
+	}
+	label := tk.Header.Render(resource)
+	if filter != "" {
+		label = label + tk.Muted.Render(` · q="`+filter+`"`)
+	}
+	return label
+}
+
+// dividerWithLabel returns `├─ <label> ──────────┤` of total `width`
+// cells. The label sits two cells from the left border (k9s keeps the
+// title left-anchored so the eye lands on it consistently). When the
+// label is wider than the divider can hold, it gets truncated to fit
+// rather than overflowing the box.
+//
+// Layout: ├ + ─ + ' ' + label + ' ' + tail*─ + ┤  →  5 fixed cells.
+func dividerWithLabel(width int, label string) string {
+	if width < 6 {
+		return dividerRow(width)
+	}
+	const fixedFrame = 5
+	available := width - fixedFrame
+	labelW := visibleWidth(label)
+	if labelW > available {
+		label = truncateVisible(label, available)
+		labelW = visibleWidth(label)
+	}
+	tail := width - fixedFrame - labelW
+	if tail < 0 {
+		tail = 0
+	}
+	return "├─ " + label + " " + strings.Repeat("─", tail) + "┤"
 }
 
 // contentRow wraps a (already padded to contentWidth) line with the left
@@ -233,16 +294,15 @@ func envBadge(profile string, tk Tokens) string {
 	}
 }
 
-// titleRight renders the [RL: ok] · TZ · version segment.
-func titleRight(rl RateLimitState, tz, version string, tk Tokens) string {
+// titleRight renders the right-hand status segment: rate-limit badge
+// and timezone. The version label moved into titleLeft (k9s groups
+// program identity together) so the right side is now just live
+// runtime state.
+func titleRight(rl RateLimitState, tz, _ string, tk Tokens) string {
 	if tz == "" {
 		tz = "UTC"
 	}
-	if version == "" {
-		version = "v0.0.0"
-	}
-	rlBadge := renderRLBadge(rl, tk)
-	return rlBadge + "    " + tk.Muted.Render(tz+"  "+version)
+	return renderRLBadge(rl, tk) + "    " + tk.Muted.Render(tz)
 }
 
 func renderRLBadge(rl RateLimitState, tk Tokens) string {

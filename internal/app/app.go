@@ -420,7 +420,7 @@ func (m Model) View() string {
 		Timezone:  "UTC",
 		RateLimit: m.rateLimitState(),
 		Resource:  m.resourceLabel(),
-		Counter:   m.counterLabel(),
+		Filter:    m.activeChildFilter(),
 		Body:      body,
 		BodyLines: bodyLines,
 		KeyHints:  m.keyHints(tokens),
@@ -450,11 +450,13 @@ func clampWidth(w int) int {
 	return w
 }
 
-// clampBodyLines maps a terminal height to a reasonable body-row count. The
-// chrome itself reserves 7 rows (TUI_DESIGN §15.0a.5): top border, TitleBar,
-// ContextBar, body divider, status divider, KeyHints, bottom border.
+// clampBodyLines maps a terminal height to a reasonable body-row count.
+// The chrome reserves 6 rows (issue #133, k9s-style header): top
+// border, TitleBar, upper divider (with embedded resource label),
+// status divider, KeyHints, bottom border. The previous ContextBar
+// row collapsed into the upper divider so the body now gets +1 row.
 func clampBodyLines(h int) int {
-	const reserved = 7
+	const reserved = 6
 	if h <= 0 {
 		return 16
 	}
@@ -512,13 +514,6 @@ func (m Model) resourceLabel() string {
 	return m.active.String()
 }
 
-// counterLabel returns the optional "N of M" slot rendered next to the
-// resource label on the ContextBar. Child screens already render their
-// own counter inside the body for v0.1.x, so the slot stays empty by
-// default and the chrome reserves it for future cross-screen counters.
-func (m Model) counterLabel() string {
-	return ""
-}
 
 // profileLabel returns the env classifier surfaced in the TitleBar.
 func (m Model) profileLabel() string {
@@ -610,6 +605,22 @@ func (m Model) activeChildIsFiltering() bool {
 	}
 	fs, ok := child.(FilterStater)
 	return ok && fs.Filtering()
+}
+
+// activeChildFilter returns the active child's applied filter string
+// — empty when no filter is set or the screen doesn't support filters.
+// Surfaced in the chrome's upper divider so operators always see what's
+// narrowing the visible row set, even after the `/` prompt closes.
+func (m Model) activeChildFilter() string {
+	child, ok := m.screens[m.active]
+	if !ok {
+		return ""
+	}
+	fs, ok := child.(FilterStater)
+	if !ok {
+		return ""
+	}
+	return fs.Filter()
 }
 
 // renderFilterBox builds the floating input box for `/` filter mode.

@@ -316,10 +316,9 @@ func (m ListModel) View() string {
 	rows := m.visible()
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Group Rules  %d of %d", len(rows), len(m.rules)))
-	if m.filter != "" {
-		b.WriteString(" · q=\"" + m.filter + "\"")
-	}
+	// Resource label + filter both live in the chrome's upper divider
+	// now (issue #133); body just surfaces the visible count.
+	b.WriteString(fmt.Sprintf("%d of %d", len(rows), len(m.rules)))
 	b.WriteByte('\n')
 	// Inline "filter:" dropped in v0.1.5-6 — App Shell renders a floating
 	// input box for `/`.

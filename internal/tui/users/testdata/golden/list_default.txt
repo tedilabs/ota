@@ -1,4 +1,4 @@
-Users  5 of 5
+5 of 5
   STATUS          LOGIN                       TITLE              DIVISION  EMPLOYEE#  NICKNAME    LAST LOGIN  CHANGED
 ▸ [+] ACTIVE      alice@acme.com              —                  —         —          —               2h ago        —
   [+] ACTIVE      alan.turing@acme.com        —                  —         —          —               1d ago        —

@@ -24,10 +24,15 @@ func init() { testfx.PinTestEnvironment() }
 func bigUserSlice(n int) []domain.User {
 	out := make([]domain.User, n)
 	for i := 0; i < n; i++ {
+		// Login carries both letter + bucket digit so the assertion
+		// "row 0 dropped out of viewport" doesn't accidentally find
+		// the same login on row 26 (the % 26 wraparound).
+		letter := string(rune('a' + i%26))
+		bucket := string(rune('0' + i/26))
 		out[i] = domain.User{
-			ID:      "00u_" + string(rune('a'+i%26)) + string(rune('0'+i/26)),
+			ID:      "00u_" + letter + bucket,
 			Status:  domain.UserStatusActive,
-			Profile: domain.UserProfile{Login: "u" + string(rune('a'+i%26)) + "@acme.com"},
+			Profile: domain.UserProfile{Login: "u" + letter + bucket + "@acme.com"},
 		}
 	}
 	return out

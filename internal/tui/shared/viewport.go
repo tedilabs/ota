@@ -4,20 +4,19 @@ package shared
 // into the number of data rows a list ListModel can render without pushing
 // the chrome's top border off-screen.
 //
-// The reservation accounts for:
-//   - chrome top border, 2 header rows, divider, 2 status rows, bottom
-//     border (~7 rows, see app.clampBodyLines);
-//   - the list's own context line / optional filter / column header
-//     (~3 rows).
+// Reservation (k9s-style chrome, issue #133):
+//   - chrome top border, TitleBar, upper divider, status divider,
+//     KeyHints, bottom border (~6 rows);
+//   - the list's own count line / column header (~2 rows);
+//   - 1-row safety margin so a sudden +1 wrap doesn't clip.
 //
-// We keep a 1-row safety margin so a sudden +1 wrap (e.g. wide column
-// header in narrow terminals) doesn't push the chrome off. Returns 0 when
-// height is not yet known so callers can fall back to "render everything".
+// Returns 0 when height is not yet known so callers can fall back to
+// "render everything".
 func ListBodyRowBudget(height int) int {
 	if height <= 0 {
 		return 0
 	}
-	const reserved = 11
+	const reserved = 9
 	rows := height - reserved
 	if rows < 3 {
 		rows = 3

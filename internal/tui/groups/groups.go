@@ -339,11 +339,9 @@ func (m ListModel) View() string {
 
 	var b strings.Builder
 	count := groupsCounter(len(rows), len(m.groups))
-	b.WriteString("Groups  ")
+	// Resource label + filter both live in the chrome's upper divider
+	// now (issue #133); body just surfaces the visible count.
 	b.WriteString(count)
-	if m.filter != "" {
-		b.WriteString(" · q=\"" + m.filter + "\"")
-	}
 	b.WriteByte('\n')
 	// Inline "filter:" dropped in v0.1.5-6 — App Shell renders a floating
 	// input box for `/`.

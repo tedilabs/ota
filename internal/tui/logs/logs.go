@@ -265,7 +265,10 @@ func (m SearchModel) View() string {
 	now := m.now()
 
 	var b strings.Builder
-	b.WriteString("System Logs  ")
+	// Resource label moved to chrome's upper divider (issue #133); the
+	// body now surfaces just the live state — time-range window and
+	// tail/follow toggles — so operators can read the controls at a
+	// glance without the redundant "System Logs" prefix.
 	b.WriteString("[")
 	b.WriteString(timeRangeLabel(m.timeRange))
 	b.WriteString("]  ")

@@ -650,16 +650,12 @@ func (m ListModel) windowBounds(total int) (int, int) {
 	return shared.WindowBounds(m.cursor, m.viewportTop, total, shared.ListBodyRowBudget(m.height))
 }
 
-// contextLine renders the "Users · 5 of N · q="..."" line (TUI_DESIGN §15.2
-// ContextBar). The chrome's ContextBar will eventually consume these counts,
-// but rendering them here keeps screens self-contained for tests that drive
-// the model directly.
+// contextLine renders the "5 of N" count above the column header.
+// The resource label and filter both moved into the chrome's upper
+// divider (issue #133), so the body just shows the visible count —
+// no more "Users " prefix duplicating what the chrome already says.
 func (m ListModel) contextLine(visible []domain.User) string {
-	count := fmt.Sprintf("%d of %d", len(visible), len(m.users))
-	if m.filter != "" {
-		count = count + ` · q="` + m.filter + `"`
-	}
-	return "Users  " + count
+	return fmt.Sprintf("%d of %d", len(visible), len(m.users))
 }
 
 // renderUsersHeader returns the column header row, width-aware
