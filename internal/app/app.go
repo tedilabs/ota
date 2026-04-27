@@ -1055,23 +1055,22 @@ func (m Model) paletteSuggestions() []string {
 	return out
 }
 
-// paletteCommandPool returns every literal command name the palette
-// recognises today. Kept inline rather than reflected from screenFromName
-// so we can include verbs (`unmask`, `mask`, `quit`) that screenFromName
-// itself doesn't enumerate.
+// paletteCommandPool returns the singular canonical command names
+// the palette autocomplete surfaces. Plural / hyphenated / k9s-style
+// short aliases (users / grouprules / gr / etc.) are still routed by
+// screenFromName when the operator types them — issue #150 just
+// drops them from the suggestion list to keep the autocomplete
+// readable.
 func paletteCommandPool() []string {
 	return []string{
-		"users", "user", "u",
-		"groups", "group", "g",
-		"rules", "rule",
-		"grouprules", "grouprule",
-		"group-rules", "group-rule",
-		"group_rules", "group_rule", "gr",
-		"policies", "policy",
-		"logs", "log", "l",
+		"user",
+		"group",
+		"rule",
+		"policy",
+		"log",
 		"unmask", "mask",
 		"reset-password", "unlock", "reset-mfa",
-		"quit", "exit", "q",
+		"quit",
 	}
 }
 
