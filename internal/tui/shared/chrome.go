@@ -3,6 +3,9 @@ package shared
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // ChromeWidth is the total terminal column count the chrome renders against
@@ -412,8 +415,10 @@ func padToVisible(s string, width int, _ Tokens) string {
 	return padTo(s, width)
 }
 
-// truncateVisible trims s so its visible width is <= width, ignoring ANSI
-// escape sequences. Returns s unchanged when already short enough.
+// truncateVisible trims s so its visible width is <= width, ignoring
+// ANSI escape sequences and honouring East-Asian-Wide rune widths.
+// CJK or emoji that takes 2 cells but would push past the budget is
+// dropped whole — never half-rendered.
 func truncateVisible(s string, width int) string {
 	if visibleWidth(s) <= width {
 		return s
@@ -421,8 +426,6 @@ func truncateVisible(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	// We want to preserve any prefix-only ANSI escapes intact for the trimmed
-	// portion. Walk runes, count visible cells, drop ANSI CSI sequences whole.
 	var b strings.Builder
 	visible := 0
 	i := 0
@@ -444,9 +447,22 @@ func truncateVisible(s string, width int) string {
 			}
 			continue
 		}
-		b.WriteByte(c)
-		visible++
-		i++
+		// Decode one rune and measure its display width.
+		r, size := utf8.DecodeRuneInString(s[i:])
+		w := runewidth.RuneWidth(r)
+		if w == 0 {
+			// Combining or zero-width rune — emit it without
+			// advancing the visible counter.
+			b.WriteString(s[i : i+size])
+			i += size
+			continue
+		}
+		if visible+w > width {
+			break
+		}
+		b.WriteString(s[i : i+size])
+		visible += w
+		i += size
 	}
 	return b.String()
 }
@@ -459,19 +475,15 @@ func truncateVisible(s string, width int) string {
 // exit escape mode prematurely.
 func VisibleWidth(s string) int { return visibleWidth(s) }
 
-// visibleWidth returns the visible cell count of s, ignoring ANSI escapes.
-// We strip CSI sequences (lipgloss uses these) so width math survives styled
-// segments. A full grapheme/runewidth pass would be more correct; this is
-// adequate for the ASCII profile used by goldens and the runes we render.
+// visibleWidth returns the visible cell count of s, ignoring ANSI
+// escapes AND honouring East-Asian-Wide / Emoji rune widths via
+// go-runewidth. The previous rune-count implementation broke
+// alignment whenever an Okta tenant carried Korean / Japanese /
+// Chinese display names (issue #148): a Hangul char is 1 rune but
+// 2 visible cells, so the row's right edge drifted past the chrome
+// border by one cell per CJK rune.
 func visibleWidth(s string) int {
-	stripped := stripCSI(s)
-	// rune count works since chrome uses ASCII text + box-drawing glyphs that
-	// each occupy one cell.
-	count := 0
-	for range stripped {
-		count++
-	}
-	return count
+	return runewidth.StringWidth(stripCSI(s))
 }
 
 // stripCSI is a lightweight ANSI-CSI stripper for width calculation. Mirrors
