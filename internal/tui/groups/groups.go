@@ -129,6 +129,20 @@ type groupMembersErrMsg struct {
 	err     error
 }
 
+// OpenDetailByIDMsg is the cross-screen drill-down request: another
+// screen (User Detail Groups row Enter — issue #171) routes through
+// the App Shell which forwards this msg into the Groups list. The
+// list fetches the group by ID and, on success, sets m.detail +
+// m.opened so the View flips to the detail surface immediately.
+type OpenDetailByIDMsg struct {
+	ID string
+}
+
+// groupOpenedByIDMsg / groupOpenByIDErrMsg deliver the result of an
+// OpenDetailByIDMsg-triggered fetch.
+type groupOpenedByIDMsg struct{ group domain.Group }
+type groupOpenByIDErrMsg struct{ err error }
+
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
 	return ListModel{
@@ -176,6 +190,26 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailMembersErr = msg.err
 			m.detailMembersLoaded = true
 		}
+		return m, nil
+	case OpenDetailByIDMsg:
+		// Issue #171: another screen requested drill-down by ID.
+		// Fetch the group and surface the detail surface inline.
+		if msg.ID == "" || m.deps.Port == nil {
+			return m, nil
+		}
+		return m, fetchGroupByIDCmd(m.deps.Port, msg.ID)
+	case groupOpenedByIDMsg:
+		m.detail = msg.group
+		m.opened = true
+		m.detailTab = GroupDetailTabProfile
+		m.detailRawReturn = GroupDetailTabProfile
+		m.detailMembers = nil
+		m.detailMembersGroup = ""
+		m.detailMembersErr = nil
+		m.detailMembersLoaded = false
+		return m, nil
+	case groupOpenByIDErrMsg:
+		m.lastErr = msg.err
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -872,6 +906,24 @@ func fetchGroupsCmd(port domain.GroupsPort) tea.Cmd {
 			out = append(out, g)
 		}
 		return groupsLoadedMsg{groups: out}
+	}
+}
+
+// fetchGroupByIDCmd resolves a group via GroupsPort.Get for the
+// cross-screen drill-down (issue #171: User Detail Groups row Enter).
+// On success returns groupOpenedByIDMsg so the list can flip into
+// detail mode.
+func fetchGroupByIDCmd(port domain.GroupsPort, id string) tea.Cmd {
+	return func() tea.Msg {
+		if port == nil {
+			return groupOpenByIDErrMsg{err: domain.ErrNotFound}
+		}
+		ctx := context.Background()
+		g, err := port.Get(ctx, id)
+		if err != nil {
+			return groupOpenByIDErrMsg{err: err}
+		}
+		return groupOpenedByIDMsg{group: g}
 	}
 }
 

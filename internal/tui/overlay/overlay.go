@@ -486,7 +486,15 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"c", "range: last 12h"},
 			{"e", "range: last 24h"},
 		}
-	case "user-detail", "rule-detail":
+	case "user-detail":
+		return []helpEntry{
+			{"Tab / Shift-Tab", "cycle detail tabs"},
+			{"r", "jump to / from [Raw] tab"},
+			{"] / [", "next / prev box (Info / Groups / Apps)"},
+			{"Enter", "open Group / App detail (Groups / Apps box)"},
+			{"Esc", "back to list"},
+		}
+	case "rule-detail":
 		return []helpEntry{
 			{"Tab / Shift-Tab", "cycle detail tabs"},
 			{"r", "jump to / from [Raw] tab"},

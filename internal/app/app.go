@@ -329,6 +329,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updated, cmd
 		}
 		return m, nil
+	case OpenGroupDetailMsg:
+		// Issue #171: cross-screen drill-down from User Detail's
+		// Groups row Enter. Switch to the Groups list (building it
+		// if needed), then forward an internal groups msg so the
+		// list fetches the target group and surfaces detail mode.
+		m.active = ScreenGroups
+		m.overlay = OverlayNone
+		var cmd tea.Cmd
+		m, cmd = m.ensureScreen(ScreenGroups)
+		child := m.screens[ScreenGroups]
+		updated, fwd := child.Update(groups.OpenDetailByIDMsg{ID: msg.ID})
+		m.screens[ScreenGroups] = updated
+		return m, tea.Batch(cmd, fwd)
+	case OpenAppDetailMsg:
+		// Issue #171: same flow for the Apps Wrapper.
+		m.active = ScreenApps
+		m.overlay = OverlayNone
+		var cmd tea.Cmd
+		m, cmd = m.ensureScreen(ScreenApps)
+		child := m.screens[ScreenApps]
+		updated, fwd := child.Update(apps.OpenDetailByIDMsg{ID: msg.ID})
+		m.screens[ScreenApps] = updated
+		return m, tea.Batch(cmd, fwd)
 	case OpenPolicyTypeMsg:
 		// Issue #165 — replace the Policies wrapper with one scoped
 		// to the requested type so the picker doesn't render

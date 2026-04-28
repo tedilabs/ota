@@ -128,6 +128,35 @@ func appTypeLabel(t domain.AppType) string {
 type appsLoadedMsg struct{ apps []domain.App }
 type appsErrMsg struct{ err error }
 
+// OpenDetailByIDMsg routes a cross-screen drill-down request into the
+// Apps Wrapper (issue #171: User Detail Apps row Enter). The Wrapper
+// fetches the app, infers its AppType from the SignOnMode, and flips
+// directly into a typed list with detail mode open.
+type OpenDetailByIDMsg struct {
+	ID string
+}
+
+// appOpenedByIDMsg / appOpenByIDErrMsg deliver the result of an
+// OpenDetailByIDMsg-triggered fetch back to the Wrapper.
+type appOpenedByIDMsg struct{ app domain.App }
+type appOpenByIDErrMsg struct{ err error }
+
+// fetchAppByIDCmd resolves an App via AppsPort.Get for cross-screen
+// drill-down (issue #171). The Wrapper consumes the result.
+func fetchAppByIDCmd(port domain.AppsPort, id string) tea.Cmd {
+	return func() tea.Msg {
+		if port == nil {
+			return appOpenByIDErrMsg{err: domain.ErrNotFound}
+		}
+		ctx := context.Background()
+		a, err := port.Get(ctx, id)
+		if err != nil {
+			return appOpenByIDErrMsg{err: err}
+		}
+		return appOpenedByIDMsg{app: a}
+	}
+}
+
 // ListModel renders apps of a single type.
 type ListModel struct {
 	deps        Deps

@@ -318,6 +318,27 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailLine = 0
 			m.detailVisual = false
 			return m, nil
+		case tea.KeyEnter:
+			// Issue #171 — drill-down on the Groups / Apps boxes:
+			// Enter on a focused row asks the App Shell to switch
+			// to the matching screen and open detail by ID.
+			switch m.detailFocus {
+			case 1:
+				if m.detailGroupsCur >= 0 && m.detailGroupsCur < len(m.detailGroups) {
+					id := m.detailGroups[m.detailGroupsCur].ID
+					if id != "" {
+						return m, openGroupDetailCmd(id)
+					}
+				}
+			case 2:
+				if m.detailAppsCur >= 0 && m.detailAppsCur < len(m.detailApps) {
+					id := m.detailApps[m.detailAppsCur].ID
+					if id != "" {
+						return m, openAppDetailCmd(id)
+					}
+				}
+			}
+			return m, nil
 		case tea.KeyRunes:
 			switch string(msg.Runes) {
 			case "r":
@@ -1595,6 +1616,18 @@ func fetchUserAppLinksCmd(port domain.UsersPort, userID string) tea.Cmd {
 		}
 		return userDetailAppsLoadedMsg{userID: userID, apps: links}
 	}
+}
+
+// openGroupDetailCmd / openAppDetailCmd emit the cross-screen drill-down
+// requests the App Shell routes to the Groups / Apps screens (issue
+// #171). The shared.OpenGroup/AppDetailMsg types live in the shared
+// package to keep the users → app import boundary clean.
+func openGroupDetailCmd(id string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenGroupDetailMsg{ID: id} }
+}
+
+func openAppDetailCmd(id string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenAppDetailMsg{ID: id} }
 }
 
 var _ tea.Model = ListModel{}

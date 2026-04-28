@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/tedilabs/ota/internal/domain"
+	"github.com/tedilabs/ota/internal/tui/shared"
 )
 
 // Global message types broadcast via the app shell.
@@ -105,3 +106,13 @@ type OpenResourceMsg struct {
 	Kind string
 	ID   string
 }
+
+// OpenGroupDetailMsg / OpenAppDetailMsg are re-exported from
+// internal/tui/shared so callers that only depend on internal/app can
+// keep referencing them by their App Shell name (issue #171). The
+// concrete types live in shared to avoid a tui→app import cycle when
+// child screens (e.g. Users detail) emit drill-down requests.
+type (
+	OpenGroupDetailMsg = shared.OpenGroupDetailMsg
+	OpenAppDetailMsg   = shared.OpenAppDetailMsg
+)

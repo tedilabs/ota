@@ -50,6 +50,38 @@ func (w Wrapper) Init() tea.Cmd {
 }
 
 func (w Wrapper) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Cross-screen drill-down (issue #171): handled at Wrapper level so
+	// it works regardless of the current mode (the operator may not have
+	// picked a type yet).
+	switch m := msg.(type) {
+	case OpenDetailByIDMsg:
+		if m.ID == "" || w.deps.Port == nil {
+			return w, nil
+		}
+		return w, fetchAppByIDCmd(w.deps.Port, m.ID)
+	case appOpenedByIDMsg:
+		t := m.app.Type
+		if t == "" {
+			t = domain.AppTypeOther
+		}
+		w.picked = t
+		w.list = NewListModel(w.deps, t)
+		w.list.apps = []domain.App{m.app}
+		w.list.detail = m.app
+		w.list.opened = true
+		w.list.detailTab = AppDetailTabPretty
+		w.mode = wrapperModeList
+		w.selector = NewTypeSelectModel(w.deps)
+		return w, nil
+	case appOpenByIDErrMsg:
+		// Surface the failure on the list's error panel so the operator
+		// sees something rather than a silent no-op. Keep the wrapper
+		// mode as-is.
+		if w.mode == wrapperModeList {
+			w.list.lastErr = m.err
+		}
+		return w, nil
+	}
 	switch w.mode {
 	case wrapperModeSelect:
 		updated, cmd := w.selector.Update(msg)
