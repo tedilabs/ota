@@ -94,31 +94,35 @@ func (a *UsersAdapter) ListAppLinks(ctx context.Context, userID string) ([]domai
 		if err := json.Unmarshal(r, &w); err != nil {
 			return nil, fmt.Errorf("okta: decode appLink: %w", err)
 		}
+		// Prefer appInstanceId so drill-down navigation (issue
+		// #171) lands on the App detail screen. Fall back to the
+		// appLink's own id when missing.
+		appID := w.AppInstanceID
+		if appID == "" {
+			appID = w.ID
+		}
 		out = append(out, domain.AppLink{
-			ID:         w.AppInstanceID,
-			Label:      w.Label,
-			AppName:    w.AppName,
-			LinkURL:    w.LinkURL,
-			SignOnMode: w.CredentialsSetup, // appLinks doesn't carry signOnMode; CredentialsSetup is the closest hint
+			ID:      appID,
+			Label:   w.Label,
+			AppName: w.AppName,
+			LinkURL: w.LinkURL,
 		})
 	}
 	return out, nil
 }
 
 // wireAppLink mirrors /api/v1/users/{id}/appLinks payload entries.
-// Okta omits most fields here vs. /api/v1/apps; we surface what the
-// detail view actually wants to render.
+// Issue #169: only the fields the detail view actually renders are
+// pulled in. The previous form had `credentialsSetup` as `string`
+// but Okta returns it as a `bool`, which made the whole array
+// decode fail and the user saw "apps failed: …" instead of an app
+// list.
 type wireAppLink struct {
-	ID               string `json:"id"`
-	AppInstanceID    string `json:"appInstanceId"`
-	AppName          string `json:"appName"`
-	Label            string `json:"label"`
-	LinkURL          string `json:"linkUrl"`
-	LogoURL          string `json:"logoUrl"`
-	AppAssignmentID  string `json:"appAssignmentId"`
-	CredentialsSetup string `json:"credentialsSetup"`
-	Hidden           bool   `json:"hidden"`
-	SortOrder        int    `json:"sortOrder"`
+	ID            string `json:"id"`
+	AppInstanceID string `json:"appInstanceId"`
+	AppName       string `json:"appName"`
+	Label         string `json:"label"`
+	LinkURL       string `json:"linkUrl"`
 }
 
 // ListFactors returns the user's registered MFA factors (REQ-R01 AC-6).

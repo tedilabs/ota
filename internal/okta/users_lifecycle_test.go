@@ -87,6 +87,49 @@ func Test_UsersAdapter_Unlock_PostsAndReturnsNil(t *testing.T) {
 	assert.True(t, called, "Unlock must hit /lifecycle/unlock")
 }
 
+// Test_UsersAdapter_ListAppLinks_DecodesOktaShape pins the live
+// Okta /api/v1/users/{id}/appLinks payload: `credentialsSetup` is
+// a bool (issue #169 — earlier code had it as string and the whole
+// decode failed with "cannot unmarshal bool into Go struct field
+// wireAppLink.credentialsSetup of type string").
+func Test_UsersAdapter_ListAppLinks_DecodesOktaShape(t *testing.T) {
+	t.Parallel()
+
+	body := `[
+	  {
+	    "id": "0oa_link1",
+	    "label": "Salesforce",
+	    "linkUrl": "https://acme.okta.com/home/salesforce",
+	    "logoUrl": "https://logo",
+	    "appName": "salesforce",
+	    "appInstanceId": "0oa_app1",
+	    "appAssignmentId": "0ua_assign1",
+	    "credentialsSetup": false,
+	    "hidden": false,
+	    "sortOrder": 0
+	  }
+	]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/users/00u_alice/appLinks", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	cli, err := okta.NewClient(context.Background(), okta.Config{
+		OrgURL: srv.URL, APIToken: "t", HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	links, err := cli.Users().ListAppLinks(context.Background(), "00u_alice")
+	require.NoError(t, err, "decode must succeed even with bool credentialsSetup (issue #169)")
+	require.Len(t, links, 1)
+	assert.Equal(t, "0oa_app1", links[0].ID,
+		"AppLink.ID must prefer appInstanceId so drill-down lands on the App detail")
+	assert.Equal(t, "Salesforce", links[0].Label)
+	assert.Equal(t, "salesforce", links[0].AppName)
+}
+
 func Test_UsersAdapter_ResetFactors_PostsAndReturnsNil(t *testing.T) {
 	t.Parallel()
 
