@@ -15,9 +15,15 @@ import (
 // AppsAdapter implements domain.AppsPort against /api/v1/apps.
 type AppsAdapter struct{ client *Client }
 
-// List iterates /api/v1/apps with optional type-filter via the Okta
-// `filter=` parameter (e.g., `filter=signOnMode eq "SAML_2_0"`).
-// Powers the per-type list views (issue #166).
+// List iterates /api/v1/apps. The Okta `filter=` parameter on this
+// endpoint only supports `user.id` / `group.id` / `name` predicates —
+// NOT `signOnMode`, even though that's the field most operators want
+// to scope by. Earlier ota builds tried `signOnMode eq "SAML_2_0"`
+// and Okta rejected the request with E0000001 (issue: user reported
+// "Failed to load Apps · Request rejected by Okta"). The fix is
+// client-side: fetch the full app list once and filter by Type
+// inside the iterator. Slightly slower for tenants with many apps
+// but reliable.
 func (a *AppsAdapter) List(ctx context.Context, q domain.AppsQuery) (domain.Iterator[domain.App], error) {
 	initial := a.client.buildURL("/api/v1/apps" + buildAppsQuery(q))
 	decode := func(raw json.RawMessage) (domain.App, error) {
@@ -32,8 +38,33 @@ func (a *AppsAdapter) List(ctx context.Context, q domain.AppsQuery) (domain.Iter
 		out.Raw = append(json.RawMessage(nil), raw...)
 		return out, nil
 	}
-	return newPagedIterator(a.client, initial, decode), nil
+	base := newPagedIterator(a.client, initial, decode)
+	if q.Type == "" {
+		return base, nil
+	}
+	return &appTypeFilterIter{inner: base, want: q.Type}, nil
 }
+
+// appTypeFilterIter wraps a domain.Iterator[App] and surfaces only
+// the rows whose Type matches `want`. Drops the rest so the upstream
+// list / View renders a clean per-type slice.
+type appTypeFilterIter struct {
+	inner domain.Iterator[domain.App]
+	want  domain.AppType
+}
+
+func (it *appTypeFilterIter) Next(ctx context.Context) (domain.App, bool, error) {
+	for {
+		app, hasMore, err := it.inner.Next(ctx)
+		if err != nil || !hasMore {
+			return app, hasMore, err
+		}
+		if app.Type == it.want {
+			return app, true, nil
+		}
+	}
+}
+func (it *appTypeFilterIter) Close() error { return it.inner.Close() }
 
 // Get fetches a single app instance by id.
 func (a *AppsAdapter) Get(ctx context.Context, id string) (domain.App, error) {
@@ -113,12 +144,10 @@ func parseAppTime(s string) time.Time {
 
 func buildAppsQuery(q domain.AppsQuery) string {
 	v := url.Values{}
-	// Caller filter wins; type-narrow only when no explicit filter.
-	switch {
-	case q.Filter != "":
+	// Only Okta-supported predicates land on the wire; Type is
+	// applied client-side via appTypeFilterIter (see List).
+	if q.Filter != "" {
 		v.Set("filter", q.Filter)
-	case q.Type != "":
-		v.Set("filter", `signOnMode eq "`+oktaSignOnModeFor(q.Type)+`"`)
 	}
 	if q.Q != "" {
 		v.Set("q", q.Q)
@@ -132,25 +161,6 @@ func buildAppsQuery(q domain.AppsQuery) string {
 		v.Set("after", q.After)
 	}
 	return "?" + v.Encode()
-}
-
-// oktaSignOnModeFor returns the canonical signOnMode string for an
-// AppType — the inverse of appTypeFromSignOnMode for the modes Okta
-// accepts in `signOnMode eq …` filters.
-func oktaSignOnModeFor(t domain.AppType) string {
-	switch t {
-	case domain.AppTypeSAML:
-		return "SAML_2_0"
-	case domain.AppTypeOIDC:
-		return "OPENID_CONNECT"
-	case domain.AppTypeBookmark:
-		return "BOOKMARK"
-	case domain.AppTypeSWA:
-		return "AUTO_LOGIN"
-	case domain.AppTypeSCIM:
-		return "SCIM_2_0"
-	}
-	return ""
 }
 
 var _ domain.AppsPort = (*AppsAdapter)(nil)
