@@ -146,28 +146,6 @@ type ListModel struct {
 	// after the operator switched screens or the model was rebuilt.
 	refreshGen int
 
-	// groupCounts / appCounts hold the per-user assigned-groups /
-	// assigned-apps counts surfaced by the GROUPS and APPS columns
-	// (issue #178 v0.1.16). Populated lazily after a fresh
-	// usersLoadedMsg; entries arrive via userCountLoadedMsg as each
-	// per-user fetch resolves. The bool sibling map records whether
-	// the fetch has completed at least once so the View can render
-	// "…" until then. Keyed by domain.User.ID.
-	groupCounts  map[string]int
-	appCounts    map[string]int
-	countsLoaded map[string]bool
-}
-
-// userCountLoadedMsg delivers a per-user (groups, apps) count pair
-// back into the Update loop after the lazy fetch resolves (issue
-// #178 v0.1.16). Either field can be -1 to mean "fetch failed";
-// the View renders "?" in that case so operators see the gap.
-type userCountLoadedMsg struct {
-	userID    string
-	groupsN   int
-	appsN     int
-	groupsErr bool
-	appsErr   bool
 }
 
 // usersLoadedMsg delivers the result of the initial fetch.
@@ -269,36 +247,6 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.users = msg.users
 		m.lastErr = nil
 		m.lastUpdated = m.now()
-		// Issue #178 — kick off lazy per-user count fetches for
-		// the GROUPS / APPS columns. Skip users we already
-		// loaded counts for (refresh ticks land here too) so we
-		// don't burn rate-limit budget on rows the operator
-		// already saw populated.
-		if cmds := m.kickUserCountFetches(); cmds != nil {
-			return m, cmds
-		}
-		return m, nil
-	case userCountLoadedMsg:
-		if m.groupCounts == nil {
-			m.groupCounts = map[string]int{}
-		}
-		if m.appCounts == nil {
-			m.appCounts = map[string]int{}
-		}
-		if m.countsLoaded == nil {
-			m.countsLoaded = map[string]bool{}
-		}
-		if msg.groupsErr {
-			m.groupCounts[msg.userID] = -1
-		} else {
-			m.groupCounts[msg.userID] = msg.groupsN
-		}
-		if msg.appsErr {
-			m.appCounts[msg.userID] = -1
-		} else {
-			m.appCounts[msg.userID] = msg.appsN
-		}
-		m.countsLoaded[msg.userID] = true
 		return m, nil
 	case usersErrMsg:
 		m.lastErr = msg.err
@@ -1345,8 +1293,6 @@ func (m ListModel) renderUsersHeader(tk shared.Tokens) string {
 		"DEPARTMENT",
 		"TITLE",
 		usersSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
-		"GROUPS",
-		"APPS",
 		usersSortLabel("LAST LOGIN", m.sortBy, SortLastLogin, m.sortDir, tk),
 		usersSortLabel("LAST UPDATED", m.sortBy, SortCreated, m.sortDir, tk),
 	)
@@ -1381,10 +1327,8 @@ func (m ListModel) renderUsersRow(u domain.User, now time.Time, tk shared.Tokens
 		}
 		return s
 	}
-	groupsCell, appsCell := m.formatCountCells(u.ID)
 	// Order matches usersColumnSpecs: LOGIN first so it lands left of
-	// the eye, identity attrs next, status mid-row, counts after
-	// status, timestamps right.
+	// the eye, identity attrs next, status mid-row, timestamps right.
 	return m.formatUsersColumns(
 		u.Profile.Login,
 		dash(u.Profile.NickName),
@@ -1392,31 +1336,9 @@ func (m ListModel) renderUsersRow(u domain.User, now time.Time, tk shared.Tokens
 		dash(u.Profile.Department),
 		dash(u.Profile.Title),
 		status,
-		groupsCell,
-		appsCell,
 		lastLogin,
 		lastUpdated,
 	)
-}
-
-// formatCountCells renders the GROUPS / APPS cells for one user row.
-// Returns "…" while the lazy fetch is in flight, "?" on fetch error,
-// and the raw integer otherwise (issue #178 v0.1.16).
-func (m ListModel) formatCountCells(userID string) (string, string) {
-	if userID == "" || m.countsLoaded == nil || !m.countsLoaded[userID] {
-		return "…", "…"
-	}
-	g := m.groupCounts[userID]
-	a := m.appCounts[userID]
-	groupsCell := strconv.Itoa(g)
-	if g < 0 {
-		groupsCell = "?"
-	}
-	appsCell := strconv.Itoa(a)
-	if a < 0 {
-		appsCell = "?"
-	}
-	return groupsCell, appsCell
 }
 
 // usersColumnSpecs is the column lineup the user pinned in #145:
@@ -1446,11 +1368,6 @@ func usersColumnSpecs() []shared.ColumnSpec {
 		{Title: "DEPARTMENT", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 4},
 		{Title: "TITLE", Kind: shared.ColumnFlex, Min: 12, Weight: 2, DropPriority: 3},
 		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 16, DropPriority: 0, AlignCenter: true},
-		// Issue #178 v0.1.16 — assigned-counts surface here so
-		// operators see fan-out at a glance. Drops earliest on
-		// narrow terminals so identity attrs survive.
-		{Title: "GROUPS", Kind: shared.ColumnFixed, Min: 6, DropPriority: 7, AlignRight: true},
-		{Title: "APPS", Kind: shared.ColumnFixed, Min: 4, DropPriority: 7, AlignRight: true},
 		{Title: "LAST LOGIN", Kind: shared.ColumnFixed, Min: 10, DropPriority: 2, AlignRight: true},
 		{Title: "LAST UPDATED", Kind: shared.ColumnFixed, Min: 12, DropPriority: 1, AlignRight: true},
 	}
@@ -1532,7 +1449,7 @@ func (m ListModel) clampHScroll(want int) int {
 // column across the currently visible rows. Powers ShrinkSpecsToFit so
 // every column gets exactly the width its data demands. Order must
 // match usersColumnSpecs: LOGIN, NICKNAME, DIVISION, DEPARTMENT,
-// TITLE, STATUS, GROUPS, APPS, LAST LOGIN, LAST UPDATED.
+// TITLE, STATUS, LAST LOGIN, LAST UPDATED.
 func (m ListModel) observedColumnWidths() []int {
 	rows := m.visible()
 	if len(rows) == 0 {
@@ -1546,10 +1463,9 @@ func (m ListModel) observedColumnWidths() []int {
 		}
 		return s
 	}
-	out := make([]int, 10)
+	out := make([]int, 8)
 	for _, u := range rows {
 		statusBadge := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
-		groupsCell, appsCell := m.formatCountCells(u.ID)
 		cells := []string{
 			u.Profile.Login,
 			dash(u.Profile.NickName),
@@ -1557,8 +1473,6 @@ func (m ListModel) observedColumnWidths() []int {
 			dash(u.Profile.Department),
 			dash(u.Profile.Title),
 			statusBadge,
-			groupsCell,
-			appsCell,
 			shared.RelativeTime(u.LastLogin, now),
 			shared.RelativeTime(&u.LastUpdated, now),
 		}
@@ -1584,10 +1498,15 @@ func visibleCellWidth(s string) int {
 }
 
 // usersSortColumnIdx maps a SortKey to its index in usersColumnSpecs.
-// v0.1.16 column order (issue #178 inserts GROUPS / APPS after STATUS):
+// Issue #145 column order (v0.1.17 reverts the GROUPS / APPS columns
+// added in #178 — they fanned out 2N extra API calls per list load
+// and were the largest single contributor to rate-limit warnings;
+// the per-user counts still surface inside User Detail's Groups +
+// Apps boxes which are lazily fetched only when the operator opens
+// the detail surface):
 //
 //	0 LOGIN · 1 NICKNAME · 2 DIVISION · 3 DEPARTMENT · 4 TITLE ·
-//	5 STATUS · 6 GROUPS · 7 APPS · 8 LAST LOGIN · 9 LAST UPDATED
+//	5 STATUS · 6 LAST LOGIN · 7 LAST UPDATED
 func usersSortColumnIdx(k SortKey) int {
 	switch k {
 	case SortName:
@@ -1595,9 +1514,9 @@ func usersSortColumnIdx(k SortKey) int {
 	case SortStatus:
 		return 5
 	case SortLastLogin:
-		return 8
+		return 6
 	case SortCreated:
-		return 9
+		return 7
 	}
 	return -1
 }
@@ -1879,54 +1798,6 @@ func fetchUserAppLinksCmd(port domain.UsersPort, userID string) tea.Cmd {
 			return userDetailAppsErrMsg{userID: userID, err: err}
 		}
 		return userDetailAppsLoadedMsg{userID: userID, apps: links}
-	}
-}
-
-// kickUserCountFetches builds a tea.Batch of per-user count fetch
-// Cmds for users that don't yet have a cached count (issue #178
-// v0.1.16). Each Cmd issues one ListGroups + one ListAppLinks call
-// per user; results land via userCountLoadedMsg. Returns nil when
-// no port is wired (test harnesses) or every visible user is
-// already cached.
-func (m ListModel) kickUserCountFetches() tea.Cmd {
-	if m.deps.Port == nil {
-		return nil
-	}
-	cmds := make([]tea.Cmd, 0, len(m.users))
-	for _, u := range m.users {
-		if u.ID == "" {
-			continue
-		}
-		if m.countsLoaded != nil && m.countsLoaded[u.ID] {
-			continue
-		}
-		cmds = append(cmds, fetchUserCountsCmd(m.deps.Port, u.ID))
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
-}
-
-// fetchUserCountsCmd issues a single (groups, apps) count probe for
-// one user. The Cmd does both fetches sequentially in the same
-// goroutine — Bubbletea spawns these in parallel via tea.Batch, so
-// the fan-out concurrency comes for free.
-func fetchUserCountsCmd(port domain.UsersPort, userID string) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		out := userCountLoadedMsg{userID: userID}
-		if groups, err := port.ListGroups(ctx, userID); err != nil {
-			out.groupsErr = true
-		} else {
-			out.groupsN = len(groups)
-		}
-		if links, err := port.ListAppLinks(ctx, userID); err != nil {
-			out.appsErr = true
-		} else {
-			out.appsN = len(links)
-		}
-		return out
 	}
 }
 

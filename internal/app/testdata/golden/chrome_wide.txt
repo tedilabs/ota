@@ -1,7 +1,7 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ ota v0.1.14 · acme.okta.com [prod]                                                                    [RL: ok]    UTC│
 ├─ Users ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│   LOGIN               NICKNAME    DIVISION    DEPARTMENT  TITLE               STATUS       GROUPS  APPS  LAST LOGIN  │
+│   LOGIN               NICKNAME    DIVISION    DEPARTMENT  TITLE              STATUS       LAST LOGIN  LAST UPDATED   │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
