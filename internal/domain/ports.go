@@ -18,6 +18,10 @@ type UsersPort interface {
 	Get(ctx context.Context, idOrLogin string) (User, error)
 	ListGroups(ctx context.Context, userID string) ([]Group, error)
 	ListFactors(ctx context.Context, userID string) ([]Factor, error)
+	// ListAppLinks returns the app dashboard links for the user —
+	// what /api/v1/users/{id}/appLinks reports. Powers the "assigned
+	// apps" section on User Detail (issue #168).
+	ListAppLinks(ctx context.Context, userID string) ([]AppLink, error)
 
 	// Lifecycle operations (issue #125). These are the first WRITE ops
 	// in ota — they alter the user's auth state in the upstream Okta

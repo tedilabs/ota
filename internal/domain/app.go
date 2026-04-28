@@ -27,6 +27,18 @@ const (
 	AppStatusInactive AppStatus = "INACTIVE"
 )
 
+// AppLink is the per-user "assigned app" projection — what
+// /api/v1/users/{id}/appLinks returns. Lighter than App because
+// the appLinks endpoint omits most metadata; just enough to
+// surface "what apps does Alice see in her dashboard".
+type AppLink struct {
+	ID         string // app instance ID (00oa…)
+	Label      string // operator-facing label
+	AppName    string // canonical app name (e.g. "salesforce")
+	LinkURL    string // user-specific deep link
+	SignOnMode string
+}
+
 // App represents an Okta application instance.
 type App struct {
 	ID          string

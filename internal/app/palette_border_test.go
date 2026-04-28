@@ -38,6 +38,9 @@ func (p *borderUsersPort) ListGroups(_ context.Context, _ string) ([]domain.Grou
 func (p *borderUsersPort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
 	return nil, nil
 }
+func (p *borderUsersPort) ListAppLinks(_ context.Context, _ string) ([]domain.AppLink, error) {
+	return nil, nil
+}
 func (p *borderUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (string, error) {
 	return "", nil
 }

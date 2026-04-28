@@ -235,6 +235,9 @@ func (p *seededUsersPort) ListGroups(_ context.Context, _ string) ([]domain.Grou
 func (p *seededUsersPort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
 	return nil, nil
 }
+func (p *seededUsersPort) ListAppLinks(_ context.Context, _ string) ([]domain.AppLink, error) {
+	return nil, nil
+}
 
 func (p *seededUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (string, error) {
 	return "", nil

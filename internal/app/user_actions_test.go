@@ -55,6 +55,9 @@ func (p *recordingUsersPort) ListGroups(_ context.Context, _ string) ([]domain.G
 func (p *recordingUsersPort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
 	return nil, nil
 }
+func (p *recordingUsersPort) ListAppLinks(_ context.Context, _ string) ([]domain.AppLink, error) {
+	return nil, nil
+}
 func (p *recordingUsersPort) ResetPassword(_ context.Context, id string, sendEmail bool) (string, error) {
 	p.resetCalls = append(p.resetCalls, resetCall{UserID: id, SendEmail: sendEmail})
 	return p.resetURL, p.resetErr

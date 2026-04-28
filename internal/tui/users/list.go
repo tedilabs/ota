@@ -102,6 +102,19 @@ type ListModel struct {
 	// when the natural row exceeds the viewport, `h` retreats. Tracked
 	// per ListModel so each list keeps its own state independently.
 	hScroll int
+
+	// detailGroups / detailApps carry the lazy-fetched assigned-groups
+	// and assigned-apps lists for the open user (issue #168). Rendered
+	// as two extra sections beneath the 2-col Pretty layout. Per-user
+	// keying (detailExtrasUser) prevents a stale fetch from a
+	// previously-opened user clobbering the current detail.
+	detailGroups       []domain.Group
+	detailGroupsErr    error
+	detailGroupsLoaded bool
+	detailApps         []domain.AppLink
+	detailAppsErr      error
+	detailAppsLoaded   bool
+	detailExtrasUser   string
 }
 
 // usersLoadedMsg delivers the result of the initial fetch.
@@ -113,6 +126,31 @@ type usersErrMsg struct{ err error }
 
 // userOpenedMsg delivers the result of a detail fetch.
 type userOpenedMsg struct{ user domain.User }
+
+// userDetailGroupsLoadedMsg / userDetailGroupsErrMsg deliver the
+// result of the per-user assigned-groups fetch the detail view
+// renders below the 2-col Pretty layout (issue #168). The userID is
+// round-tripped so a stale fetch from a previously-opened detail
+// can't overwrite the current one.
+type userDetailGroupsLoadedMsg struct {
+	userID string
+	groups []domain.Group
+}
+type userDetailGroupsErrMsg struct {
+	userID string
+	err    error
+}
+
+// userDetailAppsLoadedMsg / userDetailAppsErrMsg are the apps
+// counterpart of the messages above.
+type userDetailAppsLoadedMsg struct {
+	userID string
+	apps   []domain.AppLink
+}
+type userDetailAppsErrMsg struct {
+	userID string
+	err    error
+}
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
@@ -149,11 +187,51 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case userOpenedMsg:
 		m.detailUser = msg.user
 		m.opened = true
-		// v0.1.1: detail mode is rendered inline by the same ListModel — see
-		// View()'s `m.opened` branch. The earlier tea.Quit shortcut, used by
-		// teatest harnesses to drain final output, is gone now that operators
-		// can press `d` repeatedly and Esc back to the list. v0.2 will replace
-		// this with App Shell OpenResourceMsg routing.
+		// Issue #168 — kick off the assigned-groups + assigned-apps
+		// fetches so the extra sections render below the Pretty
+		// layout. Reset cached results so a previous detail's data
+		// doesn't flash before the new fetches return.
+		if m.detailExtrasUser != msg.user.ID {
+			m.detailExtrasUser = msg.user.ID
+			m.detailGroups = nil
+			m.detailGroupsErr = nil
+			m.detailGroupsLoaded = false
+			m.detailApps = nil
+			m.detailAppsErr = nil
+			m.detailAppsLoaded = false
+		}
+		if m.deps.Port != nil {
+			return m, tea.Batch(
+				fetchUserGroupsCmd(m.deps.Port, msg.user.ID),
+				fetchUserAppLinksCmd(m.deps.Port, msg.user.ID),
+			)
+		}
+		return m, nil
+	case userDetailGroupsLoadedMsg:
+		if m.opened && m.detailUser.ID == msg.userID {
+			m.detailGroups = msg.groups
+			m.detailGroupsErr = nil
+			m.detailGroupsLoaded = true
+		}
+		return m, nil
+	case userDetailGroupsErrMsg:
+		if m.opened && m.detailUser.ID == msg.userID {
+			m.detailGroupsErr = msg.err
+			m.detailGroupsLoaded = true
+		}
+		return m, nil
+	case userDetailAppsLoadedMsg:
+		if m.opened && m.detailUser.ID == msg.userID {
+			m.detailApps = msg.apps
+			m.detailAppsErr = nil
+			m.detailAppsLoaded = true
+		}
+		return m, nil
+	case userDetailAppsErrMsg:
+		if m.opened && m.detailUser.ID == msg.userID {
+			m.detailAppsErr = msg.err
+			m.detailAppsLoaded = true
+		}
 		return m, nil
 	case shared.UnmaskFieldMsg:
 		// :unmask <field> from the App Shell palette (issue #115). Only
@@ -204,6 +282,15 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailRawReturn = DetailTabProfile
 			m.detailLine = 0
 			m.detailVisualAnchor = 0
+			// Issue #168: clear cached groups/apps so the next user
+			// fetches fresh.
+			m.detailExtrasUser = ""
+			m.detailGroups = nil
+			m.detailGroupsErr = nil
+			m.detailGroupsLoaded = false
+			m.detailApps = nil
+			m.detailAppsErr = nil
+			m.detailAppsLoaded = false
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = (m.detailTab + 1) % detailTabCount
@@ -581,6 +668,13 @@ func (m ListModel) clampedCursor() ListModel {
 func (m ListModel) renderDetailWithCursor() string {
 	tk := activeTokens()
 	body := m.newDetail().View()
+	// Issue #168: append assigned-groups + assigned-apps sections
+	// beneath the Pretty tab body so operators see what the user is
+	// in / sees on their dashboard without leaving the detail surface.
+	// Only the Pretty tab gets the extras — JSON / YAML stay raw.
+	if m.detailTab == DetailTabPretty {
+		body = body + "\n" + m.renderDetailExtras(tk)
+	}
 	lines := strings.Split(body, "\n")
 
 	// The first three lines (header / tab bar / divider) are not
@@ -683,12 +777,82 @@ func (m ListModel) newDetail() DetailModel {
 // navigation only counts content rows.
 func (m ListModel) detailBodyLines() []string {
 	body := m.newDetail().View()
+	if m.detailTab == DetailTabPretty {
+		body = body + "\n" + m.renderDetailExtras(activeTokens())
+	}
 	all := strings.Split(body, "\n")
 	const headerLines = 3
 	if len(all) <= headerLines {
 		return nil
 	}
 	return all[headerLines:]
+}
+
+// renderDetailExtras builds the "Groups" + "Apps" sections appended
+// to the bottom of the Pretty tab (issue #168). Each section has
+// three states: loading / error / loaded — the loading state shows
+// a muted hint while the lazy fetch is in flight, the error state
+// surfaces the failure inline, and the loaded state lists the
+// rows. Empty results render as "(none)".
+func (m ListModel) renderDetailExtras(tk shared.Tokens) string {
+	const sectionWidth = 56
+	var b strings.Builder
+	b.WriteString(shared.SectionHeader("Groups", sectionWidth))
+	b.WriteByte('\n')
+	switch {
+	case m.detailGroupsErr != nil:
+		b.WriteString("  ")
+		b.WriteString(tk.Danger.Render("groups failed: " + m.detailGroupsErr.Error()))
+		b.WriteByte('\n')
+	case !m.detailGroupsLoaded:
+		b.WriteString("  ")
+		b.WriteString(tk.Muted.Render("loading groups…"))
+		b.WriteByte('\n')
+	case len(m.detailGroups) == 0:
+		b.WriteString("  ")
+		b.WriteString(tk.Muted.Render("(no groups)"))
+		b.WriteByte('\n')
+	default:
+		for _, g := range m.detailGroups {
+			b.WriteString("  ")
+			b.WriteString(tk.Muted.Render("[" + string(g.Type) + "]"))
+			b.WriteString("  ")
+			b.WriteString(g.Profile.Name)
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteByte('\n')
+	b.WriteString(shared.SectionHeader("Apps", sectionWidth))
+	b.WriteByte('\n')
+	switch {
+	case m.detailAppsErr != nil:
+		b.WriteString("  ")
+		b.WriteString(tk.Danger.Render("apps failed: " + m.detailAppsErr.Error()))
+		b.WriteByte('\n')
+	case !m.detailAppsLoaded:
+		b.WriteString("  ")
+		b.WriteString(tk.Muted.Render("loading apps…"))
+		b.WriteByte('\n')
+	case len(m.detailApps) == 0:
+		b.WriteString("  ")
+		b.WriteString(tk.Muted.Render("(no apps assigned)"))
+		b.WriteByte('\n')
+	default:
+		for _, a := range m.detailApps {
+			b.WriteString("  ")
+			label := a.Label
+			if label == "" {
+				label = a.AppName
+			}
+			b.WriteString(label)
+			if a.AppName != "" && a.AppName != label {
+				b.WriteString("  ")
+				b.WriteString(tk.Muted.Render("(" + a.AppName + ")"))
+			}
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // itoaSimple is a tiny strconv.Itoa shim used by handleKey's toast string
@@ -1156,6 +1320,30 @@ func openUserCmd(port domain.UsersPort, id string) tea.Cmd {
 			return userOpenedMsg{user: domain.User{ID: id}}
 		}
 		return userOpenedMsg{user: u}
+	}
+}
+
+// fetchUserGroupsCmd lazily loads the user's assigned groups for
+// the User Detail Groups section (issue #168).
+func fetchUserGroupsCmd(port domain.UsersPort, userID string) tea.Cmd {
+	return func() tea.Msg {
+		groups, err := port.ListGroups(context.Background(), userID)
+		if err != nil {
+			return userDetailGroupsErrMsg{userID: userID, err: err}
+		}
+		return userDetailGroupsLoadedMsg{userID: userID, groups: groups}
+	}
+}
+
+// fetchUserAppLinksCmd lazily loads the user's assigned apps for
+// the User Detail Apps section (issue #168).
+func fetchUserAppLinksCmd(port domain.UsersPort, userID string) tea.Cmd {
+	return func() tea.Msg {
+		links, err := port.ListAppLinks(context.Background(), userID)
+		if err != nil {
+			return userDetailAppsErrMsg{userID: userID, err: err}
+		}
+		return userDetailAppsLoadedMsg{userID: userID, apps: links}
 	}
 }
 

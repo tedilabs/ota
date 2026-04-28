@@ -15,6 +15,7 @@ type UsersPortFake struct {
 	GetFunc           func(ctx context.Context, idOrLogin string) (domain.User, error)
 	ListGroupsFunc    func(ctx context.Context, userID string) ([]domain.Group, error)
 	ListFactorsFunc   func(ctx context.Context, userID string) ([]domain.Factor, error)
+	ListAppLinksFunc  func(ctx context.Context, userID string) ([]domain.AppLink, error)
 	ResetPasswordFunc func(ctx context.Context, userID string, sendEmail bool) (string, error)
 	UnlockFunc        func(ctx context.Context, userID string) error
 	ResetFactorsFunc  func(ctx context.Context, userID string) error
@@ -46,7 +47,10 @@ func (f *UsersPortFake) Get(ctx context.Context, idOrLogin string) (domain.User,
 func (f *UsersPortFake) ListGroups(ctx context.Context, userID string) ([]domain.Group, error) {
 	f.t.Helper()
 	if f.ListGroupsFunc == nil {
-		f.t.Fatalf("UsersPortFake.ListGroups called but ListGroupsFunc is not set")
+		// Default empty — issue #168 made detail-open call this on
+		// every user, so fakes that don't care about groups
+		// shouldn't have to wire a func.
+		return nil, nil
 	}
 	return f.ListGroupsFunc(ctx, userID)
 }
@@ -54,9 +58,20 @@ func (f *UsersPortFake) ListGroups(ctx context.Context, userID string) ([]domain
 func (f *UsersPortFake) ListFactors(ctx context.Context, userID string) ([]domain.Factor, error) {
 	f.t.Helper()
 	if f.ListFactorsFunc == nil {
-		f.t.Fatalf("UsersPortFake.ListFactors called but ListFactorsFunc is not set")
+		// Default empty for the same reason.
+		return nil, nil
 	}
 	return f.ListFactorsFunc(ctx, userID)
+}
+
+func (f *UsersPortFake) ListAppLinks(ctx context.Context, userID string) ([]domain.AppLink, error) {
+	f.t.Helper()
+	if f.ListAppLinksFunc == nil {
+		// Default: empty list — most tests don't care about app
+		// links and shouldn't have to wire a func.
+		return nil, nil
+	}
+	return f.ListAppLinksFunc(ctx, userID)
 }
 
 func (f *UsersPortFake) ResetPassword(ctx context.Context, userID string, sendEmail bool) (string, error) {

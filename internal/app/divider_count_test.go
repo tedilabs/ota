@@ -41,6 +41,9 @@ func (p *countingUsersPort) ListGroups(_ context.Context, _ string) ([]domain.Gr
 func (p *countingUsersPort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
 	return nil, nil
 }
+func (p *countingUsersPort) ListAppLinks(_ context.Context, _ string) ([]domain.AppLink, error) {
+	return nil, nil
+}
 func (p *countingUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (string, error) {
 	return "", nil
 }

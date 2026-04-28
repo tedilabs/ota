@@ -45,6 +45,9 @@ func (p *principalUsersPort) ListGroups(_ context.Context, _ string) ([]domain.G
 func (p *principalUsersPort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
 	return nil, nil
 }
+func (p *principalUsersPort) ListAppLinks(_ context.Context, _ string) ([]domain.AppLink, error) {
+	return nil, nil
+}
 func (p *principalUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (string, error) {
 	return "", nil
 }

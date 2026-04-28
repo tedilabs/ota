@@ -36,6 +36,9 @@ func (p *detailFixturePort) ListGroups(_ context.Context, _ string) ([]domain.Gr
 func (p *detailFixturePort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
 	return nil, nil
 }
+func (p *detailFixturePort) ListAppLinks(_ context.Context, _ string) ([]domain.AppLink, error) {
+	return nil, nil
+}
 func (p *detailFixturePort) ResetPassword(_ context.Context, _ string, _ bool) (string, error) {
 	return "", nil
 }

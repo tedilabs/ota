@@ -73,6 +73,54 @@ func (a *UsersAdapter) ListGroups(ctx context.Context, userID string) ([]domain.
 	return out, nil
 }
 
+// ListAppLinks returns the apps assigned to the user as they appear
+// on the Okta dashboard (issue #168). Powers the "assigned apps"
+// section on User Detail.
+func (a *UsersAdapter) ListAppLinks(ctx context.Context, userID string) ([]domain.AppLink, error) {
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) + "/appLinks")
+	resp, err := a.client.doGet(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	defer drainAndClose(resp)
+
+	var raws []json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raws); err != nil {
+		return nil, fmt.Errorf("okta: decode appLinks: %w", err)
+	}
+	out := make([]domain.AppLink, 0, len(raws))
+	for _, r := range raws {
+		var w wireAppLink
+		if err := json.Unmarshal(r, &w); err != nil {
+			return nil, fmt.Errorf("okta: decode appLink: %w", err)
+		}
+		out = append(out, domain.AppLink{
+			ID:         w.AppInstanceID,
+			Label:      w.Label,
+			AppName:    w.AppName,
+			LinkURL:    w.LinkURL,
+			SignOnMode: w.CredentialsSetup, // appLinks doesn't carry signOnMode; CredentialsSetup is the closest hint
+		})
+	}
+	return out, nil
+}
+
+// wireAppLink mirrors /api/v1/users/{id}/appLinks payload entries.
+// Okta omits most fields here vs. /api/v1/apps; we surface what the
+// detail view actually wants to render.
+type wireAppLink struct {
+	ID               string `json:"id"`
+	AppInstanceID    string `json:"appInstanceId"`
+	AppName          string `json:"appName"`
+	Label            string `json:"label"`
+	LinkURL          string `json:"linkUrl"`
+	LogoURL          string `json:"logoUrl"`
+	AppAssignmentID  string `json:"appAssignmentId"`
+	CredentialsSetup string `json:"credentialsSetup"`
+	Hidden           bool   `json:"hidden"`
+	SortOrder        int    `json:"sortOrder"`
+}
+
 // ListFactors returns the user's registered MFA factors (REQ-R01 AC-6).
 func (a *UsersAdapter) ListFactors(ctx context.Context, userID string) ([]domain.Factor, error) {
 	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) + "/factors")
