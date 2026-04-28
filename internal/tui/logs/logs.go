@@ -34,6 +34,9 @@ type Deps struct {
 	Height int
 	// InitialEvents lets tests seed without invoking the service.
 	InitialEvents []domain.LogEvent
+	// RefreshInterval drives the `f` follow-mode auto-fetch tick
+	// (issue #177 v0.1.16). Default 5s when zero.
+	RefreshInterval time.Duration
 }
 
 // --- List / Search (SCR-050) -------------------------------------------------
@@ -93,14 +96,34 @@ type SearchModel struct {
 	// match on eventType / actor / displayMsg / outcome / IP.
 	filter    string
 	filtering bool
+	// followSince is the cursor used by the auto-refresh tick when
+	// follow mode is on (issue #177 v0.1.16). Each tick fetches the
+	// slice of events `published > followSince` and advances the
+	// cursor to the highest observed published timestamp + 1ms so
+	// subsequent ticks never re-emit a row that's already on screen.
+	// Zero means "first tick — seed from the most recent event in
+	// the loaded history window".
+	followSince time.Time
+	// followGen counter prevents stale tick Cmds from triggering
+	// fetches after the operator toggled follow off and back on, or
+	// changed the time range. Each new generation invalidates the
+	// in-flight tick by mismatch.
+	followGen int
+	// lastUpdated stamps the most recent successful fetch — surfaced
+	// via LastUpdated() so the App Shell can stamp it into the
+	// chrome's upper-divider right slot (issue #177).
+	lastUpdated time.Time
 }
 
 // NewSearchModel constructs a SearchModel with defaults (tail off, follow on,
-// poll interval 7s per REQ-R05 AC-2). When deps.Tail is set, the initial
-// interval reflects the tail's current adaptive state.
+// poll interval 5s per issue #177 v0.1.16). When deps.RefreshInterval is set,
+// it overrides the default. Falls back to deps.Tail's adaptive interval when
+// neither is provided.
 func NewSearchModel(deps Deps) SearchModel {
-	interval := 7 * time.Second
-	if deps.Tail != nil {
+	interval := 5 * time.Second
+	if deps.RefreshInterval > 0 {
+		interval = deps.RefreshInterval
+	} else if deps.Tail != nil {
 		interval = deps.Tail.PollInterval()
 	}
 	return SearchModel{
@@ -113,6 +136,12 @@ func NewSearchModel(deps Deps) SearchModel {
 		timeRange:    30 * time.Minute,
 	}
 }
+
+// LastUpdated implements app.LastUpdatedStater so the chrome's upper
+// divider right slot can stamp "updated 12:34:56 UTC" each tick
+// (issue #177 v0.1.16). Zero before the first successful fetch so
+// the chrome leaves the slot empty.
+func (m SearchModel) LastUpdated() time.Time { return m.lastUpdated }
 
 // TimeRange reports the active history window — exposed for tests and
 // other models that need to mirror the operator's selection.
@@ -158,12 +187,25 @@ func (m SearchModel) visible() []domain.LogEvent {
 	return out
 }
 
-// Init fetches the history list.
+// Init fetches the history list and kicks off the follow-mode
+// auto-refresh tick (issue #177 v0.1.16). When the model already
+// carries seeded events, only the tick fires — useful for tests
+// that pre-populate via InitialEvents.
 func (m SearchModel) Init() tea.Cmd {
-	if len(m.events) > 0 || m.deps.Service == nil {
-		return nil
+	var fetch tea.Cmd
+	if len(m.events) == 0 && m.deps.Service != nil {
+		fetch = fetchHistoryWindowCmd(m.deps.Service, m.timeRange)
 	}
-	return fetchHistoryWindowCmd(m.deps.Service, m.timeRange)
+	tick := m.scheduleFollowTickCmd()
+	switch {
+	case fetch != nil && tick != nil:
+		return tea.Batch(fetch, tick)
+	case fetch != nil:
+		return fetch
+	case tick != nil:
+		return tick
+	}
+	return nil
 }
 
 // Update handles keys: `s` toggles tail, `f` toggles follow, j/k navigates,
@@ -187,10 +229,51 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 		}
 		m.viewportTop = 0
+		// Seed follow-mode cursor from the freshest history event so
+		// the next tick fetches strictly newer rows (issue #177).
+		if n := len(m.events); n > 0 {
+			latest := m.events[0].Published
+			for _, e := range m.events[1:] {
+				if e.Published.After(latest) {
+					latest = e.Published
+				}
+			}
+			m.followSince = latest.Add(time.Millisecond)
+		} else {
+			m.followSince = time.Now()
+		}
+		m.lastUpdated = time.Now()
 		return m, nil
 	case logsErrMsg:
 		m.lastErr = msg.err
 		return m, nil
+	case followTickMsg:
+		// Stale tick — operator toggled follow off and back on, or
+		// changed the time range. Drop the tick and let the new
+		// generation's tick chain take over.
+		if msg.gen != m.followGen || !m.follow {
+			return m, nil
+		}
+		return m, m.followFetchCmd()
+	case followFetchedMsg:
+		if msg.gen != m.followGen || !m.follow {
+			// Stale result — schedule the next tick if follow is
+			// still on so the loop resumes naturally on the
+			// current generation.
+			return m, m.scheduleFollowTickCmd()
+		}
+		// Append new events, push cursor onto the latest row.
+		// Detail / Visual modes don't get the cursor-jump so the
+		// operator's manual position stays stable mid-investigation.
+		if len(msg.events) > 0 {
+			m.events = append(m.events, msg.events...)
+			if !m.opened && !m.filtering {
+				m.cursor = len(m.events) - 1
+			}
+		}
+		m.followSince = msg.nextSince
+		m.lastUpdated = msg.at
+		return m, m.scheduleFollowTickCmd()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -331,6 +414,14 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "f":
 			m.ggChord.Reset()
 			m.follow = !m.follow
+			// Issue #177 v0.1.16: bump generation so any in-flight
+			// tick from the previous follow session is invalidated;
+			// kick off a fresh tick chain when toggling on.
+			m.followGen++
+			if m.follow {
+				return m, m.scheduleFollowTickCmd()
+			}
+			return m, nil
 		case "r":
 			// Manual refresh — operator wants the current window
 			// re-fetched (e.g., after firing a write op elsewhere).
@@ -432,17 +523,39 @@ func (m SearchModel) View() string {
 	b.WriteByte('\n')
 	rows := m.visible()
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
+	budget := end - top
+	rowTarget := m.chromeContentWidth() - 2
 	for i := top; i < end; i++ {
 		row := m.renderLogsRow(rows[i], now, tk)
+		var composed string
 		if i == m.cursor {
-			row = tk.Accent.Render("▸ " + row)
+			composed = "▸ " + row
 		} else {
-			row = "  " + row
+			composed = "  " + row
 		}
-		b.WriteString(row)
+		composed = shared.PadOrTruncateVisible(composed, rowTarget)
+		if i == m.cursor {
+			composed = tk.Accent.Render(composed)
+		}
+		b.WriteString(composed)
+		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// chromeContentWidth returns the body cells the chrome reserves per
+// row, used to land the scrollbar gutter flush against the right
+// border (issue #173).
+func (m SearchModel) chromeContentWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	return w - 3
 }
 
 // renderLogsRow formats one event row in the issue #158 column
@@ -540,7 +653,9 @@ func (m SearchModel) logsInnerWidth() int {
 	if w < 80 {
 		w = 80
 	}
-	inner := w - 2 - 1 - 2
+	// chrome border (2) + left padding (1) + cursor gutter (2) +
+	// scrollbar gutter (2: " ▌"/" │", v0.1.15 issue #173).
+	inner := w - 2 - 1 - 2 - 2
 	if inner < 20 {
 		inner = 20
 	}
@@ -937,6 +1052,109 @@ func renderLogDetail(e domain.LogEvent) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// followTickMsg fires when the auto-refresh ticker (issue #177
+// v0.1.16) should poll the next slice of events while follow mode is
+// on. `gen` matches the model's `followGen` so toggling follow off
+// invalidates in-flight ticks (no fetch fires after the operator
+// pressed `f` to stop following).
+type followTickMsg struct {
+	gen int
+}
+
+// followFetchedMsg delivers the result of a single follow-mode tail
+// poll: the slice of new events (already filtered by `since`), the
+// next-since cursor to use for the following tick, and the wall-clock
+// fetch time for the chrome's upper-divider stamp.
+type followFetchedMsg struct {
+	gen       int
+	events    []domain.LogEvent
+	nextSince time.Time
+	at        time.Time
+}
+
+// scheduleFollowTickCmd returns a tea.Tick Cmd that fires a
+// followTickMsg after the configured interval. Returns nil when
+// follow is off OR the interval is zero so callers can chain it
+// safely.
+func (m SearchModel) scheduleFollowTickCmd() tea.Cmd {
+	if !m.follow || m.pollInterval <= 0 {
+		return nil
+	}
+	gen := m.followGen
+	return tea.Tick(m.pollInterval, func(time.Time) tea.Msg {
+		return followTickMsg{gen: gen}
+	})
+}
+
+// followFetchCmd issues one tail-style poll and returns a
+// followFetchedMsg. Uses LogsTail.Poll when available (cursor-based
+// incremental fetch — REQ-R05 AC-2 since-cursor); falls back to a
+// service.Search for tests / scenarios with no Tail injected.
+func (m SearchModel) followFetchCmd() tea.Cmd {
+	gen := m.followGen
+	since := m.followSince
+	tail := m.deps.Tail
+	svc := m.deps.Service
+	return func() tea.Msg {
+		now := time.Now()
+		ctx := context.Background()
+		// Cursor seed: first tick after history fetch. Use 1ms past
+		// the most-recent event we've already shown so the next
+		// poll never re-emits a row.
+		if since.IsZero() {
+			since = now
+		}
+		query := domain.LogsQuery{
+			Since:     &since,
+			SortOrder: domain.SortAscending,
+			Limit:     1000,
+		}
+		if tail != nil {
+			events, nextSince, err := tail.Poll(ctx, query)
+			if err != nil {
+				return logsErrMsg{err: err}
+			}
+			if nextSince.IsZero() {
+				nextSince = since
+			}
+			return followFetchedMsg{
+				gen:       gen,
+				events:    events,
+				nextSince: nextSince,
+				at:        now,
+			}
+		}
+		// Fallback path — no Tail wired (test harness etc.).
+		if svc == nil {
+			return followFetchedMsg{gen: gen, events: nil, nextSince: since, at: now}
+		}
+		iter, err := svc.Search(ctx, query)
+		if err != nil {
+			return logsErrMsg{err: err}
+		}
+		defer iter.Close()
+		var out []domain.LogEvent
+		nextSince := since
+		for {
+			e, hasMore, err := iter.Next(ctx)
+			if err != nil {
+				return logsErrMsg{err: err}
+			}
+			if !hasMore {
+				break
+			}
+			out = append(out, e)
+			if e.Published.After(nextSince) {
+				nextSince = e.Published
+			}
+		}
+		if len(out) > 0 {
+			nextSince = nextSince.Add(time.Millisecond)
+		}
+		return followFetchedMsg{gen: gen, events: out, nextSince: nextSince, at: now}
+	}
 }
 
 // --- Cmd factories -----------------------------------------------------------

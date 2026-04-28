@@ -408,6 +408,7 @@ func generalHelpEntries() []helpEntry {
 		{":", "open command palette"},
 		{"/", "incremental search (lists)"},
 		{"?", "this help"},
+		{"a", "resource action menu (issue #175)"},
 		{"Esc", "cancel mode / close overlay"},
 		{"q", "close screen / quit (with confirm)"},
 		{"Ctrl-c", "soft quit (tail confirm)"},
@@ -490,9 +491,11 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 		return []helpEntry{
 			{"Tab / Shift-Tab", "cycle detail tabs"},
 			{"r", "jump to / from [Raw] tab"},
-			{"] / [", "next / prev box (Info / Groups / Apps)"},
-			{"Enter", "open Group / App detail (Groups / Apps box)"},
-			{"Esc", "back to list"},
+			{"]", "enter Groups+Apps boxes (then j/k flows across both)"},
+			{"[", "(in boxes) jump to first row"},
+			{"j / k", "move cursor — wraps from Apps end → Groups start"},
+			{"Enter", "open Group / App detail (cursor in boxes)"},
+			{"Esc", "exit boxes back to info grid · second Esc closes detail"},
 		}
 	case "rule-detail":
 		return []helpEntry{
@@ -533,6 +536,112 @@ func padRight(s string, n int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", n-w)
+}
+
+// --- Action Menu (issue #175) ------------------------------------------------
+
+// ActionMenuItem aliases shared.ActionItem so callers that already
+// depend on internal/tui/overlay don't need to also import shared.
+// The concrete type lives in shared so the users / groups / apps
+// packages can publish actions without an overlay import cycle.
+type ActionMenuItem = shared.ActionItem
+
+// ActionMenuModel renders the resource-specific action picker bound
+// to `a` from any list / detail screen. The screen supplies the
+// items via app.Actioner; the modal just owns cursor + filter.
+type ActionMenuModel struct {
+	title  string
+	items  []ActionMenuItem
+	cursor int
+}
+
+// NewActionMenuModel constructs a menu around `title` and `items`.
+// Falls back to a single "(no actions)" entry when items is empty so
+// the modal never renders blank.
+func NewActionMenuModel(title string, items []ActionMenuItem) ActionMenuModel {
+	if len(items) == 0 {
+		items = []ActionMenuItem{{ID: "", Label: "(no actions for this screen)"}}
+	}
+	return ActionMenuModel{title: title, items: items}
+}
+
+// Init implements tea.Model.
+func (m ActionMenuModel) Init() tea.Cmd { return nil }
+
+// Update advances the cursor on j/k/up/down and quits Visual/etc on
+// Ctrl-c (used by teatest harnesses). Enter / Esc are handled by the
+// App Shell so the picked item routes to the right action; this
+// model just tracks selection state.
+func (m ActionMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch km.Type {
+	case tea.KeyCtrlC:
+		return m, tea.Quit
+	case tea.KeyDown:
+		if m.cursor < len(m.items)-1 {
+			m.cursor++
+		}
+	case tea.KeyUp:
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case tea.KeyRunes:
+		switch string(km.Runes) {
+		case "j":
+			if m.cursor < len(m.items)-1 {
+				m.cursor++
+			}
+		case "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		}
+	}
+	return m, nil
+}
+
+// View renders the picker — a centered RoundedBorder box with one
+// line per item. Hint text trails each label in the muted token so
+// destructive actions read at a glance.
+func (m ActionMenuModel) View() string {
+	tk := shared.Dark()
+	var b strings.Builder
+	for i, it := range m.items {
+		prefix := "  "
+		line := it.Label
+		if i == m.cursor {
+			prefix = "▸ "
+			line = tk.Accent.Render(line)
+		}
+		b.WriteString(prefix + line)
+		if it.Hint != "" {
+			b.WriteString("  " + tk.Muted.Render(it.Hint))
+		}
+		b.WriteByte('\n')
+	}
+	b.WriteString("\n")
+	b.WriteString(tk.Muted.Render("<j/k> nav · <Enter> run · <Esc> cancel"))
+	return shared.Modal("Actions · "+m.title, b.String(), 60)
+}
+
+// Cursor exposes the current cursor index so the App Shell can
+// resolve the selected item on Enter.
+func (m ActionMenuModel) Cursor() int { return m.cursor }
+
+// Items exposes the menu items so the App Shell can read the
+// selected payload when Enter fires.
+func (m ActionMenuModel) Items() []ActionMenuItem { return m.items }
+
+// Selected returns the currently-highlighted item, or zero value if
+// the menu is empty.
+func (m ActionMenuModel) Selected() (ActionMenuItem, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.items) {
+		return ActionMenuItem{}, false
+	}
+	return m.items[m.cursor], true
 }
 
 // --- Confirm (SCR-903) -------------------------------------------------------

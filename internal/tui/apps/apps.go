@@ -27,6 +27,9 @@ type Deps struct {
 	Keys   keys.ResolvedMap
 	Width  int
 	Height int
+	// RefreshInterval drives the auto-refresh tick (issue #177
+	// v0.1.16). Zero disables auto-refresh.
+	RefreshInterval time.Duration
 	// InitialApps lets tests seed without invoking the port.
 	InitialApps []domain.App
 }
@@ -173,7 +176,14 @@ type ListModel struct {
 	height      int
 	viewportTop int
 	ggChord     shared.GChord
+	// lastUpdated stamps the most recent successful list fetch (issue
+	// #177 v0.1.16); refreshGen invalidates stale ticks.
+	lastUpdated time.Time
+	refreshGen  int
 }
+
+// appsRefreshTickMsg fires the auto-refresh tick (issue #177).
+type appsRefreshTickMsg struct{ gen int }
 
 // AppDetailTab indexes the detail tab bar — Pretty / JSON / YAML
 // (matches the rest of the detail surfaces in ota).
@@ -199,10 +209,34 @@ func NewListModel(deps Deps, t domain.AppType) ListModel {
 }
 
 func (m ListModel) Init() tea.Cmd {
-	if len(m.apps) > 0 || m.deps.Port == nil {
+	var fetch tea.Cmd
+	if len(m.apps) == 0 && m.deps.Port != nil {
+		fetch = fetchAppsCmd(m.deps.Port, m.appType)
+	}
+	tick := m.scheduleRefreshTickCmd()
+	switch {
+	case fetch != nil && tick != nil:
+		return tea.Batch(fetch, tick)
+	case fetch != nil:
+		return fetch
+	case tick != nil:
+		return tick
+	}
+	return nil
+}
+
+// LastUpdated implements app.LastUpdatedStater (issue #177 v0.1.16).
+func (m ListModel) LastUpdated() time.Time { return m.lastUpdated }
+
+// scheduleRefreshTickCmd returns the auto-refresh tea.Tick.
+func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {
+	if m.deps.RefreshInterval <= 0 || m.deps.Port == nil {
 		return nil
 	}
-	return fetchAppsCmd(m.deps.Port, m.appType)
+	gen := m.refreshGen
+	return tea.Tick(m.deps.RefreshInterval, func(time.Time) tea.Msg {
+		return appsRefreshTickMsg{gen: gen}
+	})
 }
 
 // Filtering / Filter / Count satisfy the App Shell's state interfaces.
@@ -236,10 +270,16 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appsLoadedMsg:
 		m.apps = msg.apps
 		m.lastErr = nil
+		m.lastUpdated = m.now()
 		return m, nil
 	case appsErrMsg:
 		m.lastErr = msg.err
 		return m, nil
+	case appsRefreshTickMsg:
+		if msg.gen != m.refreshGen || m.deps.Port == nil {
+			return m, nil
+		}
+		return m, tea.Batch(fetchAppsCmd(m.deps.Port, m.appType), m.scheduleRefreshTickCmd())
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -375,6 +415,8 @@ func (m ListModel) View() string {
 	b.WriteString(tk.Header.Render(m.formatColumns("STATUS", "LABEL", "NAME", "SIGN-ON MODE", "UPDATED")))
 	b.WriteByte('\n')
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
+	budget := end - top
+	rowTarget := m.chromeContentWidth() - 2
 	for i := top; i < end; i++ {
 		row := m.renderRow(rows[i], now, tk)
 		prefix := "  "
@@ -382,6 +424,7 @@ func (m ListModel) View() string {
 			prefix = "▸ "
 		}
 		composed := prefix + row
+		composed = shared.PadOrTruncateVisible(composed, rowTarget)
 		switch {
 		case i == m.cursor:
 			composed = tk.Accent.Render(composed)
@@ -391,9 +434,24 @@ func (m ListModel) View() string {
 			}
 		}
 		b.WriteString(composed)
+		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// chromeContentWidth returns the body cells the chrome reserves per
+// row — used to land the scrollbar gutter flush against the right
+// border (issue #173).
+func (m ListModel) chromeContentWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	return w - 3
 }
 
 func (m ListModel) renderRow(a domain.App, now time.Time, tk shared.Tokens) string {
@@ -450,7 +508,9 @@ func (m ListModel) appsInnerWidth() int {
 	if w < 80 {
 		w = 80
 	}
-	inner := w - 2 - 1 - 2
+	// chrome border (2) + left padding (1) + cursor gutter (2) +
+	// scrollbar gutter (2: " ▌"/" │", v0.1.15 issue #173).
+	inner := w - 2 - 1 - 2 - 2
 	if inner < 20 {
 		inner = 20
 	}

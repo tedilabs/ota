@@ -20,3 +20,21 @@ type OpenGroupDetailMsg struct{ ID string }
 // OpenAppDetailMsg is the Apps counterpart of OpenGroupDetailMsg —
 // drill into an app's detail surface from another screen (issue #171).
 type OpenAppDetailMsg struct{ ID string }
+
+// ActionItem is a single row in the resource action menu (issue
+// #175 v0.1.15). Each screen exposes Actions() []ActionItem; the
+// App Shell builds the picker around them and dispatches RunAction
+// with the chosen ID. ID is opaque to the overlay — the screen
+// owning the action interprets it.
+type ActionItem struct {
+	ID    string
+	Label string
+	Hint  string
+}
+
+// RunUserActionMsg routes a user-lifecycle action picked from the
+// `a` menu (issue #175) into the App Shell's existing confirmation
+// flow. Kind is the canonical `:` palette command name —
+// "reset-password" / "unlock" / "reset-factors". Lives in shared so
+// the users list can emit it without an app→tui→app cycle.
+type RunUserActionMsg struct{ Kind string }

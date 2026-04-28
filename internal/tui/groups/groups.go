@@ -46,6 +46,9 @@ type Deps struct {
 	Keys    keys.ResolvedMap
 	Width   int
 	Height  int
+	// RefreshInterval drives the auto-refresh tick (issue #177
+	// v0.1.16). Zero disables auto-refresh.
+	RefreshInterval time.Duration
 	// InitialGroups lets tests seed without invoking the port.
 	InitialGroups []domain.Group
 }
@@ -88,7 +91,18 @@ type ListModel struct {
 	detailMembersGroup  string // group ID the cached list belongs to
 	detailMembersErr    error
 	detailMembersLoaded bool
+
+	// lastUpdated stamps the most recent successful list fetch (issue
+	// #177 v0.1.16). Surfaced via LastUpdated() for the chrome.
+	lastUpdated time.Time
+	// refreshGen guards against stale refresh-tick Cmds firing
+	// after the model was rebuilt or a refresh cycle was forced.
+	refreshGen int
 }
+
+// groupsRefreshTickMsg fires the auto-refresh tick (issue #177
+// v0.1.16). gen matches refreshGen; mismatches are dropped.
+type groupsRefreshTickMsg struct{ gen int }
 
 // GroupDetailTab indexes the Group Detail tab bar. v0.1.2 collapsed the
 // placeholder tabs into the three structural views (Pretty / JSON / YAML).
@@ -153,12 +167,38 @@ func NewListModel(deps Deps) ListModel {
 	}
 }
 
-// Init fetches the groups list on entry (REQ-R02 AC-1).
+// Init fetches the groups list on entry (REQ-R02 AC-1) and schedules
+// the first auto-refresh tick (issue #177 v0.1.16).
 func (m ListModel) Init() tea.Cmd {
-	if len(m.groups) > 0 || m.deps.Port == nil {
+	var fetch tea.Cmd
+	if len(m.groups) == 0 && m.deps.Port != nil {
+		fetch = fetchGroupsCmd(m.deps.Port)
+	}
+	tick := m.scheduleRefreshTickCmd()
+	switch {
+	case fetch != nil && tick != nil:
+		return tea.Batch(fetch, tick)
+	case fetch != nil:
+		return fetch
+	case tick != nil:
+		return tick
+	}
+	return nil
+}
+
+// LastUpdated implements app.LastUpdatedStater (issue #177 v0.1.16).
+func (m ListModel) LastUpdated() time.Time { return m.lastUpdated }
+
+// scheduleRefreshTickCmd returns a tea.Tick that fires
+// groupsRefreshTickMsg after RefreshInterval. nil disables.
+func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {
+	if m.deps.RefreshInterval <= 0 || m.deps.Port == nil {
 		return nil
 	}
-	return fetchGroupsCmd(m.deps.Port)
+	gen := m.refreshGen
+	return tea.Tick(m.deps.RefreshInterval, func(time.Time) tea.Msg {
+		return groupsRefreshTickMsg{gen: gen}
+	})
 }
 
 // Update handles key input and fetch results.
@@ -171,10 +211,16 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case groupsLoadedMsg:
 		m.groups = msg.groups
 		m.lastErr = nil
+		m.lastUpdated = m.now()
 		return m, nil
 	case groupsErrMsg:
 		m.lastErr = msg.err
 		return m, nil
+	case groupsRefreshTickMsg:
+		if msg.gen != m.refreshGen || m.deps.Port == nil {
+			return m, nil
+		}
+		return m, tea.Batch(fetchGroupsCmd(m.deps.Port), m.scheduleRefreshTickCmd())
 	case groupMembersLoadedMsg:
 		// Only accept if it matches the currently-open group — a stale
 		// fetch from a previously-opened detail must not overwrite.
@@ -439,17 +485,41 @@ func (m ListModel) View() string {
 	)))
 	b.WriteByte('\n')
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
+	budget := end - top
+	rowTarget := m.chromeContentWidth() - 2
 	for i := top; i < end; i++ {
 		row := m.renderGroupsRow(rows[i], m.now(), tk)
+		var composed string
 		if i == m.cursor {
-			row = tk.Accent.Render("▸ " + row)
+			composed = "▸ " + row
 		} else {
-			row = "  " + row
+			composed = "  " + row
 		}
-		b.WriteString(row)
+		composed = shared.PadOrTruncateVisible(composed, rowTarget)
+		if i == m.cursor {
+			composed = tk.Accent.Render(composed)
+		}
+		b.WriteString(composed)
+		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// chromeContentWidth returns the body cells the chrome reserves per
+// row — width minus chrome left border, left padding, and right
+// border. The list pads each row out to this width minus 2 cells so
+// the scrollbar gutter (" ▌"/" │") sits flush against the chrome's
+// right border (issue #173).
+func (m ListModel) chromeContentWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	return w - 3
 }
 
 // renderGroupsRow formats one group as a row.
@@ -515,7 +585,8 @@ func (m ListModel) formatGroupsColumns(cells ...string) string {
 }
 
 // groupsInnerWidth mirrors users.usersInnerWidth — body width after the
-// chrome border (2), left padding (1), and cursor gutter (2).
+// chrome border (2), left padding (1), cursor gutter (2), and the
+// 2-cell scrollbar gutter (issue #173).
 func (m ListModel) groupsInnerWidth() int {
 	w := m.width
 	if w <= 0 {
@@ -524,7 +595,7 @@ func (m ListModel) groupsInnerWidth() int {
 	if w < 80 {
 		w = 80
 	}
-	inner := w - 2 - 1 - 2
+	inner := w - 2 - 1 - 2 - 2
 	if inner < 20 {
 		inner = 20
 	}

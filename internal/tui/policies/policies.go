@@ -359,6 +359,8 @@ func (m ListModel) View() string {
 	b.WriteString(tk.Header.Render(m.formatPoliciesColumns("PRI", "STATUS", "NAME", "SYSTEM", "UPDATED")))
 	b.WriteByte('\n')
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(m.policies), shared.ListBodyRowBudget(m.height))
+	budget := end - top
+	rowTarget := m.chromeContentWidth() - 2
 	for i := top; i < end; i++ {
 		row := m.renderPolicyRow(m.policies[i], now, tk)
 		prefix := "  "
@@ -366,6 +368,7 @@ func (m ListModel) View() string {
 			prefix = "▸ "
 		}
 		composed := prefix + row
+		composed = shared.PadOrTruncateVisible(composed, rowTarget)
 		switch {
 		case i == m.cursor:
 			composed = tk.Accent.Render(composed)
@@ -376,9 +379,24 @@ func (m ListModel) View() string {
 			}
 		}
 		b.WriteString(composed)
+		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(m.policies), tk))
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// chromeContentWidth returns the body cells the chrome reserves per
+// row, used to land the scrollbar gutter flush against the right
+// border (issue #173).
+func (m ListModel) chromeContentWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	return w - 3
 }
 
 // renderPolicyRow formats one policy row.
@@ -448,7 +466,9 @@ func (m ListModel) policiesInnerWidth() int {
 	if w < 80 {
 		w = 80
 	}
-	inner := w - 2 - 1 - 2
+	// chrome border (2) + left padding (1) + cursor gutter (2) +
+	// scrollbar gutter (2: " ▌"/" │", v0.1.15 issue #173).
+	inner := w - 2 - 1 - 2 - 2
 	if inner < 20 {
 		inner = 20
 	}

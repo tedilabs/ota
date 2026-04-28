@@ -86,7 +86,21 @@ const (
 	// OverlayActionConfirm — destructive Users lifecycle action gate
 	// (issue #125). Holds m.pendingAction until y / Esc / n.
 	OverlayActionConfirm
+	// OverlayActionMenu — issue #175 v0.1.15. Resource-specific
+	// action picker bound to `a` from any list / detail screen.
+	// Reads the active screen's Actions() and dispatches the
+	// selected ID back into Update on Enter.
+	OverlayActionMenu
 )
+
+// Actioner is implemented by screens that publish a list of
+// resource-specific actions for the `a` action menu (issue #175).
+// The App Shell calls Actions() when the operator presses `a`,
+// builds an ActionMenuModel, and dispatches RunAction(id) on Enter.
+type Actioner interface {
+	Actions() []overlay.ActionMenuItem
+	RunAction(id string) (tea.Model, tea.Cmd)
+}
 
 // UserActionKind classifies the Users lifecycle action a confirmation
 // modal is gating. Matches the three ports added in issue #125 —
@@ -138,6 +152,12 @@ type Deps struct {
 	LogsPort       domain.LogsPort
 	AppsPort       domain.AppsPort
 
+	// LogsRefreshInterval / DefaultRefreshInterval drive the auto-refresh
+	// tickers (issue #177 v0.1.16). Logs default 5s, every other list
+	// default 10s. Zero on either disables auto-refresh on that surface.
+	LogsRefreshInterval    time.Duration
+	DefaultRefreshInterval time.Duration
+
 	// Optional initial state for tests / direct embedding.
 	InitialScreen Screen
 }
@@ -167,6 +187,10 @@ type Model struct {
 	// overlay == OverlayHelp; instantiated by openHelpMsg using the active
 	// screen so `?` shows the keys that actually do something here.
 	helpModel *overlay.HelpModel
+
+	// actionMenu is the resource-specific action picker (issue #175).
+	// Non-nil only while overlay == OverlayActionMenu.
+	actionMenu *overlay.ActionMenuModel
 
 	// principalLogin is the authenticated Okta user (issue #124). Empty
 	// until the /api/v1/users/me probe completes; once populated it
@@ -303,6 +327,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h := overlay.NewHelpModelFor(m.active.String())
 		m.helpModel = &h
 		return m, nil
+	case openActionMenuMsg:
+		// Issue #175: build the action picker from the active
+		// screen's Actioner. The `a` key handler already gated on
+		// activeChildHasActions(), so by the time we arrive here
+		// the assertion is reliable.
+		acts, ok := m.activeChildActions()
+		if !ok {
+			return m, nil
+		}
+		picker := overlay.NewActionMenuModel(m.resourceLabel(), acts)
+		m.actionMenu = &picker
+		m.overlay = OverlayActionMenu
+		return m, nil
+	case shared.RunUserActionMsg:
+		// Issue #175: the action menu's RunAction emits this msg
+		// for each picked Users lifecycle operation. Map the Kind
+		// string back to the existing UserActionKind enum so the
+		// y/N confirmation modal fires (issue #125 flow stays the
+		// single source of truth for destructive ops).
+		switch msg.Kind {
+		case "reset-password":
+			return m.openActionConfirm(UserActionResetPassword)
+		case "unlock":
+			return m.openActionConfirm(UserActionUnlock)
+		case "reset-factors":
+			return m.openActionConfirm(UserActionResetFactors)
+		}
+		return m, nil
 	case QuitConfirmRequestMsg:
 		m.overlay = OverlayQuitConfirm
 		return m, nil
@@ -373,12 +425,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.active = ScreenApps
 		m.overlay = OverlayNone
 		mdl := apps.NewWrapperForType(apps.Deps{
-			Port:   m.deps.AppsPort,
-			Clock:  m.deps.Clock,
-			Logger: m.deps.Logger,
-			Keys:   m.deps.Keys,
-			Width:  m.width,
-			Height: m.height,
+			Port:            m.deps.AppsPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
 		}, domain.AppType(msg.Type))
 		m.screens[ScreenApps] = mdl
 		return m, mdl.Init()
@@ -486,6 +539,7 @@ func (m Model) View() string {
 		CountVisible: visible,
 		CountTotal:   total,
 		HasCount:     hasCount,
+		DividerRight: m.activeChildDividerRight(),
 		Body:         body,
 		BodyLines:    bodyLines,
 		KeyHints:     m.keyHints(tokens),
@@ -520,6 +574,12 @@ func clampWidth(w int) int {
 // border, TitleBar, upper divider (with embedded resource label),
 // status divider, KeyHints, bottom border. The previous ContextBar
 // row collapsed into the upper divider so the body now gets +1 row.
+//
+// v0.1.15: the previous upper cap of 60 rows clipped tall terminals —
+// once the list emitted budget = h-9 rows that exceeded the chrome's
+// 60-row cap, pressing `G` advanced the cursor onto a row the chrome
+// silently dropped. The cap is gone; tall terminals now use their
+// full vertical budget.
 func clampBodyLines(h int) int {
 	const reserved = 6
 	if h <= 0 {
@@ -528,9 +588,6 @@ func clampBodyLines(h int) int {
 	rows := h - reserved
 	if rows < 5 {
 		return 5
-	}
-	if rows > 60 {
-		return 60
 	}
 	return rows
 }
@@ -543,6 +600,13 @@ func clampBodyLines(h int) int {
 // renderOverlayPanel handles the smaller Palette / QuitConfirm overlays
 // which compose alongside the screen.
 func (m Model) composeBody() string {
+	if m.overlay == OverlayActionMenu && m.actionMenu != nil {
+		// Issue #175: render the action picker as the body — same
+		// "modal owns the screen" pattern Help uses, so the picker
+		// reads as the focal element and key hints don't compete.
+		contentWidth := clampWidth(m.width) - 3
+		return centerInBody(m.actionMenu.View(), contentWidth)
+	}
 	if m.overlay == OverlayHelp && m.helpModel != nil {
 		// Issue #147: hand the modal as much width as the chrome
 		// can spare — content area minus a small breathing-room
@@ -731,6 +795,34 @@ func (m Model) activeChildFilter() string {
 		return ""
 	}
 	return fs.Filter()
+}
+
+// LastUpdatedStater is implemented by screens that publish a
+// last-refresh timestamp for the chrome's upper-divider right slot
+// (issue #177 v0.1.16). Returning the zero time disables the segment.
+type LastUpdatedStater interface {
+	LastUpdated() time.Time
+}
+
+// activeChildDividerRight assembles the right-side label of the
+// upper divider — currently a single "updated 12:34:56 UTC" segment
+// for screens that implement LastUpdatedStater. Empty when the
+// active screen hasn't refreshed yet (zero time) or doesn't track
+// the timestamp at all.
+func (m Model) activeChildDividerRight() string {
+	child, ok := m.screens[m.active]
+	if !ok {
+		return ""
+	}
+	st, ok := child.(LastUpdatedStater)
+	if !ok {
+		return ""
+	}
+	t := st.LastUpdated()
+	if t.IsZero() {
+		return ""
+	}
+	return "updated " + t.UTC().Format("15:04:05") + " UTC"
 }
 
 // activeChildCount returns the (visible, total, ok) triple for the
@@ -934,33 +1026,36 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 	switch s {
 	case ScreenUsers:
 		mdl := users.NewListModel(users.Deps{
-			Port:   m.deps.UsersPort,
-			Clock:  m.deps.Clock,
-			Logger: m.deps.Logger,
-			Keys:   m.deps.Keys,
-			Width:  m.width,
-			Height: m.height,
+			Port:            m.deps.UsersPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
 		})
 		return mdl, mdl.Init()
 	case ScreenGroups:
 		mdl := groups.NewListModel(groups.Deps{
-			Port:   m.deps.GroupsPort,
-			Clock:  m.deps.Clock,
-			Logger: m.deps.Logger,
-			Keys:   m.deps.Keys,
-			Width:  m.width,
-			Height: m.height,
+			Port:            m.deps.GroupsPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
 		})
 		return mdl, mdl.Init()
 	case ScreenRules:
 		mdl := rules.NewListModel(rules.Deps{
-			Port:   m.deps.GroupRulesPort,
-			Groups: m.deps.GroupsPort,
-			Clock:  m.deps.Clock,
-			Logger: m.deps.Logger,
-			Keys:   m.deps.Keys,
-			Width:  m.width,
-			Height: m.height,
+			Port:            m.deps.GroupRulesPort,
+			Groups:          m.deps.GroupsPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
 		})
 		return mdl, mdl.Init()
 	case ScreenPolicies:
@@ -984,23 +1079,25 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			tail = m.deps.Services.LogsTail
 		}
 		mdl := logs.NewSearchModel(logs.Deps{
-			Service: svc,
-			Tail:    tail,
-			Clock:   m.deps.Clock,
-			Logger:  m.deps.Logger,
-			Keys:    m.deps.Keys,
-			Width:   m.width,
-			Height:  m.height,
+			Service:         svc,
+			Tail:            tail,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.LogsRefreshInterval,
 		})
 		return mdl, mdl.Init()
 	case ScreenApps:
 		mdl := apps.NewWrapper(apps.Deps{
-			Port:   m.deps.AppsPort,
-			Clock:  m.deps.Clock,
-			Logger: m.deps.Logger,
-			Keys:   m.deps.Keys,
-			Width:  m.width,
-			Height: m.height,
+			Port:            m.deps.AppsPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
 		})
 		return mdl, mdl.Init()
 	}
@@ -1018,6 +1115,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay == OverlayHelp || m.overlay == OverlayQuitConfirm || m.overlay == OverlayActionConfirm {
 		return m.handleOverlayKey(msg)
 	}
+	if m.overlay == OverlayActionMenu {
+		return m.handleActionMenuKey(msg)
+	}
 
 	switch msg.Type {
 	case tea.KeyCtrlC:
@@ -1027,6 +1127,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// `/` filtering, exiting visual selection, etc. The bottom delegation
 	// block forwards it to the active child.
 	case tea.KeyRunes:
+		// While the child is in `/` filter mode every printable
+		// rune is content; the App Shell's command shortcuts
+		// (`:`, `?`, `q`, `a`) must NOT intercept them or the
+		// operator can't type those letters into the filter.
+		// Issue #176 v0.1.16 — operators reported `q` triggering
+		// the quit modal mid-search.
+		if m.activeChildIsFiltering() {
+			break
+		}
 		switch string(msg.Runes) {
 		case ":":
 			return m, openCmdPaletteCmd()
@@ -1034,6 +1143,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, openHelpCmd()
 		case "q":
 			return m, quitConfirmCmd()
+		case "a":
+			// Issue #175: open the resource action menu when the
+			// active screen exposes one. Falls through to the
+			// child screen's own `a` binding when no actions are
+			// published, so existing semantics on screens that
+			// don't implement Actioner stay intact.
+			if m.activeChildHasActions() {
+				return m, openActionMenuCmd()
+			}
 		}
 	}
 	// Any key the App Shell didn't claim (j/k navigation, Shift+S sort,
@@ -1238,6 +1356,63 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pendingAction = pendingUserAction{}
 			m.overlay = OverlayNone
 		}
+	}
+	return m, nil
+}
+
+// handleActionMenuKey routes key input while OverlayActionMenu is
+// open. Esc / `a` cancel; Enter dispatches the highlighted item via
+// the active screen's Actioner.RunAction(); arrow / j / k advance.
+func (m Model) handleActionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.overlay = OverlayNone
+		m.actionMenu = nil
+		return m, nil
+	case tea.KeyEnter:
+		if m.actionMenu == nil {
+			m.overlay = OverlayNone
+			return m, nil
+		}
+		picked, ok := m.actionMenu.Selected()
+		m.overlay = OverlayNone
+		m.actionMenu = nil
+		if !ok || picked.ID == "" {
+			return m, nil
+		}
+		child, found := m.screens[m.active]
+		if !found {
+			return m, nil
+		}
+		actioner, ok := child.(Actioner)
+		if !ok {
+			return m, nil
+		}
+		updatedChild, cmd := actioner.RunAction(picked.ID)
+		// RunAction returns the (possibly-updated) child Model AND a
+		// Cmd. The Model is meant for the screen's own state — the
+		// App Shell may need to react too (e.g., open the lifecycle
+		// confirmation modal), so route the Cmd through the
+		// dispatcher chain instead of dropping it.
+		if updatedChild != nil {
+			m.screens[m.active] = updatedChild
+		}
+		return m, cmd
+	case tea.KeyRunes:
+		if string(msg.Runes) == "a" {
+			// Toggle off — `a` re-press closes the menu, matching
+			// the symmetric open/close pattern `?` uses for help.
+			m.overlay = OverlayNone
+			m.actionMenu = nil
+			return m, nil
+		}
+	}
+	if m.actionMenu != nil {
+		updated, cmd := m.actionMenu.Update(msg)
+		if mm, ok := updated.(overlay.ActionMenuModel); ok {
+			m.actionMenu = &mm
+		}
+		return m, cmd
 	}
 	return m, nil
 }
@@ -1507,5 +1682,39 @@ func refreshActiveCmd() tea.Cmd {
 // Internal activation markers consumed by overlay models once wired.
 type openCmdPaletteMsg struct{}
 type openHelpMsg struct{}
+type openActionMenuMsg struct{}
+
+// openActionMenuCmd opens the resource-specific action picker
+// (issue #175). Routed through a Cmd so `a` flows the same way as
+// `:` / `?` — the App Shell sees an openActionMenuMsg and instantiates
+// the overlay with the active screen's Actioner output.
+func openActionMenuCmd() tea.Cmd {
+	return func() tea.Msg { return openActionMenuMsg{} }
+}
+
+// activeChildHasActions reports whether the active screen exposes
+// any resource-specific actions for `a` to surface. Returns false
+// when the screen doesn't implement Actioner OR returns an empty
+// slice — keeps `a` from opening an empty menu.
+func (m Model) activeChildHasActions() bool {
+	acts, ok := m.activeChildActions()
+	return ok && len(acts) > 0
+}
+
+// activeChildActions returns the active screen's published action
+// list and an `ok` flag. The flag is false when the screen doesn't
+// implement Actioner; callers fall back to whatever stock handling
+// the original key had.
+func (m Model) activeChildActions() ([]overlay.ActionMenuItem, bool) {
+	child, found := m.screens[m.active]
+	if !found {
+		return nil, false
+	}
+	a, ok := child.(Actioner)
+	if !ok {
+		return nil, false
+	}
+	return a.Actions(), true
+}
 
 var _ tea.Model = Model{}

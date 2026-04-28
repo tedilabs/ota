@@ -1,8 +1,8 @@
 range Last 30m  ·  tail OFF  ·  follow ON
   range: 0=30m 1=1h 3=3h c=12h e=24h  ·  s=toggle tail  ·  f=toggle follow  ·  r=refresh  ·  /=filter
   PUBLISHED            SEV   MESSAGE             ACTOR TYPE  ACTOR             OUTCOME  IP          WHEN
-▸ 2026-04-24 10:00:00  INFO  user.session.start  —           alice@acme.com    FAILURE  10.0.1.5  2h ago
-  2026-04-24 09:00:00  INFO  user.session.start  —           bob@acme.com      FAILURE  10.0.1.6  3h ago
-  2026-04-24 05:00:00  WARN  user.session.start  —           alice@acme.com    FAILURE  10.0.1.5  7h ago
-  2026-04-23 12:00:00  INFO  user.session.start  —           unknown@acme.com  FAILURE  10.0.1.7  1d ago
-  2026-04-22 12:00:00  ERR   user.session.start  —           svc-sync@acme     FAILURE  10.0.1.8  2d ago
+▸ 2026-04-24 10:00:00  INFO  user.session.start  —           alice@acme.com    FAILURE  10.0.1.5  2h ago           
+  2026-04-24 09:00:00  INFO  user.session.start  —           bob@acme.com      FAILURE  10.0.1.6  3h ago           
+  2026-04-24 05:00:00  WARN  user.session.start  —           alice@acme.com    FAILURE  10.0.1.5  7h ago           
+  2026-04-23 12:00:00  INFO  user.session.start  —           unknown@acme.com  FAILURE  10.0.1.7  1d ago           
+  2026-04-22 12:00:00  ERR   user.session.start  —           svc-sync@acme     FAILURE  10.0.1.8  2d ago           

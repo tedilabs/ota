@@ -50,6 +50,9 @@ type Deps struct {
 	Width        int
 	Height       int
 	InitialRules []domain.GroupRule
+	// RefreshInterval drives the auto-refresh tick (issue #177
+	// v0.1.16). Zero disables auto-refresh.
+	RefreshInterval time.Duration
 }
 
 // --- List --------------------------------------------------------------------
@@ -88,7 +91,15 @@ type ListModel struct {
 	// (issue #163). Populated lazily on first render via a Cmd.
 	groupNames        map[string]string
 	groupNamesFetched bool
+
+	// lastUpdated stamps the most recent successful list fetch (issue
+	// #177 v0.1.16); refreshGen invalidates stale ticks.
+	lastUpdated time.Time
+	refreshGen  int
 }
+
+// rulesRefreshTickMsg fires the auto-refresh tick (issue #177).
+type rulesRefreshTickMsg struct{ gen int }
 
 // RuleDetailTab indexes the Group Rule Detail tab bar. v0.1.2 collapsed
 // the placeholder tabs into Pretty / JSON / YAML; the old Profile / Raw
@@ -119,12 +130,37 @@ func NewListModel(deps Deps) ListModel {
 	}
 }
 
-// Init fetches the rules list on entry.
+// Init fetches the rules list on entry and schedules the first
+// auto-refresh tick (issue #177 v0.1.16).
 func (m ListModel) Init() tea.Cmd {
-	if len(m.rules) > 0 || m.deps.Port == nil {
+	var fetch tea.Cmd
+	if len(m.rules) == 0 && m.deps.Port != nil {
+		fetch = fetchRulesCmd(m.deps.Port)
+	}
+	tick := m.scheduleRefreshTickCmd()
+	switch {
+	case fetch != nil && tick != nil:
+		return tea.Batch(fetch, tick)
+	case fetch != nil:
+		return fetch
+	case tick != nil:
+		return tick
+	}
+	return nil
+}
+
+// LastUpdated implements app.LastUpdatedStater (issue #177 v0.1.16).
+func (m ListModel) LastUpdated() time.Time { return m.lastUpdated }
+
+// scheduleRefreshTickCmd returns the auto-refresh tea.Tick.
+func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {
+	if m.deps.RefreshInterval <= 0 || m.deps.Port == nil {
 		return nil
 	}
-	return fetchRulesCmd(m.deps.Port)
+	gen := m.refreshGen
+	return tea.Tick(m.deps.RefreshInterval, func(time.Time) tea.Msg {
+		return rulesRefreshTickMsg{gen: gen}
+	})
 }
 
 // Update handles key input and fetch results.
@@ -137,6 +173,7 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case rulesLoadedMsg:
 		m.rules = msg.rules
 		m.lastErr = nil
+		m.lastUpdated = m.now()
 		// Once rules are loaded, fire a Cmd that resolves target
 		// group IDs → names so TARGETS reads as a list of human
 		// names rather than 00g_… opaque IDs (issue #163).
@@ -151,6 +188,11 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case rulesErrMsg:
 		m.lastErr = msg.err
 		return m, nil
+	case rulesRefreshTickMsg:
+		if msg.gen != m.refreshGen || m.deps.Port == nil {
+			return m, nil
+		}
+		return m, tea.Batch(fetchRulesCmd(m.deps.Port), m.scheduleRefreshTickCmd())
 	case groupNamesLoadedMsg:
 		if m.groupNames == nil {
 			m.groupNames = map[string]string{}
@@ -353,6 +395,8 @@ func (m ListModel) View() string {
 	)))
 	b.WriteByte('\n')
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
+	budget := end - top
+	rowTarget := m.chromeContentWidth() - 2
 	for i := top; i < end; i++ {
 		row := m.renderRulesRow(rows[i], m.now(), tk)
 		prefix := "  "
@@ -360,6 +404,7 @@ func (m ListModel) View() string {
 			prefix = "▸ "
 		}
 		composed := prefix + row
+		composed = shared.PadOrTruncateVisible(composed, rowTarget)
 		switch {
 		case i == m.cursor:
 			composed = tk.Accent.Render(composed)
@@ -371,6 +416,7 @@ func (m ListModel) View() string {
 			}
 		}
 		b.WriteString(composed)
+		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
 
@@ -460,7 +506,8 @@ func (m ListModel) formatRulesColumns(cells ...string) string {
 }
 
 // rulesInnerWidth mirrors users.usersInnerWidth — body width after the
-// chrome border (2), left padding (1), and cursor gutter (2).
+// chrome border (2), left padding (1), cursor gutter (2), and the
+// 2-cell scrollbar gutter (issue #173).
 func (m ListModel) rulesInnerWidth() int {
 	w := m.width
 	if w <= 0 {
@@ -469,11 +516,25 @@ func (m ListModel) rulesInnerWidth() int {
 	if w < 80 {
 		w = 80
 	}
-	inner := w - 2 - 1 - 2
+	inner := w - 2 - 1 - 2 - 2
 	if inner < 20 {
 		inner = 20
 	}
 	return inner
+}
+
+// chromeContentWidth returns the body cells the chrome reserves per
+// row, used to pad the row out before the scrollbar suffix lands
+// flush against the right border (issue #173).
+func (m ListModel) chromeContentWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	return w - 3
 }
 
 // countInvalid returns the number of rules whose Status is INVALID.

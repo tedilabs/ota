@@ -58,6 +58,78 @@ func WindowBounds(cursor, prevTop, total, budget int) (top int, end int) {
 	return top, top + budget
 }
 
+// ScrollbarMark returns the per-row scrollbar marker for a single
+// visible row index `r` (0-based, where 0 is the topmost rendered
+// row in the window). Pure ASCII / box-drawing — caller styles the
+// returned strings via the active token set.
+//
+//   - When the dataset already fits the window (`total <= budget`)
+//     ScrollbarMark returns "" so list views can skip rendering a
+//     scrollbar gutter entirely.
+//   - Otherwise the function returns a thumb glyph (▌) when `r` is
+//     inside the active scroll thumb and a track glyph (│) when it
+//     is outside.
+//
+// The thumb's start row scales with `scrollTop / total` and its
+// length with `budget / total`, matching the renderScrollBox helper
+// the User Detail Groups/Apps boxes already use (issue #170). Lists
+// reuse the same algorithm so the chrome's visual language is
+// consistent.
+func ScrollbarMark(r, scrollTop, budget, total int) string {
+	if budget <= 0 || total <= budget {
+		return ""
+	}
+	thumbStart, thumbEnd := scrollbarThumb(scrollTop, budget, total)
+	if r >= thumbStart && r <= thumbEnd {
+		return "▌"
+	}
+	return "│"
+}
+
+// AppendScrollbarSuffix returns the trailing " ▌" / " │" gutter for
+// a single rendered list row. Empty when the dataset already fits the
+// budget so callers can avoid reserving the gutter on small lists.
+//
+// The scrollbar is rendered as 2 cells: a 1-cell visual gap from the
+// content followed by a 1-cell thumb / track glyph. Tints with the
+// active token set — accent for the thumb so the operator's eye
+// snaps to it; muted for the track so it recedes into the chrome.
+func AppendScrollbarSuffix(rowInWindow, scrollTop, budget, total int, tk Tokens) string {
+	mark := ScrollbarMark(rowInWindow, scrollTop, budget, total)
+	if mark == "" {
+		return ""
+	}
+	if mark == "▌" {
+		return " " + tk.Accent.Render(mark)
+	}
+	return " " + tk.Muted.Render(mark)
+}
+
+// scrollbarThumb computes the thumb's [start, end] inclusive row
+// range inside a window of `budget` rows, given the scroll offset
+// and the total dataset size. Always returns at least a single-row
+// thumb so the operator sees their position even on huge lists.
+func scrollbarThumb(scrollTop, budget, total int) (start, end int) {
+	if total <= budget {
+		return 0, budget - 1
+	}
+	scale := float64(budget) / float64(total)
+	thumbStart := int(float64(scrollTop) * scale)
+	thumbLen := int(float64(budget) * scale)
+	if thumbLen < 1 {
+		thumbLen = 1
+	}
+	thumbEnd := thumbStart + thumbLen - 1
+	if thumbEnd >= budget {
+		thumbEnd = budget - 1
+		thumbStart = thumbEnd - thumbLen + 1
+		if thumbStart < 0 {
+			thumbStart = 0
+		}
+	}
+	return thumbStart, thumbEnd
+}
+
 // ShrinkSpecsToFit returns a copy of specs with each Min set to
 // max(header_width, observed_data_width, floor) — the EXACT width
 // the column needs to render its data without truncation.

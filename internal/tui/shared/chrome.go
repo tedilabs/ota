@@ -91,6 +91,13 @@ type ChromeInput struct {
 	// visible row set.
 	Filter string
 
+	// DividerRight gets stamped into the upper divider just before
+	// the right `┤` — used by list screens to surface their
+	// last-update timestamp ("updated 12:34:56 UTC") so operators
+	// see when the data refreshed last (issue #177 v0.1.16). Empty
+	// disables the segment entirely.
+	DividerRight string
+
 	// Body is the active child Screen body. Caller is responsible for sizing
 	// the body to (Width-2) columns; chrome only adds the surrounding border.
 	Body string
@@ -149,7 +156,11 @@ func RenderChrome(in ChromeInput) string {
 
 	// ---- Upper divider with embedded resource label --------------------
 	resourceLabel := buildResourceLabel(in.Resource, in.Filter, in.CountVisible, in.CountTotal, in.HasCount, tk)
-	upperDivider := dividerWithLabel(width, resourceLabel)
+	rightLabel := ""
+	if in.DividerRight != "" {
+		rightLabel = tk.Muted.Render(in.DividerRight)
+	}
+	upperDivider := dividerWithLabels(width, resourceLabel, rightLabel)
 
 	// ---- Body -----------------------------------------------------------
 	bodyLines := splitLinesPadded(in.Body, contentWidth)
@@ -294,28 +305,57 @@ func itoaCount(n int) string {
 }
 
 // dividerWithLabel returns `├─ <label> ──────────┤` of total `width`
-// cells. The label sits two cells from the left border (k9s keeps the
-// title left-anchored so the eye lands on it consistently). When the
-// label is wider than the divider can hold, it gets truncated to fit
-// rather than overflowing the box.
-//
-// Layout: ├ + ─ + ' ' + label + ' ' + tail*─ + ┤  →  5 fixed cells.
+// cells. Kept as a thin wrapper around dividerWithLabels for callers
+// that don't need a right-side label.
 func dividerWithLabel(width int, label string) string {
+	return dividerWithLabels(width, label, "")
+}
+
+// dividerWithLabels renders the upper divider with a left-anchored
+// resource label and an optional right-anchored status segment
+// (e.g. "updated 12:34:56 UTC", issue #177 v0.1.16). Layout:
+//
+//	├ ─ ' ' <left> ' ' ──── ' ' <right> ' ' ─ ┤
+//
+// 7 fixed cells when both labels are present (the corner glyphs and
+// the four spaces around them). When `right` is empty we fall back
+// to the legacy 5-cell single-label layout so existing goldens stay
+// stable.
+func dividerWithLabels(width int, left, right string) string {
 	if width < 6 {
 		return dividerRow(width)
 	}
-	const fixedFrame = 5
-	available := width - fixedFrame
-	labelW := visibleWidth(label)
-	if labelW > available {
-		label = truncateVisible(label, available)
-		labelW = visibleWidth(label)
+	if right == "" {
+		const fixedFrame = 5
+		available := width - fixedFrame
+		labelW := visibleWidth(left)
+		if labelW > available {
+			left = truncateVisible(left, available)
+			labelW = visibleWidth(left)
+		}
+		tail := width - fixedFrame - labelW
+		if tail < 0 {
+			tail = 0
+		}
+		return "├─ " + left + " " + strings.Repeat("─", tail) + "┤"
 	}
-	tail := width - fixedFrame - labelW
-	if tail < 0 {
-		tail = 0
+	const fixedFrame = 7
+	leftW := visibleWidth(left)
+	rightW := visibleWidth(right)
+	available := width - fixedFrame - rightW
+	if available < 0 {
+		// Right label alone overflows — drop it.
+		return dividerWithLabels(width, left, "")
 	}
-	return "├─ " + label + " " + strings.Repeat("─", tail) + "┤"
+	if leftW > available {
+		left = truncateVisible(left, available)
+		leftW = visibleWidth(left)
+	}
+	mid := width - fixedFrame - leftW - rightW
+	if mid < 1 {
+		mid = 1
+	}
+	return "├─ " + left + " " + strings.Repeat("─", mid) + " " + right + " ─┤"
 }
 
 // contentRow wraps a (already padded to contentWidth) line with the left
@@ -482,6 +522,22 @@ func truncateVisible(s string, width int) string {
 // `[` itself sits in the 0x40-0x7e final-byte range and naive scanners
 // exit escape mode prematurely.
 func VisibleWidth(s string) int { return visibleWidth(s) }
+
+// PadOrTruncateVisible pads s with trailing spaces to exactly `width`
+// visible cells, or truncates when s is wider — honouring inner ANSI
+// styling. The list views call this to hold the scrollbar gutter
+// flush against the chrome's right border regardless of how short
+// (or long) the per-row column data renders.
+func PadOrTruncateVisible(s string, width int) string {
+	w := visibleWidth(s)
+	if w == width {
+		return s
+	}
+	if w > width {
+		return Truncate(s, width)
+	}
+	return s + strings.Repeat(" ", width-w)
+}
 
 // visibleWidth returns the visible cell count of s, ignoring ANSI
 // escapes AND honouring East-Asian-Wide / Emoji rune widths via

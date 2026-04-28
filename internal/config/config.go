@@ -6,7 +6,18 @@ type Config struct {
 	UI          UI                 `koanf:"ui"`
 	Keybindings map[string]string  `koanf:"keybindings"`
 	Logs        LogsConfig         `koanf:"logs"`
+	Refresh     RefreshConfig      `koanf:"refresh"`
 	Debug       bool               `koanf:"debug"`
+}
+
+// RefreshConfig tunes the periodic auto-refresh cadence per resource
+// list (issue #177 v0.1.16). LogsSeconds drives the Logs tail loop;
+// DefaultSeconds drives every other list (Users / Groups / Group
+// Rules / Apps / Policies). Either value can be zero to disable
+// auto-refresh on that surface.
+type RefreshConfig struct {
+	LogsSeconds    int `koanf:"logs_seconds"`
+	DefaultSeconds int `koanf:"default_seconds"`
 }
 
 // Profile captures a single tenant profile. API token is never stored in the
@@ -47,6 +58,7 @@ func Default() Config {
 		},
 		Keybindings: map[string]string{},
 		Logs:        LogsConfig{PollIntervalSeconds: 7},
+		Refresh:     RefreshConfig{LogsSeconds: 5, DefaultSeconds: 10},
 		Debug:       false,
 	}
 }

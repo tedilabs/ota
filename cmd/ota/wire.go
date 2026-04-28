@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -111,6 +112,10 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 		PoliciesPort:   oktaClient.Policies(),
 		LogsPort:       oktaClient.Logs(),
 		AppsPort:       oktaClient.Apps(),
+		LogsRefreshInterval: time.Duration(cfg.Refresh.LogsSeconds) *
+			time.Second,
+		DefaultRefreshInterval: time.Duration(cfg.Refresh.DefaultSeconds) *
+			time.Second,
 	})
 	return model, cfg, nil
 }

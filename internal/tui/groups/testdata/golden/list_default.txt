@@ -1,4 +1,4 @@
-  TYPE      NAME                                       DESCRIPTION                                MEMBERS     UPDATED
-▸ OKTA      Engineering                                All engineers                                    —           —
-  APP       Jira Users                                 Synced from Atlassian                            —           —
-  BUILT_IN  Everyone                                   All organization members                         —           —
+  TYPE      NAME                                      DESCRIPTION                               MEMBERS     UPDATED
+▸ OKTA      Engineering                               All engineers                                   —           —
+  APP       Jira Users                                Synced from Atlassian                           —           —
+  BUILT_IN  Everyone                                  All organization members                        —           —

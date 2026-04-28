@@ -47,6 +47,9 @@ type Deps struct {
 	Keys   keys.ResolvedMap
 	Width  int
 	Height int
+	// RefreshInterval drives the auto-refresh tick (issue #177
+	// v0.1.16). Zero disables auto-refresh.
+	RefreshInterval time.Duration
 	// InitialUsers is an optional seed for tests (instead of a SetUsers setter).
 	InitialUsers []domain.User
 }
@@ -115,17 +118,56 @@ type ListModel struct {
 	detailAppsErr      error
 	detailAppsLoaded   bool
 	detailExtrasUser   string
-	// detailFocus picks which sub-region inside the detail surface
-	// is currently active for j/k scrolling and Enter drill-down
-	// (issues #170 + #171). 0 = info grid (default — j/k moves the
-	// detailLine cursor as before), 1 = Groups box, 2 = Apps box.
-	// Tab cycles forward, Shift-Tab backward (when not on the tab
-	// bar; the bar still owns Tab on its own row).
-	detailFocus       int
-	detailGroupsCur   int // cursor row within detailGroups (focus=1)
-	detailGroupsTop   int // first visible row in the Groups box
-	detailAppsCur     int // cursor row within detailApps (focus=2)
-	detailAppsTop     int // first visible row in the Apps box
+	// detailExtrasFocused flips when the operator hops from the info
+	// grid into the Groups+Apps boxes (issue #174 v0.1.15). When false
+	// j/k moves the info grid line cursor (detailLine); when true j/k
+	// drives a single linear cursor that flows from the first Groups
+	// row through to the last Apps row and wraps. `]` toggles in (and
+	// `]`/`[` while inside the boxes jump to the other column's first
+	// row); Esc both exits Visual and exits the boxes back to the
+	// info grid.
+	detailExtrasFocused bool
+	// detailExtrasCur is the linear cursor inside the extras region:
+	// 0..len(groups)-1 maps to Groups rows; len(groups)..total-1 maps
+	// to Apps rows. The View renders a single highlight on whichever
+	// box owns the cursor — never both at once.
+	detailExtrasCur int
+	// detailGroupsTop / detailAppsTop hold the per-box scroll
+	// offsets so each scrollbar tracks independently as the linear
+	// cursor moves between columns.
+	detailGroupsTop int
+	detailAppsTop   int
+
+	// lastUpdated stamps the most recent successful list fetch so
+	// the chrome's upper-divider right slot reads "updated 12:34:56
+	// UTC" (issue #177 v0.1.16). Zero before the first fetch.
+	lastUpdated time.Time
+	// refreshGen guards against stale refresh-tick Cmds firing
+	// after the operator switched screens or the model was rebuilt.
+	refreshGen int
+
+	// groupCounts / appCounts hold the per-user assigned-groups /
+	// assigned-apps counts surfaced by the GROUPS and APPS columns
+	// (issue #178 v0.1.16). Populated lazily after a fresh
+	// usersLoadedMsg; entries arrive via userCountLoadedMsg as each
+	// per-user fetch resolves. The bool sibling map records whether
+	// the fetch has completed at least once so the View can render
+	// "…" until then. Keyed by domain.User.ID.
+	groupCounts  map[string]int
+	appCounts    map[string]int
+	countsLoaded map[string]bool
+}
+
+// userCountLoadedMsg delivers a per-user (groups, apps) count pair
+// back into the Update loop after the lazy fetch resolves (issue
+// #178 v0.1.16). Either field can be -1 to mean "fetch failed";
+// the View renders "?" in that case so operators see the gap.
+type userCountLoadedMsg struct {
+	userID    string
+	groupsN   int
+	appsN     int
+	groupsErr bool
+	appsErr   bool
 }
 
 // usersLoadedMsg delivers the result of the initial fetch.
@@ -134,6 +176,12 @@ type usersLoadedMsg struct{ users []domain.User }
 // usersErrMsg delivers a fetch failure to the model so the View can surface
 // it via the inline error panel (TUI_DESIGN §17.1 / Phase 6d-6).
 type usersErrMsg struct{ err error }
+
+// usersRefreshTickMsg fires when the auto-refresh ticker (issue #177
+// v0.1.16) should re-fetch the user list. `gen` matches the model's
+// `refreshGen` so a screen switch or reload invalidates in-flight
+// ticks (no fetch fires on a model that's been swapped out).
+type usersRefreshTickMsg struct{ gen int }
 
 // userOpenedMsg delivers the result of a detail fetch.
 type userOpenedMsg struct{ user domain.User }
@@ -173,12 +221,41 @@ func NewListModel(deps Deps) ListModel {
 	}
 }
 
-// Init kicks off the initial List call (REQ-R01 AC-1).
+// Init kicks off the initial List call (REQ-R01 AC-1) and schedules
+// the first auto-refresh tick (issue #177 v0.1.16). When the model
+// is seeded with InitialUsers the fetch is skipped but the tick
+// still fires — operators get fresh data on the configured cadence.
 func (m ListModel) Init() tea.Cmd {
-	if len(m.users) > 0 || m.deps.Port == nil {
+	var fetch tea.Cmd
+	if len(m.users) == 0 && m.deps.Port != nil {
+		fetch = fetchUsersCmd(m.deps.Port)
+	}
+	tick := m.scheduleRefreshTickCmd()
+	switch {
+	case fetch != nil && tick != nil:
+		return tea.Batch(fetch, tick)
+	case fetch != nil:
+		return fetch
+	case tick != nil:
+		return tick
+	}
+	return nil
+}
+
+// LastUpdated implements app.LastUpdatedStater (issue #177 v0.1.16).
+func (m ListModel) LastUpdated() time.Time { return m.lastUpdated }
+
+// scheduleRefreshTickCmd returns a tea.Tick that fires usersRefreshTickMsg
+// after the configured interval. Returns nil when auto-refresh is
+// disabled (RefreshInterval == 0) or the port isn't wired.
+func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {
+	if m.deps.RefreshInterval <= 0 || m.deps.Port == nil {
 		return nil
 	}
-	return fetchUsersCmd(m.deps.Port)
+	gen := m.refreshGen
+	return tea.Tick(m.deps.RefreshInterval, func(time.Time) tea.Msg {
+		return usersRefreshTickMsg{gen: gen}
+	})
 }
 
 // Update handles key presses, the list fetch Msg, and the detail fetch Msg.
@@ -191,10 +268,50 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case usersLoadedMsg:
 		m.users = msg.users
 		m.lastErr = nil
+		m.lastUpdated = m.now()
+		// Issue #178 — kick off lazy per-user count fetches for
+		// the GROUPS / APPS columns. Skip users we already
+		// loaded counts for (refresh ticks land here too) so we
+		// don't burn rate-limit budget on rows the operator
+		// already saw populated.
+		if cmds := m.kickUserCountFetches(); cmds != nil {
+			return m, cmds
+		}
+		return m, nil
+	case userCountLoadedMsg:
+		if m.groupCounts == nil {
+			m.groupCounts = map[string]int{}
+		}
+		if m.appCounts == nil {
+			m.appCounts = map[string]int{}
+		}
+		if m.countsLoaded == nil {
+			m.countsLoaded = map[string]bool{}
+		}
+		if msg.groupsErr {
+			m.groupCounts[msg.userID] = -1
+		} else {
+			m.groupCounts[msg.userID] = msg.groupsN
+		}
+		if msg.appsErr {
+			m.appCounts[msg.userID] = -1
+		} else {
+			m.appCounts[msg.userID] = msg.appsN
+		}
+		m.countsLoaded[msg.userID] = true
 		return m, nil
 	case usersErrMsg:
 		m.lastErr = msg.err
 		return m, nil
+	case usersRefreshTickMsg:
+		// Stale tick (model rebuilt / generation bumped) — drop.
+		if msg.gen != m.refreshGen || m.deps.Port == nil {
+			return m, nil
+		}
+		// Re-fetch + reschedule. Using tea.Batch keeps the tick
+		// chain alive even when the fetch is in flight so a slow
+		// API doesn't pause the loop.
+		return m, tea.Batch(fetchUsersCmd(m.deps.Port), m.scheduleRefreshTickCmd())
 	case userOpenedMsg:
 		m.detailUser = msg.user
 		m.opened = true
@@ -287,6 +404,14 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detailVisual = false
 				return m, nil
 			}
+			// v0.1.15 issue #174: when focus is inside the
+			// Groups+Apps boxes, Esc returns to the info grid
+			// instead of closing the whole detail surface — gives
+			// the operator a way back without an Enter mis-step.
+			if m.detailExtrasFocused {
+				m.detailExtrasFocused = false
+				return m, nil
+			}
 			m.opened = false
 			m.detailUser = domain.User{}
 			m.detailTab = DetailTabProfile
@@ -302,10 +427,9 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailApps = nil
 			m.detailAppsErr = nil
 			m.detailAppsLoaded = false
-			m.detailFocus = 0
-			m.detailGroupsCur = 0
+			m.detailExtrasFocused = false
+			m.detailExtrasCur = 0
 			m.detailGroupsTop = 0
-			m.detailAppsCur = 0
 			m.detailAppsTop = 0
 			return m, nil
 		case tea.KeyTab:
@@ -321,18 +445,18 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			// Issue #171 — drill-down on the Groups / Apps boxes:
 			// Enter on a focused row asks the App Shell to switch
-			// to the matching screen and open detail by ID.
-			switch m.detailFocus {
-			case 1:
-				if m.detailGroupsCur >= 0 && m.detailGroupsCur < len(m.detailGroups) {
-					id := m.detailGroups[m.detailGroupsCur].ID
+			// to the matching screen and open detail by ID. v0.1.15
+			// uses a linear cursor that flows across both boxes:
+			// any cursor position < len(groups) selects a group;
+			// the rest selects an app.
+			if m.detailExtrasFocused {
+				if cur := m.detailExtrasCur; cur >= 0 && cur < len(m.detailGroups) {
+					id := m.detailGroups[cur].ID
 					if id != "" {
 						return m, openGroupDetailCmd(id)
 					}
-				}
-			case 2:
-				if m.detailAppsCur >= 0 && m.detailAppsCur < len(m.detailApps) {
-					id := m.detailApps[m.detailAppsCur].ID
+				} else if appIdx := m.detailExtrasCur - len(m.detailGroups); appIdx >= 0 && appIdx < len(m.detailApps) {
+					id := m.detailApps[appIdx].ID
 					if id != "" {
 						return m, openAppDetailCmd(id)
 					}
@@ -351,52 +475,63 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detailLine = 0
 				m.detailVisual = false
 			case "j":
-				// Issue #170 — j/k routes to the active focus
-				// (info / Groups / Apps). The default focus (0)
-				// keeps the existing detailLine behaviour for the
-				// info grid; focus 1/2 scrolls the per-box cursor.
-				switch m.detailFocus {
-				case 1:
-					if m.detailGroupsCur < len(m.detailGroups)-1 {
-						m.detailGroupsCur++
+				// v0.1.15 issue #174: j on the info grid scrolls the
+				// line cursor; j inside the Groups+Apps boxes drives
+				// a single linear cursor that flows across both
+				// boxes (and wraps around at the end).
+				if m.detailExtrasFocused {
+					if total := m.detailExtrasTotal(); total > 0 {
+						m.detailExtrasCur = (m.detailExtrasCur + 1) % total
 					}
-				case 2:
-					if m.detailAppsCur < len(m.detailApps)-1 {
-						m.detailAppsCur++
-					}
-				default:
+				} else {
 					lines := m.detailBodyLines()
 					if m.detailLine < len(lines)-1 {
 						m.detailLine++
 					}
 				}
 			case "k":
-				switch m.detailFocus {
-				case 1:
-					if m.detailGroupsCur > 0 {
-						m.detailGroupsCur--
+				if m.detailExtrasFocused {
+					if total := m.detailExtrasTotal(); total > 0 {
+						m.detailExtrasCur = (m.detailExtrasCur - 1 + total) % total
 					}
-				case 2:
-					if m.detailAppsCur > 0 {
-						m.detailAppsCur--
-					}
-				default:
+				} else {
 					if m.detailLine > 0 {
 						m.detailLine--
 					}
 				}
 			case "]":
-				// Cycle focus forward through info → groups → apps.
-				m.detailFocus = (m.detailFocus + 1) % 3
+				// v0.1.15 issue #174: `]` enters the boxes when on
+				// the info grid; once inside, jumps to the start of
+				// the Apps column. `[` is the symmetric back jump.
+				if !m.detailExtrasFocused {
+					m.detailExtrasFocused = true
+					m.detailExtrasCur = 0
+				} else {
+					m.detailExtrasCur = len(m.detailGroups)
+					if m.detailExtrasCur >= m.detailExtrasTotal() {
+						m.detailExtrasCur = 0
+					}
+				}
 			case "[":
-				// Cycle focus backward.
-				m.detailFocus = (m.detailFocus + 2) % 3
+				if m.detailExtrasFocused {
+					m.detailExtrasCur = 0
+				}
 			case "g":
-				m.detailLine = 0
+				if m.detailExtrasFocused {
+					m.detailExtrasCur = 0
+				} else {
+					m.detailLine = 0
+				}
 			case "G":
-				lines := m.detailBodyLines()
-				if len(lines) > 0 {
-					m.detailLine = len(lines) - 1
+				if m.detailExtrasFocused {
+					if total := m.detailExtrasTotal(); total > 0 {
+						m.detailExtrasCur = total - 1
+					}
+				} else {
+					lines := m.detailBodyLines()
+					if len(lines) > 0 {
+						m.detailLine = len(lines) - 1
+					}
 				}
 			case "v", "V":
 				if m.detailVisual {
@@ -659,6 +794,9 @@ func (m ListModel) View() string {
 	// budget keeps the chrome's top border + context line visible by
 	// reserving header / hint / filter rows from the body height.
 	top, end := m.windowBounds(len(rows))
+	budget := end - top
+	contentW := m.chromeContentWidth()
+	rowTarget := contentW - 2 // leave room for " ▌" / " │"
 	for i := top; i < end; i++ {
 		row := m.renderUsersRow(rows[i], m.now(), tk)
 		prefix := "  "
@@ -666,6 +804,10 @@ func (m ListModel) View() string {
 			prefix = "▸ "
 		}
 		composed := prefix + row
+		// Pad to rowTarget BEFORE styling so the cursor / status
+		// background tint covers the full row including the trailing
+		// fill cells, not just the column data.
+		composed = shared.PadOrTruncateVisible(composed, rowTarget)
 		switch {
 		case i == m.cursor:
 			// Cursor takes priority — the operator needs to see
@@ -683,6 +825,7 @@ func (m ListModel) View() string {
 			}
 		}
 		b.WriteString(composed)
+		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -859,17 +1002,23 @@ func (m ListModel) detailBodyLines() []string {
 
 // renderDetailExtras builds the side-by-side Groups + Apps boxes
 // rendered beneath the 2-col Pretty info layout (issues #168 +
-// #170). Each box is a fixed-height rounded-border widget with:
+// #170 + #174). Each box is a rounded-border widget with:
 //   - title bar carrying the section name + "(N)" count
 //   - scrollable content window (j/k advances when focused)
 //   - vertical scrollbar (▒ thumb on a │ track) on the right edge
-//   - focus halo: when the box has focus, its border + title
-//     light up with the accent token so the operator sees where
-//     j/k will land
+//   - focus halo: when EITHER box owns the linear cursor, only
+//     that box lights up — never both at once (issue #174)
 //
 // Both boxes carry the same height so the chrome's body-row
 // budget stays predictable — even a user with 200 groups won't
 // push the chrome's top border off the screen.
+//
+// v0.1.15 (#174): a single linear cursor (detailExtrasCur) flows
+// across both boxes. When the cursor sits inside the Groups
+// range, the Groups box has focus + highlight; when it advances
+// past len(groups) the Apps box takes over. j wraps from the last
+// Apps row back to the first Groups row; k wraps the other
+// direction.
 func (m ListModel) renderDetailExtras(tk shared.Tokens) string {
 	innerHeight := m.detailExtrasBoxHeight()
 	colW := m.detailExtrasColWidth()
@@ -886,12 +1035,28 @@ func (m ListModel) renderDetailExtras(tk shared.Tokens) string {
 		appsTitle = appsTitle + "  (" + itoaSimple(len(m.detailApps)) + ")"
 	}
 
+	groupsFocus := m.detailExtrasFocused && m.detailExtrasCur < len(m.detailGroups)
+	appsFocus := m.detailExtrasFocused && m.detailExtrasCur >= len(m.detailGroups)
+	// Cursor row inside each box — outside its range it's set to a
+	// negative value so renderScrollBox skips the highlight.
+	groupsRow := -1
+	appsRow := -1
+	if groupsFocus {
+		groupsRow = m.detailExtrasCur
+	}
+	if appsFocus {
+		appsRow = m.detailExtrasCur - len(m.detailGroups)
+	}
+
+	groupsTop := clampScrollTop(maxInt(groupsRow, 0), m.detailGroupsTop, innerHeight, len(groupsItems))
+	appsTop := clampScrollTop(maxInt(appsRow, 0), m.detailAppsTop, innerHeight, len(appsItems))
+
 	left := renderScrollBox(
 		groupsTitle,
 		groupsItems,
-		m.detailFocus == 1,
-		m.detailGroupsCur,
-		clampScrollTop(m.detailGroupsCur, m.detailGroupsTop, innerHeight, len(groupsItems)),
+		groupsFocus,
+		groupsRow,
+		groupsTop,
 		innerHeight,
 		colW,
 		tk,
@@ -899,16 +1064,32 @@ func (m ListModel) renderDetailExtras(tk shared.Tokens) string {
 	right := renderScrollBox(
 		appsTitle,
 		appsItems,
-		m.detailFocus == 2,
-		m.detailAppsCur,
-		clampScrollTop(m.detailAppsCur, m.detailAppsTop, innerHeight, len(appsItems)),
+		appsFocus,
+		appsRow,
+		appsTop,
 		innerHeight,
 		colW,
 		tk,
 	)
 	hint := tk.Muted.Render(
-		"  ]  next box   [  prev box   j/k  scroll   Enter  open detail")
+		"  ]  enter / next box   [  back to top   j/k  scroll (wraps)   Enter  open detail   Esc  exit boxes")
 	return composeColumns(left, right, colW) + "\n" + hint
+}
+
+// detailExtrasTotal returns the number of selectable rows in the
+// combined Groups+Apps cursor space — used by j/k wrap arithmetic.
+// Loading / error / empty placeholders contribute 0 so the cursor
+// stays at 0 until real data arrives.
+func (m ListModel) detailExtrasTotal() int {
+	g := 0
+	if m.detailGroupsLoaded && m.detailGroupsErr == nil {
+		g = len(m.detailGroups)
+	}
+	a := 0
+	if m.detailAppsLoaded && m.detailAppsErr == nil {
+		a = len(m.detailApps)
+	}
+	return g + a
 }
 
 // formatGroupsItems returns the bare row strings for the Groups
@@ -957,25 +1138,31 @@ func (m ListModel) formatAppsItems(tk shared.Tokens) []string {
 	return out
 }
 
-// detailExtrasBoxHeight chooses a fixed content-row count for each
-// extras box so the total detail body fits inside the chrome's
-// row budget (issue #170 — operators reported the chrome top
-// border scrolling off when the groups list was long). Floor 5
-// rows so a single result is always readable; cap 18 so a sparse
-// info grid + huge group list doesn't waste the screen.
+// detailExtrasBoxHeight returns the content-row count for each extras
+// box — sized to consume whatever vertical space the info grid leaves
+// in the body. v0.1.15 (#174) replaces the old fixed 18-row cap with
+// dynamic measurement: render the info grid, count its lines, and
+// subtract from the body budget to derive the box height. Tall
+// terminals now use their full vertical real estate instead of
+// leaving 30+ rows of dead space at the bottom.
+//
+// A floor of 5 rows guarantees a usable single-row view even on
+// short terminals; the box's own scrollbar handles overflow.
 func (m ListModel) detailExtrasBoxHeight() int {
 	const minRows = 5
-	const maxRows = 18
 	available := shared.ListBodyRowBudget(m.height)
-	// Reserve ~16 rows for the header + Pretty info grid + the
-	// closing hint line. Whatever's left becomes the box height.
-	const reserved = 16
-	rows := available - reserved
+
+	// Measure the info grid's actual line count so the boxes adapt
+	// to user-shaped content (Identity / Status / Address / …).
+	infoLines := strings.Count(m.newDetail().View(), "\n") + 1
+	// Box widget overhead: 1 row top border + 1 row bottom border
+	// + 1 row of hint footer + 1 row of breathing room above the
+	// boxes. The detail header (User Detail label, tab bar,
+	// divider) is already counted inside infoLines.
+	const overhead = 4
+	rows := available - infoLines - overhead
 	if rows < minRows {
 		return minRows
-	}
-	if rows > maxRows {
-		return maxRows
 	}
 	return rows
 }
@@ -1158,6 +1345,8 @@ func (m ListModel) renderUsersHeader(tk shared.Tokens) string {
 		"DEPARTMENT",
 		"TITLE",
 		usersSortLabel("STATUS", m.sortBy, SortStatus, m.sortDir, tk),
+		"GROUPS",
+		"APPS",
 		usersSortLabel("LAST LOGIN", m.sortBy, SortLastLogin, m.sortDir, tk),
 		usersSortLabel("LAST UPDATED", m.sortBy, SortCreated, m.sortDir, tk),
 	)
@@ -1192,8 +1381,10 @@ func (m ListModel) renderUsersRow(u domain.User, now time.Time, tk shared.Tokens
 		}
 		return s
 	}
+	groupsCell, appsCell := m.formatCountCells(u.ID)
 	// Order matches usersColumnSpecs: LOGIN first so it lands left of
-	// the eye, identity attrs next, status mid-row, timestamps right.
+	// the eye, identity attrs next, status mid-row, counts after
+	// status, timestamps right.
 	return m.formatUsersColumns(
 		u.Profile.Login,
 		dash(u.Profile.NickName),
@@ -1201,9 +1392,31 @@ func (m ListModel) renderUsersRow(u domain.User, now time.Time, tk shared.Tokens
 		dash(u.Profile.Department),
 		dash(u.Profile.Title),
 		status,
+		groupsCell,
+		appsCell,
 		lastLogin,
 		lastUpdated,
 	)
+}
+
+// formatCountCells renders the GROUPS / APPS cells for one user row.
+// Returns "…" while the lazy fetch is in flight, "?" on fetch error,
+// and the raw integer otherwise (issue #178 v0.1.16).
+func (m ListModel) formatCountCells(userID string) (string, string) {
+	if userID == "" || m.countsLoaded == nil || !m.countsLoaded[userID] {
+		return "…", "…"
+	}
+	g := m.groupCounts[userID]
+	a := m.appCounts[userID]
+	groupsCell := strconv.Itoa(g)
+	if g < 0 {
+		groupsCell = "?"
+	}
+	appsCell := strconv.Itoa(a)
+	if a < 0 {
+		appsCell = "?"
+	}
+	return groupsCell, appsCell
 }
 
 // usersColumnSpecs is the column lineup the user pinned in #145:
@@ -1233,6 +1446,11 @@ func usersColumnSpecs() []shared.ColumnSpec {
 		{Title: "DEPARTMENT", Kind: shared.ColumnFlex, Min: 10, Weight: 1, DropPriority: 4},
 		{Title: "TITLE", Kind: shared.ColumnFlex, Min: 12, Weight: 2, DropPriority: 3},
 		{Title: "STATUS", Kind: shared.ColumnFixed, Min: 16, DropPriority: 0, AlignCenter: true},
+		// Issue #178 v0.1.16 — assigned-counts surface here so
+		// operators see fan-out at a glance. Drops earliest on
+		// narrow terminals so identity attrs survive.
+		{Title: "GROUPS", Kind: shared.ColumnFixed, Min: 6, DropPriority: 7, AlignRight: true},
+		{Title: "APPS", Kind: shared.ColumnFixed, Min: 4, DropPriority: 7, AlignRight: true},
 		{Title: "LAST LOGIN", Kind: shared.ColumnFixed, Min: 10, DropPriority: 2, AlignRight: true},
 		{Title: "LAST UPDATED", Kind: shared.ColumnFixed, Min: 12, DropPriority: 1, AlignRight: true},
 	}
@@ -1314,7 +1532,7 @@ func (m ListModel) clampHScroll(want int) int {
 // column across the currently visible rows. Powers ShrinkSpecsToFit so
 // every column gets exactly the width its data demands. Order must
 // match usersColumnSpecs: LOGIN, NICKNAME, DIVISION, DEPARTMENT,
-// TITLE, STATUS, LAST LOGIN, LAST UPDATED.
+// TITLE, STATUS, GROUPS, APPS, LAST LOGIN, LAST UPDATED.
 func (m ListModel) observedColumnWidths() []int {
 	rows := m.visible()
 	if len(rows) == 0 {
@@ -1328,9 +1546,10 @@ func (m ListModel) observedColumnWidths() []int {
 		}
 		return s
 	}
-	out := make([]int, 8)
+	out := make([]int, 10)
 	for _, u := range rows {
 		statusBadge := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
+		groupsCell, appsCell := m.formatCountCells(u.ID)
 		cells := []string{
 			u.Profile.Login,
 			dash(u.Profile.NickName),
@@ -1338,6 +1557,8 @@ func (m ListModel) observedColumnWidths() []int {
 			dash(u.Profile.Department),
 			dash(u.Profile.Title),
 			statusBadge,
+			groupsCell,
+			appsCell,
 			shared.RelativeTime(u.LastLogin, now),
 			shared.RelativeTime(&u.LastUpdated, now),
 		}
@@ -1363,10 +1584,10 @@ func visibleCellWidth(s string) int {
 }
 
 // usersSortColumnIdx maps a SortKey to its index in usersColumnSpecs.
-// Issue #145 column order:
+// v0.1.16 column order (issue #178 inserts GROUPS / APPS after STATUS):
 //
 //	0 LOGIN · 1 NICKNAME · 2 DIVISION · 3 DEPARTMENT · 4 TITLE ·
-//	5 STATUS · 6 LAST LOGIN · 7 LAST UPDATED
+//	5 STATUS · 6 GROUPS · 7 APPS · 8 LAST LOGIN · 9 LAST UPDATED
 func usersSortColumnIdx(k SortKey) int {
 	switch k {
 	case SortName:
@@ -1374,9 +1595,9 @@ func usersSortColumnIdx(k SortKey) int {
 	case SortStatus:
 		return 5
 	case SortLastLogin:
-		return 6
+		return 8
 	case SortCreated:
-		return 7
+		return 9
 	}
 	return -1
 }
@@ -1395,12 +1616,34 @@ func (m ListModel) usersInnerWidth() int {
 	if w < 80 {
 		w = 80
 	}
-	// chrome border (2) + left padding (1) + cursor gutter (2 for "> "/"  ").
-	inner := w - 2 - 1 - 2
+	// chrome border (2) + left padding (1) + cursor gutter (2 for "> "/"  ")
+	// + scrollbar gutter (2: 1-cell gap + 1-cell bar) reserves room for
+	// the right-edge scrollbar (v0.1.15 issue #173). Subtracting from
+	// the width returned to the column layout means LayoutColumns picks
+	// a tighter set, leaving 2 cells of clean space at the end of the
+	// row for the scrollbar to render flush against the chrome border.
+	inner := w - 2 - 1 - 2 - 2
 	if inner < 20 {
 		inner = 20
 	}
 	return inner
+}
+
+// chromeContentWidth returns the body cells the chrome reserves for
+// list content per row — width minus the chrome's left border, left
+// padding, and right border. The list pads each row out to this
+// width minus 2 (for " ▌"/" │") so the scrollbar lands flush against
+// the right border regardless of how wide the columns end up
+// rendering.
+func (m ListModel) chromeContentWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	return w - 3
 }
 
 // renderUsersError builds the inline error panel (TUI_DESIGN §17.1) using
@@ -1542,6 +1785,27 @@ func (m ListModel) selected() *domain.User {
 	return &vs[m.cursor]
 }
 
+// Actions publishes the resource-specific actions surfaced by the
+// `a` action menu (issue #175 v0.1.15). Three Users lifecycle
+// operations: reset password, unlock, reset MFA factors. The IDs
+// match the `:` palette commands so the App Shell can route both
+// entry points through the same confirmation flow.
+func (m ListModel) Actions() []shared.ActionItem {
+	return []shared.ActionItem{
+		{ID: "reset-password", Label: "Reset password", Hint: "send the standard reset email"},
+		{ID: "unlock", Label: "Unlock account", Hint: "clear LOCKED_OUT state"},
+		{ID: "reset-factors", Label: "Reset MFA factors", Hint: "destructive — forces re-enrollment"},
+	}
+}
+
+// RunAction emits a shared.RunUserActionMsg back into the App Shell
+// when the operator picks an item from the `a` menu. The App Shell
+// already routes this into openActionConfirm so the y/N gate fires
+// for every destructive op (issue #125 + #175).
+func (m ListModel) RunAction(id string) (tea.Model, tea.Cmd) {
+	return m, func() tea.Msg { return shared.RunUserActionMsg{Kind: id} }
+}
+
 // SelectedUser surfaces the active user (the open detail target while
 // `m.opened` is true, otherwise the cursor row) so the App Shell can
 // hand it to lifecycle confirmation modals (issue #125). Implements
@@ -1615,6 +1879,54 @@ func fetchUserAppLinksCmd(port domain.UsersPort, userID string) tea.Cmd {
 			return userDetailAppsErrMsg{userID: userID, err: err}
 		}
 		return userDetailAppsLoadedMsg{userID: userID, apps: links}
+	}
+}
+
+// kickUserCountFetches builds a tea.Batch of per-user count fetch
+// Cmds for users that don't yet have a cached count (issue #178
+// v0.1.16). Each Cmd issues one ListGroups + one ListAppLinks call
+// per user; results land via userCountLoadedMsg. Returns nil when
+// no port is wired (test harnesses) or every visible user is
+// already cached.
+func (m ListModel) kickUserCountFetches() tea.Cmd {
+	if m.deps.Port == nil {
+		return nil
+	}
+	cmds := make([]tea.Cmd, 0, len(m.users))
+	for _, u := range m.users {
+		if u.ID == "" {
+			continue
+		}
+		if m.countsLoaded != nil && m.countsLoaded[u.ID] {
+			continue
+		}
+		cmds = append(cmds, fetchUserCountsCmd(m.deps.Port, u.ID))
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+// fetchUserCountsCmd issues a single (groups, apps) count probe for
+// one user. The Cmd does both fetches sequentially in the same
+// goroutine — Bubbletea spawns these in parallel via tea.Batch, so
+// the fan-out concurrency comes for free.
+func fetchUserCountsCmd(port domain.UsersPort, userID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		out := userCountLoadedMsg{userID: userID}
+		if groups, err := port.ListGroups(ctx, userID); err != nil {
+			out.groupsErr = true
+		} else {
+			out.groupsN = len(groups)
+		}
+		if links, err := port.ListAppLinks(ctx, userID); err != nil {
+			out.appsErr = true
+		} else {
+			out.appsN = len(links)
+		}
+		return out
 	}
 }
 

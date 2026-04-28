@@ -1,7 +1,7 @@
-    STATUS    NAME                      EXPRESSION                             TARGETS                        UPDATED
-▸   ACTIVE    Engineers to Eng          user.department eq "Engineering"       00g_eng                              —
-   INACTIVE   Legacy Eng Mapping        user.title eq "Engineer"               00g_eng                              —
-   INVALID    Broken Dept Rule          user.department.unknownField()         00g_sales                            —
+    STATUS    NAME                      EXPRESSION                            TARGETS                       UPDATED
+▸   ACTIVE    Engineers to Eng          user.department eq "Engineering"      00g_eng                             —
+   INACTIVE   Legacy Eng Mapping        user.title eq "Engineer"              00g_eng                             —
+   INVALID    Broken Dept Rule          user.department.unknownField()        00g_sales                           —
 
 [!] 1 rule in INVALID state — expression cannot be evaluated by Okta.
     Open the rule to view why and what to fix.

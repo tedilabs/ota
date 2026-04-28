@@ -1,6 +1,8 @@
 package apps
 
 import (
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tedilabs/ota/internal/domain"
@@ -143,6 +145,16 @@ func (w Wrapper) Count() (visible, total int) {
 		return w.list.Count()
 	}
 	return 0, 0
+}
+
+// LastUpdated proxies to the active list so the chrome's
+// upper-divider stamp (issue #177 v0.1.16) tracks the typed list's
+// most recent fetch.
+func (w Wrapper) LastUpdated() time.Time {
+	if w.mode == wrapperModeList {
+		return w.list.LastUpdated()
+	}
+	return time.Time{}
 }
 
 // AppType reports the currently-selected type (zero value while the
