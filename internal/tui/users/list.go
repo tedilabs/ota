@@ -423,13 +423,20 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detailLine = 0
 				m.detailVisual = false
 			case "j":
-				// v0.1.15 issue #174: j on the info grid scrolls the
-				// line cursor; j inside the Groups+Apps boxes drives
-				// a single linear cursor that flows across both
-				// boxes (and wraps around at the end).
+				// v0.1.15 #174: j drives the focused box's cursor.
+				// v0.1.17 #181: j on the info grid is column-flow
+				// for Pretty (wraps from the last right-column row
+				// back to the first left-column row); JSON / YAML
+				// keep their flat per-line cap so the cursor still
+				// stops at the bottom of the buffer.
 				if m.detailExtrasFocused {
 					if total := m.detailExtrasTotal(); total > 0 {
 						m.detailExtrasCur = (m.detailExtrasCur + 1) % total
+					}
+				} else if m.detailTab == DetailTabPretty {
+					lines := m.detailBodyLines()
+					if n := len(lines); n > 0 {
+						m.detailLine = (m.detailLine + 1) % n
 					}
 				} else {
 					lines := m.detailBodyLines()
@@ -441,6 +448,11 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.detailExtrasFocused {
 					if total := m.detailExtrasTotal(); total > 0 {
 						m.detailExtrasCur = (m.detailExtrasCur - 1 + total) % total
+					}
+				} else if m.detailTab == DetailTabPretty {
+					lines := m.detailBodyLines()
+					if n := len(lines); n > 0 {
+						m.detailLine = (m.detailLine - 1 + n) % n
 					}
 				} else {
 					if m.detailLine > 0 {
@@ -823,30 +835,66 @@ func (m ListModel) clampedCursor() ListModel {
 // renderDetailWithCursor wraps DetailModel.View() with a line-cursor +
 // optional Vim Visual highlight and a transient toast (e.g. "yanked 5
 // lines"). The DetailModel itself is stateless across renders; the
-// cursor / visual state lives on ListModel so the data flow stays
-// idempotent.
+// cursor / visual state lives on ListModel.
+//
+// v0.1.17 (#181): the Pretty tab gets a column-flow cursor — j/k
+// walk the LEFT column rows first, then the RIGHT column rows, then
+// wrap. Only the active column's half of each rendered line tints,
+// not the full row. Other tabs (JSON / YAML) keep the flat
+// per-line cursor.
 func (m ListModel) renderDetailWithCursor() string {
 	tk := activeTokens()
-	body := m.newDetail().View()
-	// Issue #168: append assigned-groups + assigned-apps sections
-	// beneath the Pretty tab body so operators see what the user is
-	// in / sees on their dashboard without leaving the detail surface.
-	// Only the Pretty tab gets the extras — JSON / YAML stay raw.
 	if m.detailTab == DetailTabPretty {
-		body = body + "\n" + m.renderDetailExtras(tk)
+		return m.renderPrettyWithColumnCursor(tk)
 	}
-	lines := strings.Split(body, "\n")
+	return m.renderFlatLineCursor(tk)
+}
 
-	// The first three lines (header / tab bar / divider) are not
-	// selectable — Visual mode only operates on the body.
-	const headerLines = 3
-	cursor := m.detailLine + headerLines
-	anchor := m.detailVisualAnchor + headerLines
-	start, end := cursor, cursor
+// renderPrettyWithColumnCursor composes the detail header + 2-column
+// Pretty body + Groups/Apps boxes, then highlights ONE column-half
+// of the row that owns the cursor (issue #181 v0.1.17).
+func (m ListModel) renderPrettyWithColumnCursor(tk shared.Tokens) string {
+	det := m.newDetail()
+	leftLines, rightLines, sectionWidth := det.prettyColumns()
+
+	// The detail header (label / tab bar / divider) sits above the
+	// composed columns and isn't part of the cursor scope. Compose
+	// the body separately so we can splice the per-column highlight
+	// after the header without re-parsing.
+	headerLines := strings.Split(det.headerStrip(), "\n")
+	composed := composeColumns(strings.Join(leftLines, "\n"),
+		strings.Join(rightLines, "\n"), sectionWidth)
+	bodyLines := strings.Split(composed, "\n")
+
+	// Cursor owner: rows < len(left) live on the left column; the
+	// rest live on the right. Visual mode mirrors the same range.
+	leftCount := len(leftLines)
+	totalCount := leftCount + len(rightLines)
+	cur := m.detailLine
+	if cur < 0 {
+		cur = 0
+	}
+	if totalCount > 0 {
+		cur = cur % totalCount
+	}
+	curOnLeft := cur < leftCount
+	curRow := cur
+	if !curOnLeft {
+		curRow = cur - leftCount
+	}
+
+	// Visual selection range — translated into the same (column,
+	// row) coordinate space so highlights stay restricted to one
+	// column at a time even mid-Visual.
+	anchor := m.detailVisualAnchor
+	if anchor < 0 {
+		anchor = 0
+	}
+	visStart, visEnd := cur, cur
 	if m.detailVisual {
-		start, end = anchor, cursor
-		if start > end {
-			start, end = end, start
+		visStart, visEnd = anchor, cur
+		if visStart > visEnd {
+			visStart, visEnd = visEnd, visStart
 		}
 	}
 
@@ -859,34 +907,234 @@ func (m ListModel) renderDetailWithCursor() string {
 		b.WriteString(tk.Warning.Render("-- VISUAL --"))
 		b.WriteByte('\n')
 	}
-	// Highlight cursor / Visual range with style only — no character prefix
-	// so columns stay aligned with the surrounding lines (issue #106). The
-	// shared RowHighlight token adds a background tint over the bold accent
-	// so the cursor row reads at-a-glance even from the corner of the eye
-	// (issue #112).
-	//
-	// Issue #139: pad each highlighted line with trailing spaces up to
-	// the widest body line before styling, so the bg tint extends across
-	// the full row instead of stopping at the cell content (e.g.
-	// `"login":` would be highlighted but the rest of the row stayed
-	// flat). The pad width is the max visible width of the SELECTABLE
-	// body so the highlight is uniform across cursor moves.
+	for _, line := range headerLines {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+
+	// The composed body line at index N contains leftLines[N] (or
+	// padding) AND rightLines[N] (or padding). For each rendered
+	// line, decide whether the cursor is on its LEFT half (only if
+	// cur is on left and curRow == N) or its RIGHT half (cur on
+	// right and curRow == N).
+	bodyRows := maxInt(len(leftLines), len(rightLines))
+	if bodyRows > len(bodyLines) {
+		bodyRows = len(bodyLines)
+	}
+	for i := 0; i < bodyRows; i++ {
+		line := bodyLines[i]
+		leftHL, rightHL := false, false
+		if m.detailVisual {
+			startCol := visStart < leftCount
+			endCol := visEnd < leftCount
+			startRow, endRow := visStart, visEnd
+			if !startCol {
+				startRow = visStart - leftCount
+			}
+			if !endCol {
+				endRow = visEnd - leftCount
+			}
+			if startCol && i >= startRow && (visStart == visEnd || (startCol == endCol && i <= endRow) || (startCol != endCol)) && i < leftCount {
+				if !startCol || i <= visEnd {
+					leftHL = true
+				}
+			}
+			if !endCol && i >= 0 && i <= endRow && i < len(rightLines) {
+				if endCol == startCol || !startCol {
+					rightHL = true
+				}
+			}
+			// Simpler: independent ranges per column.
+			leftHL = inColumnRange(visStart, visEnd, leftCount, i, true)
+			rightHL = inColumnRange(visStart, visEnd, leftCount, i, false)
+		} else {
+			leftHL = curOnLeft && i == curRow
+			rightHL = !curOnLeft && i == curRow
+		}
+		b.WriteString(splicePrettyHighlight(line, sectionWidth, leftHL, rightHL, tk))
+		b.WriteByte('\n')
+	}
+
+	// Append the (non-cursor) Groups/Apps boxes section + footer.
+	b.WriteString(m.renderDetailExtras(tk))
+	b.WriteByte('\n')
+	footer := tk.Muted.Render("<j/k> column · <v> visual · <y> yank · <Tab> tabs · <Esc> back")
+	b.WriteString(footer)
+	return b.String()
+}
+
+// inColumnRange reports whether row `row` of column (left when
+// `wantLeft`, otherwise right) sits inside the linear Visual range
+// [start, end] given a left-column size of `leftCount`.
+func inColumnRange(start, end, leftCount, row int, wantLeft bool) bool {
+	colStart := start < leftCount
+	colEnd := end < leftCount
+	rowStart := start
+	if !colStart {
+		rowStart = start - leftCount
+	}
+	rowEnd := end
+	if !colEnd {
+		rowEnd = end - leftCount
+	}
+	if wantLeft {
+		// Highlight a left row when the range spans into the left column.
+		switch {
+		case colStart && colEnd:
+			return row >= rowStart && row <= rowEnd
+		case colStart && !colEnd:
+			return row >= rowStart // start..left-end; full left tail.
+		case !colStart && !colEnd:
+			return false
+		}
+		return row <= rowEnd
+	}
+	// Right column.
+	switch {
+	case colStart && colEnd:
+		return false
+	case colStart && !colEnd:
+		return row <= rowEnd
+	case !colStart && !colEnd:
+		return row >= rowStart && row <= rowEnd
+	}
+	return false
+}
+
+// splicePrettyHighlight tints leftHalf / rightHalf of a composed row.
+// The composed body line is `<left padded to sectionWidth><gutter
+// (2 cells)><right>`. We split at sectionWidth (no ellipsis — pure
+// cell slice) and pad the left half out to sectionWidth so the
+// highlight fills the full column width. One or both halves may be
+// active; tk.RowHighlight provides the tint.
+func splicePrettyHighlight(line string, sectionWidth int, leftHL, rightHL bool, tk shared.Tokens) string {
+	if !leftHL && !rightHL {
+		return line
+	}
+	plain := shared.StripCSI(line)
+	leftRaw := takeCells(plain, sectionWidth)
+	leftRaw = shared.PadOrTruncateVisible(leftRaw, sectionWidth)
+	rest := sliceCellsFrom(plain, sectionWidth)
+	const gutter = "  "
+	rightRaw := rest
+	if strings.HasPrefix(rest, gutter) {
+		rightRaw = rest[len(gutter):]
+	}
+	leftOut := leftRaw
+	if leftHL {
+		leftOut = tk.RowHighlight.Render(leftRaw)
+	}
+	rightOut := rightRaw
+	if rightHL && rightRaw != "" {
+		rightOut = tk.RowHighlight.Render(rightRaw)
+	}
+	if rightRaw == "" {
+		return leftOut
+	}
+	return leftOut + gutter + rightOut
+}
+
+// takeCells returns the prefix of `s` whose visible cell width is
+// at most `cells`. ANSI-aware. Does NOT append `…` — it's a pure
+// slice for splicing.
+func takeCells(s string, cells int) string {
+	if cells <= 0 {
+		return ""
+	}
+	visible := 0
+	in := false
+	var b strings.Builder
+	for _, r := range s {
+		if r == 0x1b {
+			in = true
+			b.WriteRune(r)
+			continue
+		}
+		if in {
+			b.WriteRune(r)
+			if r == 'm' {
+				in = false
+			}
+			continue
+		}
+		w := shared.VisibleWidth(string(r))
+		if w <= 0 {
+			w = 1
+		}
+		if visible+w > cells {
+			break
+		}
+		b.WriteRune(r)
+		visible += w
+	}
+	return b.String()
+}
+
+// sliceCellsFrom returns the suffix of `s` after dropping the first
+// `cells` visible cells. ANSI sequences are skipped on the way.
+func sliceCellsFrom(s string, cells int) string {
+	if cells <= 0 {
+		return s
+	}
+	visible := 0
+	in := false
+	for i, r := range s {
+		if r == 0x1b {
+			in = true
+			continue
+		}
+		if in {
+			if r == 'm' {
+				in = false
+			}
+			continue
+		}
+		w := shared.VisibleWidth(string(r))
+		if w <= 0 {
+			w = 1
+		}
+		if visible+w > cells {
+			return s[i:]
+		}
+		visible += w
+		if visible == cells {
+			return s[i+len(string(r)):]
+		}
+	}
+	return ""
+}
+
+// renderFlatLineCursor handles the JSON / YAML tabs the way the
+// detail surface always has — full-row highlight on a flat per-line
+// cursor (no column flow, no extras boxes).
+func (m ListModel) renderFlatLineCursor(tk shared.Tokens) string {
+	body := m.newDetail().View()
+	lines := strings.Split(body, "\n")
+	const headerLines = 3
+	cursor := m.detailLine + headerLines
+	anchor := m.detailVisualAnchor + headerLines
+	start, end := cursor, cursor
+	if m.detailVisual {
+		start, end = anchor, cursor
+		if start > end {
+			start, end = end, start
+		}
+	}
+	var b strings.Builder
+	if m.detailToast != "" {
+		b.WriteString(tk.Header.Render(m.detailToast))
+		b.WriteByte('\n')
+	}
+	if m.detailVisual {
+		b.WriteString(tk.Warning.Render("-- VISUAL --"))
+		b.WriteByte('\n')
+	}
 	maxBodyWidth := 0
 	for i := headerLines; i < len(lines); i++ {
 		if w := shared.VisibleWidth(lines[i]); w > maxBodyWidth {
 			maxBodyWidth = w
 		}
 	}
-	// Issue #146: lipgloss's outer Style.Render emits its own
-	// foreground/background prefix and a `\x1b[0m` suffix, but inner
-	// ANSI resets emitted by the syntax highlighter (one per styled
-	// segment) wipe the outer bg too. The result was a row highlight
-	// that only covered text BEFORE the first inner reset — the key
-	// portion of `"login": "alice@acme.com"` would tint, the value
-	// after the colon stayed flat. Strip inner ANSI from the cursor
-	// row so RowHighlight produces a uniform bg tint across the
-	// whole line. The cost is losing syntax colour on the active row,
-	// which is a fair trade for unambiguous cursor visibility.
 	highlight := func(line string) string {
 		plain := shared.StripCSI(line)
 		w := shared.VisibleWidth(plain)
@@ -932,14 +1180,18 @@ func (m ListModel) newDetail() DetailModel {
 	return d
 }
 
-// detailBodyLines returns the body of the active tab as a slice of lines,
-// excluding the three-line header (User Detail / tab bar / divider) so j/k
-// navigation only counts content rows.
+// detailBodyLines returns the body of the active tab as a slice of
+// lines, excluding the three-line header. For Pretty (issue #181
+// v0.1.17) the cursor scope is reshaped into a single linear list
+// across the LEFT then RIGHT column, so j/k flows column-by-column
+// and never enters the Groups/Apps boxes. JSON / YAML keep their
+// flat per-line cursor.
 func (m ListModel) detailBodyLines() []string {
-	body := m.newDetail().View()
 	if m.detailTab == DetailTabPretty {
-		body = body + "\n" + m.renderDetailExtras(activeTokens())
+		left, right, _ := m.newDetail().prettyColumns()
+		return append(append([]string{}, left...), right...)
 	}
+	body := m.newDetail().View()
 	all := strings.Split(body, "\n")
 	const headerLines = 3
 	if len(all) <= headerLines {
@@ -969,7 +1221,7 @@ func (m ListModel) detailBodyLines() []string {
 // direction.
 func (m ListModel) renderDetailExtras(tk shared.Tokens) string {
 	innerHeight := m.detailExtrasBoxHeight()
-	colW := m.detailExtrasColWidth()
+	leftW, rightW := m.detailExtrasBoxWidths()
 
 	groupsItems := m.formatGroupsItems(tk)
 	appsItems := m.formatAppsItems(tk)
@@ -1006,7 +1258,7 @@ func (m ListModel) renderDetailExtras(tk shared.Tokens) string {
 		groupsRow,
 		groupsTop,
 		innerHeight,
-		colW,
+		leftW,
 		tk,
 	)
 	right := renderScrollBox(
@@ -1016,12 +1268,12 @@ func (m ListModel) renderDetailExtras(tk shared.Tokens) string {
 		appsRow,
 		appsTop,
 		innerHeight,
-		colW,
+		rightW,
 		tk,
 	)
 	hint := tk.Muted.Render(
 		"  ]  enter / next box   [  back to top   j/k  scroll (wraps)   Enter  open detail   Esc  exit boxes")
-	return composeColumns(left, right, colW) + "\n" + hint
+	return composeColumns(left, right, leftW) + "\n" + hint
 }
 
 // detailExtrasTotal returns the number of selectable rows in the
@@ -1115,15 +1367,34 @@ func (m ListModel) detailExtrasBoxHeight() int {
 	return rows
 }
 
-// detailExtrasColWidth picks the per-box width. Splits the body
-// inner width evenly across the two boxes minus a 2-cell gutter.
-func (m ListModel) detailExtrasColWidth() int {
-	w := m.usersInnerWidth()
-	per := (w - 2) / 2
-	if per < 30 {
-		per = 30
+// detailExtrasBoxWidths returns the per-box widths so the two
+// rounded boxes fill the chrome's body content area exactly. The
+// detail body has no list-style cursor / scrollbar gutter (those
+// reservations only matter for list rows), so we size the boxes
+// against the chrome content width directly. The right box absorbs
+// the +1 cell when the available width is odd so the right border
+// always lands flush against the chrome's right border (issue
+// #180 v0.1.17).
+func (m ListModel) detailExtrasBoxWidths() (left, right int) {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
 	}
-	return per
+	if w < 80 {
+		w = 80
+	}
+	const gutter = 2
+	contentW := w - 3 // chrome borders (2) + left padding (1)
+	avail := contentW - gutter
+	left = avail / 2
+	right = avail - left
+	if left < 30 {
+		left = 30
+	}
+	if right < 30 {
+		right = 30
+	}
+	return left, right
 }
 
 // clampScrollTop slides the scroll window so the cursor stays
@@ -1165,8 +1436,13 @@ func renderScrollBox(
 	if height < 1 {
 		height = 1
 	}
-	// Border + scrollbar reserve 3 cells from inner content.
-	contentW := width - 4
+	// Each content row decomposes into:
+	//   `│` + ` ` + row(contentW) + ` ` + bar + `│`  →  5 reserved cells.
+	// Issue #180 v0.1.17: previously contentW = width-4 which made
+	// every body row render width+1 cells wide, pushing the right
+	// border one cell past where the top/bottom borders landed and
+	// breaking flush-right alignment with the chrome.
+	contentW := width - 5
 	if contentW < 4 {
 		contentW = 4
 	}

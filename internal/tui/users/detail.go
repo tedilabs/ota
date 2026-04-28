@@ -94,6 +94,19 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// headerStrip returns the 3-line detail header (label / tab bar /
+// divider) without the body. Used by the list's column-flow cursor
+// renderer to splice highlights onto the body without re-parsing
+// the composed string (issue #181 v0.1.17).
+func (m DetailModel) headerStrip() string {
+	var b strings.Builder
+	b.WriteString("User Detail\n")
+	b.WriteString(renderTabBar(m.activeTab))
+	b.WriteByte('\n')
+	b.WriteString(strings.Repeat("─", 78))
+	return b.String()
+}
+
 // View renders SCR-011 (TUI_DESIGN §15.7 / §16.9). The tab bar is always
 // rendered; the body switches on m.activeTab. Profile is the curated v0.1.0
 // view; Raw is the new v0.1.1 full-attribute JSON dump (§15.7 v1.2.0).
@@ -170,17 +183,49 @@ func renderTabBar(active DetailTab) string {
 //	              org-class Extras (costCenter / userType / managerId)
 //	Custom        anything we don't recognise as Okta-standard
 func (m DetailModel) renderProfileTab() string {
-	u := m.user
-	// Section widths are computed from the available terminal width
-	// (issue #149) so the 2-column layout fills the screen rather
-	// than clinging to a 56-cell hardcoded slot in the top-left.
+	return composeProfileTab(m.user, m.unmasked, m.deps.Width)
+}
+
+// composeProfileTab assembles the Pretty tab's left + right columns.
+// Returns the composed multi-line body for renderProfileTab AND
+// exposes left/right line slices via prettyColumns — kept in
+// lockstep so the list's column-flow cursor (issue #181 v0.1.17)
+// can highlight a single column at a time without re-parsing the
+// rendered string.
+func composeProfileTab(u domain.User, unmasked map[string]bool, termWidth int) string {
+	left, right, sectionWidth := profileColumns(u, unmasked, termWidth)
+	return composeColumns(left, right, sectionWidth)
+}
+
+// prettyColumns returns the active user's left + right column line
+// slices and the per-column width. Used by the list's column-flow
+// cursor (issue #181 v0.1.17) which needs to know exactly which
+// rendered cells correspond to each column to highlight only one
+// half on j/k.
+func (m DetailModel) prettyColumns() (leftLines, rightLines []string, sectionWidth int) {
+	left, right, sectionWidth := profileColumns(m.user, m.unmasked, m.deps.Width)
+	leftLines = strings.Split(left, "\n")
+	rightLines = strings.Split(right, "\n")
+	for len(leftLines) > 0 && leftLines[len(leftLines)-1] == "" {
+		leftLines = leftLines[:len(leftLines)-1]
+	}
+	for len(rightLines) > 0 && rightLines[len(rightLines)-1] == "" {
+		rightLines = rightLines[:len(rightLines)-1]
+	}
+	return leftLines, rightLines, sectionWidth
+}
+
+// profileColumns is the shared section-builder behind both the
+// composed renderProfileTab output and prettyColumns. Returns the
+// left column body, the right column body, and the per-column
+// width — keeping the two views identical avoids cursor drift.
+func profileColumns(u domain.User, unmasked map[string]bool, termWidth int) (left, right string, sectionWidth int) {
 	const keyWidth = 16
-	sectionWidth := pickPrettySectionWidth(m.deps.Width)
+	sectionWidth = pickPrettySectionWidth(termWidth)
 
 	tk := activeTokens()
 	statusCell := shared.UserStatusBadge(string(u.Status), tk).Render(tk)
 
-	// --- Status (top, issue #140) ---------------------------------------
 	statusKV := orderedKV{}
 	statusKV.add("status", statusCell)
 	statusKV.add("created", formatTime(&u.Created))
@@ -198,30 +243,17 @@ func (m DetailModel) renderProfileTab() string {
 	identity.add("displayName", u.Profile.DisplayName)
 	identity.add("nickName", u.Profile.NickName)
 
-	// Contact spec order (#144): secondEmail > primaryPhone >
-	// mobilePhone > preferredLanguage > locale. mobilePhone /
-	// secondEmail are domain-named; everything else flows through
-	// the Extras partition below.
 	contact := orderedKV{}
 	if v := u.Profile.SecondEmail; v != "" {
-		contact.add("secondEmail", maskedField("secondEmail", v, m.unmasked, mask.Email))
+		contact.add("secondEmail", maskedField("secondEmail", v, unmasked, mask.Email))
 	}
-	// primaryPhone arrives only via Extras today (no domain field) —
-	// the partition below routes it into Contact at the right slot.
 	if v := u.Profile.MobilePhone; v != "" {
-		contact.add("mobilePhone", maskedField("mobilePhone", v, m.unmasked, mask.Phone))
+		contact.add("mobilePhone", maskedField("mobilePhone", v, unmasked, mask.Phone))
 	}
 
 	address := orderedKV{}
 
-	// --- Organization in fixed order per #140 ---------------------------
-	// organization > division > department > title > manager >
-	// employeeNumber. Domain fields populate first; Extras-sourced
-	// values append after their named slot via the partition below.
 	organization := orderedKV{}
-	// Pre-load the named domain fields in spec order; Extras may push
-	// additional rows for organization / manager which the domain
-	// doesn't carry today.
 	organization.add("division", u.Profile.Division)
 	organization.add("department", u.Profile.Department)
 	organization.add("title", u.Profile.Title)
@@ -251,9 +283,6 @@ func (m DetailModel) renderProfileTab() string {
 		}
 	}
 
-	// Re-order each section so Extras-sourced rows respect the spec
-	// sequence even though they arrived after the named domain
-	// fields. Organization (#140), Contact + Address (#144).
 	contact = sortKV(contact, []string{
 		"secondEmail", "primaryPhone", "mobilePhone",
 		"preferredLanguage", "locale",
@@ -267,21 +296,17 @@ func (m DetailModel) renderProfileTab() string {
 		"title", "manager", "employeeNumber",
 	})
 
-	// Two-column layout (#143): left column packs Identity >
-	// Organization > Status; right column packs Contact > Address >
-	// Custom. Each column composes its sections via writeColumn,
-	// then composeColumns aligns them side-by-side.
-	left := writeColumn([]prettySection{
+	left = writeColumn([]prettySection{
 		{"Identity", identity},
 		{"Organization", organization},
 		{"Status", statusKV},
 	}, sectionWidth, keyWidth)
-	right := writeColumn([]prettySection{
+	right = writeColumn([]prettySection{
 		{"Contact", contact},
 		{"Address", address},
 		{"Custom", custom},
 	}, sectionWidth, keyWidth)
-	return composeColumns(left, right, sectionWidth)
+	return left, right, sectionWidth
 }
 
 type prettySection struct {
