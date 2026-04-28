@@ -156,6 +156,14 @@ func RenderChrome(in ChromeInput) string {
 	for in.BodyLines > 0 && len(bodyLines) < in.BodyLines {
 		bodyLines = append(bodyLines, padTo("", contentWidth))
 	}
+	// Hard cap to BodyLines (issue #170). Without this clip a screen
+	// that produces more body rows than the chrome budgets pushes
+	// the chrome's top border off-screen — operators reported the
+	// User Detail Groups list doing exactly that. Trailing rows
+	// drop; the screen handles its own scrolling inside its widgets.
+	if in.BodyLines > 0 && len(bodyLines) > in.BodyLines {
+		bodyLines = bodyLines[:in.BodyLines]
+	}
 
 	// ---- KeyHints -------------------------------------------------------
 	hints := in.KeyHints

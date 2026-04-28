@@ -115,6 +115,17 @@ type ListModel struct {
 	detailAppsErr      error
 	detailAppsLoaded   bool
 	detailExtrasUser   string
+	// detailFocus picks which sub-region inside the detail surface
+	// is currently active for j/k scrolling and Enter drill-down
+	// (issues #170 + #171). 0 = info grid (default — j/k moves the
+	// detailLine cursor as before), 1 = Groups box, 2 = Apps box.
+	// Tab cycles forward, Shift-Tab backward (when not on the tab
+	// bar; the bar still owns Tab on its own row).
+	detailFocus       int
+	detailGroupsCur   int // cursor row within detailGroups (focus=1)
+	detailGroupsTop   int // first visible row in the Groups box
+	detailAppsCur     int // cursor row within detailApps (focus=2)
+	detailAppsTop     int // first visible row in the Apps box
 }
 
 // usersLoadedMsg delivers the result of the initial fetch.
@@ -291,6 +302,11 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailApps = nil
 			m.detailAppsErr = nil
 			m.detailAppsLoaded = false
+			m.detailFocus = 0
+			m.detailGroupsCur = 0
+			m.detailGroupsTop = 0
+			m.detailAppsCur = 0
+			m.detailAppsTop = 0
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = (m.detailTab + 1) % detailTabCount
@@ -314,14 +330,46 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detailLine = 0
 				m.detailVisual = false
 			case "j":
-				lines := m.detailBodyLines()
-				if m.detailLine < len(lines)-1 {
-					m.detailLine++
+				// Issue #170 — j/k routes to the active focus
+				// (info / Groups / Apps). The default focus (0)
+				// keeps the existing detailLine behaviour for the
+				// info grid; focus 1/2 scrolls the per-box cursor.
+				switch m.detailFocus {
+				case 1:
+					if m.detailGroupsCur < len(m.detailGroups)-1 {
+						m.detailGroupsCur++
+					}
+				case 2:
+					if m.detailAppsCur < len(m.detailApps)-1 {
+						m.detailAppsCur++
+					}
+				default:
+					lines := m.detailBodyLines()
+					if m.detailLine < len(lines)-1 {
+						m.detailLine++
+					}
 				}
 			case "k":
-				if m.detailLine > 0 {
-					m.detailLine--
+				switch m.detailFocus {
+				case 1:
+					if m.detailGroupsCur > 0 {
+						m.detailGroupsCur--
+					}
+				case 2:
+					if m.detailAppsCur > 0 {
+						m.detailAppsCur--
+					}
+				default:
+					if m.detailLine > 0 {
+						m.detailLine--
+					}
 				}
+			case "]":
+				// Cycle focus forward through info → groups → apps.
+				m.detailFocus = (m.detailFocus + 1) % 3
+			case "[":
+				// Cycle focus backward.
+				m.detailFocus = (m.detailFocus + 2) % 3
 			case "g":
 				m.detailLine = 0
 			case "G":
@@ -788,72 +836,274 @@ func (m ListModel) detailBodyLines() []string {
 	return all[headerLines:]
 }
 
-// renderDetailExtras builds the "Groups" + "Apps" sections appended
-// to the bottom of the Pretty tab (issue #168). Each section has
-// three states: loading / error / loaded — the loading state shows
-// a muted hint while the lazy fetch is in flight, the error state
-// surfaces the failure inline, and the loaded state lists the
-// rows. Empty results render as "(none)".
+// renderDetailExtras builds the side-by-side Groups + Apps boxes
+// rendered beneath the 2-col Pretty info layout (issues #168 +
+// #170). Each box is a fixed-height rounded-border widget with:
+//   - title bar carrying the section name + "(N)" count
+//   - scrollable content window (j/k advances when focused)
+//   - vertical scrollbar (▒ thumb on a │ track) on the right edge
+//   - focus halo: when the box has focus, its border + title
+//     light up with the accent token so the operator sees where
+//     j/k will land
+//
+// Both boxes carry the same height so the chrome's body-row
+// budget stays predictable — even a user with 200 groups won't
+// push the chrome's top border off the screen.
 func (m ListModel) renderDetailExtras(tk shared.Tokens) string {
-	const sectionWidth = 56
-	var b strings.Builder
-	b.WriteString(shared.SectionHeader("Groups", sectionWidth))
-	b.WriteByte('\n')
+	innerHeight := m.detailExtrasBoxHeight()
+	colW := m.detailExtrasColWidth()
+
+	groupsItems := m.formatGroupsItems(tk)
+	appsItems := m.formatAppsItems(tk)
+
+	groupsTitle := "Groups"
+	if m.detailGroupsLoaded {
+		groupsTitle = groupsTitle + "  (" + itoaSimple(len(m.detailGroups)) + ")"
+	}
+	appsTitle := "Apps"
+	if m.detailAppsLoaded {
+		appsTitle = appsTitle + "  (" + itoaSimple(len(m.detailApps)) + ")"
+	}
+
+	left := renderScrollBox(
+		groupsTitle,
+		groupsItems,
+		m.detailFocus == 1,
+		m.detailGroupsCur,
+		clampScrollTop(m.detailGroupsCur, m.detailGroupsTop, innerHeight, len(groupsItems)),
+		innerHeight,
+		colW,
+		tk,
+	)
+	right := renderScrollBox(
+		appsTitle,
+		appsItems,
+		m.detailFocus == 2,
+		m.detailAppsCur,
+		clampScrollTop(m.detailAppsCur, m.detailAppsTop, innerHeight, len(appsItems)),
+		innerHeight,
+		colW,
+		tk,
+	)
+	hint := tk.Muted.Render(
+		"  ]  next box   [  prev box   j/k  scroll   Enter  open detail")
+	return composeColumns(left, right, colW) + "\n" + hint
+}
+
+// formatGroupsItems returns the bare row strings for the Groups
+// box — `[TYPE]  name`. Loading / error / empty surface as a
+// single muted row so the box never renders blank.
+func (m ListModel) formatGroupsItems(tk shared.Tokens) []string {
 	switch {
 	case m.detailGroupsErr != nil:
-		b.WriteString("  ")
-		b.WriteString(tk.Danger.Render("groups failed: " + m.detailGroupsErr.Error()))
-		b.WriteByte('\n')
+		return []string{tk.Danger.Render("error: " + m.detailGroupsErr.Error())}
 	case !m.detailGroupsLoaded:
-		b.WriteString("  ")
-		b.WriteString(tk.Muted.Render("loading groups…"))
-		b.WriteByte('\n')
+		return []string{tk.Muted.Render("loading groups…")}
 	case len(m.detailGroups) == 0:
-		b.WriteString("  ")
-		b.WriteString(tk.Muted.Render("(no groups)"))
-		b.WriteByte('\n')
-	default:
-		for _, g := range m.detailGroups {
-			b.WriteString("  ")
-			b.WriteString(tk.Muted.Render("[" + string(g.Type) + "]"))
-			b.WriteString("  ")
-			b.WriteString(g.Profile.Name)
-			b.WriteByte('\n')
-		}
+		return []string{tk.Muted.Render("(no groups)")}
 	}
-	b.WriteByte('\n')
-	b.WriteString(shared.SectionHeader("Apps", sectionWidth))
-	b.WriteByte('\n')
+	out := make([]string, 0, len(m.detailGroups))
+	for _, g := range m.detailGroups {
+		out = append(out, tk.Muted.Render("["+string(g.Type)+"]")+"  "+g.Profile.Name)
+	}
+	return out
+}
+
+// formatAppsItems returns the bare row strings for the Apps box.
+// Each row is `Label  (appName)` so operators see both the
+// dashboard label and the canonical Okta app name.
+func (m ListModel) formatAppsItems(tk shared.Tokens) []string {
 	switch {
 	case m.detailAppsErr != nil:
-		b.WriteString("  ")
-		b.WriteString(tk.Danger.Render("apps failed: " + m.detailAppsErr.Error()))
-		b.WriteByte('\n')
+		return []string{tk.Danger.Render("error: " + m.detailAppsErr.Error())}
 	case !m.detailAppsLoaded:
-		b.WriteString("  ")
-		b.WriteString(tk.Muted.Render("loading apps…"))
-		b.WriteByte('\n')
+		return []string{tk.Muted.Render("loading apps…")}
 	case len(m.detailApps) == 0:
-		b.WriteString("  ")
-		b.WriteString(tk.Muted.Render("(no apps assigned)"))
-		b.WriteByte('\n')
-	default:
-		for _, a := range m.detailApps {
-			b.WriteString("  ")
-			label := a.Label
-			if label == "" {
-				label = a.AppName
+		return []string{tk.Muted.Render("(no apps assigned)")}
+	}
+	out := make([]string, 0, len(m.detailApps))
+	for _, a := range m.detailApps {
+		label := a.Label
+		if label == "" {
+			label = a.AppName
+		}
+		row := label
+		if a.AppName != "" && a.AppName != label {
+			row = row + "  " + tk.Muted.Render("("+a.AppName+")")
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// detailExtrasBoxHeight chooses a fixed content-row count for each
+// extras box so the total detail body fits inside the chrome's
+// row budget (issue #170 — operators reported the chrome top
+// border scrolling off when the groups list was long). Floor 5
+// rows so a single result is always readable; cap 18 so a sparse
+// info grid + huge group list doesn't waste the screen.
+func (m ListModel) detailExtrasBoxHeight() int {
+	const minRows = 5
+	const maxRows = 18
+	available := shared.ListBodyRowBudget(m.height)
+	// Reserve ~16 rows for the header + Pretty info grid + the
+	// closing hint line. Whatever's left becomes the box height.
+	const reserved = 16
+	rows := available - reserved
+	if rows < minRows {
+		return minRows
+	}
+	if rows > maxRows {
+		return maxRows
+	}
+	return rows
+}
+
+// detailExtrasColWidth picks the per-box width. Splits the body
+// inner width evenly across the two boxes minus a 2-cell gutter.
+func (m ListModel) detailExtrasColWidth() int {
+	w := m.usersInnerWidth()
+	per := (w - 2) / 2
+	if per < 30 {
+		per = 30
+	}
+	return per
+}
+
+// clampScrollTop slides the scroll window so the cursor stays
+// visible. Pure helper, no model state.
+func clampScrollTop(cursor, scrollTop, height, total int) int {
+	if total <= height {
+		return 0
+	}
+	if cursor < scrollTop {
+		return cursor
+	}
+	if cursor >= scrollTop+height {
+		return cursor - height + 1
+	}
+	if scrollTop+height > total {
+		return total - height
+	}
+	if scrollTop < 0 {
+		return 0
+	}
+	return scrollTop
+}
+
+// renderScrollBox draws a single rounded-border box of fixed
+// (height + 2) rows × (width) cells with title, content window,
+// and scrollbar. Returns a multi-line string ready for
+// composeColumns. The focused state lights up the border so the
+// operator sees where j/k routes to.
+func renderScrollBox(
+	title string,
+	items []string,
+	focused bool,
+	cursor, scrollTop, height, width int,
+	tk shared.Tokens,
+) string {
+	if width < 12 {
+		width = 12
+	}
+	if height < 1 {
+		height = 1
+	}
+	// Border + scrollbar reserve 3 cells from inner content.
+	contentW := width - 4
+	if contentW < 4 {
+		contentW = 4
+	}
+
+	borderStyle := tk.Muted
+	if focused {
+		borderStyle = tk.Header
+	}
+
+	titleStr := title
+	if focused {
+		titleStr = tk.Accent.Render(title)
+	}
+
+	top := borderStyle.Render("╭─ ") + titleStr + " " + borderStyle.Render(strings.Repeat("─", maxInt(0, width-5-shared.VisibleWidth(title)))+"╮")
+	bottom := borderStyle.Render("╰" + strings.Repeat("─", width-2) + "╯")
+
+	var lines []string
+	lines = append(lines, top)
+	for r := 0; r < height; r++ {
+		idx := scrollTop + r
+		row := ""
+		if idx < len(items) {
+			row = items[idx]
+		}
+		row = padOrTruncateVisible(row, contentW)
+		if focused && idx == cursor && idx < len(items) {
+			row = tk.RowHighlight.Render(row)
+		}
+		// Scrollbar marker: thumb (▌) when this row is inside the
+		// active scroll window, track (│) otherwise. Position
+		// scales with cursor / total. Hidden when everything fits.
+		bar := " "
+		if len(items) > height {
+			thumbStart, thumbEnd := scrollbarRange(scrollTop, height, len(items))
+			if r >= thumbStart && r <= thumbEnd {
+				bar = tk.Accent.Render("▌")
+			} else {
+				bar = tk.Muted.Render("│")
 			}
-			b.WriteString(label)
-			if a.AppName != "" && a.AppName != label {
-				b.WriteString("  ")
-				b.WriteString(tk.Muted.Render("(" + a.AppName + ")"))
-			}
-			b.WriteByte('\n')
+		}
+		lines = append(lines, borderStyle.Render("│ ")+row+" "+bar+borderStyle.Render("│"))
+	}
+	lines = append(lines, bottom)
+	return strings.Join(lines, "\n")
+}
+
+// scrollbarRange maps (scrollTop, height, total) to the inclusive
+// row-index range of the scrollbar thumb. Always returns at least
+// a single-row thumb so the operator sees their position.
+func scrollbarRange(scrollTop, height, total int) (start, end int) {
+	if total <= height {
+		return 0, height - 1
+	}
+	scale := float64(height) / float64(total)
+	thumbStart := int(float64(scrollTop) * scale)
+	thumbLen := int(float64(height) * scale)
+	if thumbLen < 1 {
+		thumbLen = 1
+	}
+	thumbEnd := thumbStart + thumbLen - 1
+	if thumbEnd >= height {
+		thumbEnd = height - 1
+		thumbStart = thumbEnd - thumbLen + 1
+		if thumbStart < 0 {
+			thumbStart = 0
 		}
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return thumbStart, thumbEnd
 }
+
+// padOrTruncateVisible pads / truncates s to exactly width visible
+// cells, honouring inner ANSI styling. The shared.VisibleWidth
+// helper already accounts for runewidth so CJK-wide glyphs don't
+// drift.
+func padOrTruncateVisible(s string, width int) string {
+	w := shared.VisibleWidth(s)
+	if w == width {
+		return s
+	}
+	if w > width {
+		return shared.Truncate(s, width)
+	}
+	return s + strings.Repeat(" ", width-w)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 
 // itoaSimple is a tiny strconv.Itoa shim used by handleKey's toast string
 // (avoids importing strconv elsewhere in list.go for one usage).

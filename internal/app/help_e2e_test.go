@@ -36,12 +36,19 @@ func newHelpTestModel(t *testing.T) app.Model {
 	t.Helper()
 	keymap, _, err := keys.Resolve(nil)
 	require.NoError(t, err)
-	return app.New(app.Deps{
+	m := app.New(app.Deps{
 		Keys:    keymap,
 		Clock:   clock.Real(),
 		Profile: "test",
 		OrgURL:  "https://acme.okta.com",
 	})
+	// Issue #170 added a hard body-row cap on the chrome so detail
+	// surfaces don't push the top border off-screen. Send a
+	// generous WindowSizeMsg so the help modal (~20 rows) fits
+	// inside the chrome's body budget; without this the closing
+	// `<Esc> close` footer gets clipped before the test sees it.
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 36})
+	return updated.(app.Model)
 }
 
 // pressKey feeds a single rune through the App Shell's tea.Update and, when
