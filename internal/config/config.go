@@ -58,7 +58,7 @@ func Default() Config {
 		},
 		Keybindings: map[string]string{},
 		Logs:        LogsConfig{PollIntervalSeconds: 7},
-		Refresh:     RefreshConfig{LogsSeconds: 5, DefaultSeconds: 10},
+		Refresh:     RefreshConfig{LogsSeconds: 10, DefaultSeconds: 10},
 		Debug:       false,
 	}
 }

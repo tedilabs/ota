@@ -116,11 +116,11 @@ type SearchModel struct {
 }
 
 // NewSearchModel constructs a SearchModel with defaults (tail off, follow on,
-// poll interval 5s per issue #177 v0.1.16). When deps.RefreshInterval is set,
+// poll interval 10s per issue #179 v0.1.17). When deps.RefreshInterval is set,
 // it overrides the default. Falls back to deps.Tail's adaptive interval when
 // neither is provided.
 func NewSearchModel(deps Deps) SearchModel {
-	interval := 5 * time.Second
+	interval := 10 * time.Second
 	if deps.RefreshInterval > 0 {
 		interval = deps.RefreshInterval
 	} else if deps.Tail != nil {
@@ -262,13 +262,37 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// current generation.
 			return m, m.scheduleFollowTickCmd()
 		}
-		// Append new events, push cursor onto the latest row.
-		// Detail / Visual modes don't get the cursor-jump so the
-		// operator's manual position stays stable mid-investigation.
+		// Issue #179 v0.1.17 — dedupe by UUID before appending. The
+		// since-cursor advance is best-effort: Okta's `since` is
+		// inclusive AND the upstream fetch can race with the
+		// history reload (range key, `r` refresh, initial Init
+		// batch). Without the dedup, a tick fired while history
+		// was still resolving could re-emit rows that history
+		// just delivered. UUID is the canonical event identifier
+		// — it survives across replicas, sort orders, and any
+		// truncation of the published timestamp's precision.
 		if len(msg.events) > 0 {
-			m.events = append(m.events, msg.events...)
-			if !m.opened && !m.filtering {
-				m.cursor = len(m.events) - 1
+			seen := make(map[string]struct{}, len(m.events))
+			for _, e := range m.events {
+				if e.UUID != "" {
+					seen[e.UUID] = struct{}{}
+				}
+			}
+			fresh := msg.events[:0]
+			for _, e := range msg.events {
+				if e.UUID != "" {
+					if _, ok := seen[e.UUID]; ok {
+						continue
+					}
+					seen[e.UUID] = struct{}{}
+				}
+				fresh = append(fresh, e)
+			}
+			if len(fresh) > 0 {
+				m.events = append(m.events, fresh...)
+				if !m.opened && !m.filtering {
+					m.cursor = len(m.events) - 1
+				}
 			}
 		}
 		m.followSince = msg.nextSince
