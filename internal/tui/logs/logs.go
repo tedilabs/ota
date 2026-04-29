@@ -577,17 +577,12 @@ func (m SearchModel) View() string {
 	rowTarget := m.chromeContentWidth() - 2
 	for i := top; i < end; i++ {
 		row := m.renderLogsRow(rows[i], now, tk)
-		var composed string
+		prefix := "  "
 		if i == m.cursor {
-			composed = "▸ " + row
-		} else {
-			composed = "  " + row
+			prefix = "▸ "
 		}
-		composed = shared.PadOrTruncateVisible(composed, rowTarget)
-		if i == m.cursor {
-			composed = tk.Accent.Render(composed)
-		}
-		b.WriteString(composed)
+		// v0.2.0 #182 — unified cursor pipeline.
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, "", tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}

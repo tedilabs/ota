@@ -840,28 +840,10 @@ func (m ListModel) View() string {
 		if i == m.cursor {
 			prefix = "▸ "
 		}
-		composed := prefix + row
-		// Pad to rowTarget BEFORE styling so the cursor / status
-		// background tint covers the full row including the trailing
-		// fill cells, not just the column data.
-		composed = shared.PadOrTruncateVisible(composed, rowTarget)
-		switch {
-		case i == m.cursor:
-			// Cursor takes priority — the operator needs to see
-			// where they are. The status badge in the row already
-			// conveys the abnormal state.
-			composed = tk.Accent.Render(composed)
-		default:
-			// Issue #155: non-cursor row gets a status-driven bg
-			// tint when STATUS is abnormal so LOCKED_OUT /
-			// SUSPENDED / PASSWORD_EXPIRED / DEPROVISIONED pop.
-			// Strip inner ANSI first so the bg style applies
-			// uniformly across the row.
-			if rowStyle, ok := shared.RowStyleForStatus(string(rows[i].Status), tk); ok {
-				composed = rowStyle.Render(shared.StripCSI(composed))
-			}
-		}
-		b.WriteString(composed)
+		// v0.2.0 #182 — single cursor pipeline (pad → status tint
+		// → cursor wins) lives in shared.RenderRowCursor so every
+		// list looks the same.
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
@@ -1373,13 +1355,8 @@ func (m ListModel) detailExtrasTotal() int {
 // box — `[TYPE]  name`. Loading / error / empty surface as a
 // single muted row so the box never renders blank.
 func (m ListModel) formatGroupsItems(tk shared.Tokens) []string {
-	switch {
-	case m.detailGroupsErr != nil:
-		return []string{tk.Danger.Render("error: " + m.detailGroupsErr.Error())}
-	case !m.detailGroupsLoaded:
-		return []string{tk.Muted.Render("loading groups…")}
-	case len(m.detailGroups) == 0:
-		return []string{tk.Muted.Render("(no groups)")}
+	if row := shared.PlaceholderRow(m.detailGroupsLoaded, m.detailGroupsErr, len(m.detailGroups), "groups", tk); row != "" {
+		return []string{row}
 	}
 	out := make([]string, 0, len(m.detailGroups))
 	for _, g := range m.detailGroups {
@@ -1392,13 +1369,8 @@ func (m ListModel) formatGroupsItems(tk shared.Tokens) []string {
 // Each row is `Label  (appName)` so operators see both the
 // dashboard label and the canonical Okta app name.
 func (m ListModel) formatAppsItems(tk shared.Tokens) []string {
-	switch {
-	case m.detailAppsErr != nil:
-		return []string{tk.Danger.Render("error: " + m.detailAppsErr.Error())}
-	case !m.detailAppsLoaded:
-		return []string{tk.Muted.Render("loading apps…")}
-	case len(m.detailApps) == 0:
-		return []string{tk.Muted.Render("(no apps assigned)")}
+	if row := shared.PlaceholderRow(m.detailAppsLoaded, m.detailAppsErr, len(m.detailApps), "apps assigned", tk); row != "" {
+		return []string{row}
 	}
 	out := make([]string, 0, len(m.detailApps))
 	for _, a := range m.detailApps {

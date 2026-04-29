@@ -528,17 +528,12 @@ func (m ListModel) View() string {
 	rowTarget := m.chromeContentWidth() - 2
 	for i := top; i < end; i++ {
 		row := m.renderGroupsRow(rows[i], m.now(), tk)
-		var composed string
+		prefix := "  "
 		if i == m.cursor {
-			composed = "▸ " + row
-		} else {
-			composed = "  " + row
+			prefix = "▸ "
 		}
-		composed = shared.PadOrTruncateVisible(composed, rowTarget)
-		if i == m.cursor {
-			composed = tk.Accent.Render(composed)
-		}
-		b.WriteString(composed)
+		// v0.2.0 #182 — unified cursor pipeline.
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, "", tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
@@ -834,16 +829,15 @@ func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab, members []do
 //   - err != nil: ErrorPanel with the failure detail
 //   - loaded: a column table of members (status badge + login)
 func renderGroupMembersTab(members []domain.User, loaded bool, err error) string {
+	tk := activeTokens()
+	// Errors deserve the full ErrorPanel surface — operators need
+	// the source / hint / retry hint, not just a one-liner.
 	if err != nil {
 		return shared.ErrorPanel("group members", err) + "\n"
 	}
-	if !loaded {
-		return "loading members…\n"
+	if row := shared.PlaceholderRow(loaded, nil, len(members), "members", tk); row != "" {
+		return row + "\n"
 	}
-	if len(members) == 0 {
-		return "(group has no members)\n"
-	}
-	tk := activeTokens()
 	var b strings.Builder
 	b.WriteString("Members  ")
 	b.WriteString(itoaG(len(members)))

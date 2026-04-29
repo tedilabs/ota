@@ -367,18 +367,8 @@ func (m ListModel) View() string {
 		if i == m.cursor {
 			prefix = "▸ "
 		}
-		composed := prefix + row
-		composed = shared.PadOrTruncateVisible(composed, rowTarget)
-		switch {
-		case i == m.cursor:
-			composed = tk.Accent.Render(composed)
-		default:
-			// Issue #155 — INACTIVE policies tint muted-gray.
-			if rowStyle, ok := shared.RowStyleForStatus(string(m.policies[i].Status), tk); ok {
-				composed = rowStyle.Render(shared.StripCSI(composed))
-			}
-		}
-		b.WriteString(composed)
+		// v0.2.0 #182 — unified cursor pipeline.
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(m.policies[i].Status), tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(m.policies), tk))
 		b.WriteByte('\n')
 	}
@@ -679,22 +669,8 @@ func renderPolicyRulesSection(rules []domain.PolicyRule, loaded bool, err error)
 	var b strings.Builder
 	b.WriteString(shared.SectionHeader("Rules", 56))
 	b.WriteByte('\n')
-	if err != nil {
-		b.WriteString("  ")
-		b.WriteString(tk.Danger.Render("rules failed: " + err.Error()))
-		b.WriteByte('\n')
-		return b.String()
-	}
-	if !loaded {
-		b.WriteString("  ")
-		b.WriteString(tk.Muted.Render("loading rules…"))
-		b.WriteByte('\n')
-		return b.String()
-	}
-	if len(rules) == 0 {
-		b.WriteString("  ")
-		b.WriteString(tk.Muted.Render("(policy has no rules)"))
-		b.WriteByte('\n')
+	if row := shared.PlaceholderRow(loaded, err, len(rules), "rules", tk); row != "" {
+		b.WriteString("  " + row + "\n")
 		return b.String()
 	}
 	for _, r := range rules {

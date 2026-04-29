@@ -444,19 +444,9 @@ func (m ListModel) View() string {
 		if i == m.cursor {
 			prefix = "▸ "
 		}
-		composed := prefix + row
-		composed = shared.PadOrTruncateVisible(composed, rowTarget)
-		switch {
-		case i == m.cursor:
-			composed = tk.Accent.Render(composed)
-		default:
-			// Issue #155 — INVALID rules tint danger-red, INACTIVE
-			// rules tint muted-gray so the body reads at a glance.
-			if rowStyle, ok := shared.RowStyleForStatus(string(rows[i].Status), tk); ok {
-				composed = rowStyle.Render(shared.StripCSI(composed))
-			}
-		}
-		b.WriteString(composed)
+		// v0.2.0 #182 — unified cursor pipeline (issue #155
+		// INVALID/INACTIVE row tint applies via shared.RenderRowCursor).
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}

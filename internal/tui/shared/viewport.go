@@ -90,6 +90,41 @@ func ScrollbarMark(r, scrollTop, budget, total int) string {
 	return "│"
 }
 
+// RenderRowCursor unifies the per-screen list-row decoration
+// pipeline (v0.2.0 #182). Each list used to inline:
+//
+//	composed := prefix + row
+//	composed = PadOrTruncateVisible(composed, target)
+//	if isCursor { composed = tk.Accent.Render(composed) }
+//	else if rowStyle, ok := RowStyleForStatus(status, tk); ok {
+//	    composed = rowStyle.Render(StripCSI(composed))
+//	}
+//
+// Six identical copies across users / groups / rules / apps / logs
+// / policies. Centralising the styling order — pad → status tint →
+// cursor (last so it wins over abnormal-row tint) — codifies the
+// strip-CSI ordering once so screens can't get it wrong, and makes
+// the cursor token swap a one-line change.
+//
+// Cursor uses RowCursor for chrome-style bg + fg tint (matches the
+// detail-view cursor highlight), unifying cursor cue language
+// across list rows + detail body + 2-col Pretty + Visual mode.
+//
+// statusKind is the value returned by domain.UserStatus / .Status;
+// callers pass "" when the row has no status semantics.
+func RenderRowCursor(line string, targetWidth int, isCursor bool, statusKind string, tk Tokens) string {
+	line = PadOrTruncateVisible(line, targetWidth)
+	if isCursor {
+		return tk.RowCursor.Render(StripCSI(line))
+	}
+	if statusKind != "" {
+		if style, ok := RowStyleForStatus(statusKind, tk); ok {
+			return style.Render(StripCSI(line))
+		}
+	}
+	return line
+}
+
 // AppendScrollbarSuffix returns the trailing " ▌" / " │" gutter for
 // a single rendered list row. Empty when the dataset already fits the
 // budget so callers can avoid reserving the gutter on small lists.

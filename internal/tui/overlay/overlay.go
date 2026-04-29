@@ -605,7 +605,10 @@ func (m ActionMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the picker — a centered RoundedBorder box with one
 // line per item. Hint text trails each label in the muted token so
-// destructive actions read at a glance.
+// destructive actions read at a glance. v0.2.0: routed through
+// shared.MountModal so the title / body / footer slots match every
+// other overlay (palette / help / confirm) without each owning its
+// own rounded-border layout.
 func (m ActionMenuModel) View() string {
 	tk := shared.Dark()
 	var b strings.Builder
@@ -620,11 +623,18 @@ func (m ActionMenuModel) View() string {
 		if it.Hint != "" {
 			b.WriteString("  " + tk.Muted.Render(it.Hint))
 		}
-		b.WriteByte('\n')
+		if i < len(m.items)-1 {
+			b.WriteByte('\n')
+		}
 	}
-	b.WriteString("\n")
-	b.WriteString(tk.Muted.Render("<j/k> nav · <Enter> run · <Esc> cancel"))
-	return shared.Modal("Actions · "+m.title, b.String(), 60)
+	return shared.MountModal(shared.ModalIn{
+		Title:  "Actions · " + m.title,
+		Body:   b.String(),
+		Footer: "<j/k> nav · <Enter> run · <Esc> cancel",
+		Tone:   shared.ModalToneAccent,
+		Width:  60,
+		Tokens: tk,
+	})
 }
 
 // Cursor exposes the current cursor index so the App Shell can
