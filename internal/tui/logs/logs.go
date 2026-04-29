@@ -96,6 +96,17 @@ type SearchModel struct {
 	// match on eventType / actor / displayMsg / outcome / IP.
 	filter    string
 	filtering bool
+	// query / queryInput drive the server-side full-text search
+	// against /api/v1/logs?q=<text> (issue #185 v0.2.1). `Q`
+	// opens the prompt: typing edits queryInput, Enter commits
+	// to query + re-fetches the history window with the new q,
+	// Esc cancels. `query` persists across follow ticks so the
+	// auto-refresh stream stays scoped to the operator's search.
+	// Distinct from the local `/` filter — this one runs on
+	// Okta's side, mirroring the dashboard's Search input.
+	query        string
+	queryInput   string
+	queryEditing bool
 	// followSince is the cursor used by the auto-refresh tick when
 	// follow mode is on (issue #177 v0.1.16). Each tick fetches the
 	// slice of events `published > followSince` and advances the
@@ -170,15 +181,22 @@ func (m SearchModel) StatusBadges() []shared.ChromeBadge {
 	} else {
 		out = append(out, shared.ChromeBadge{Key: "FOLLOW", Value: "off", Tone: shared.BadgeMuted})
 	}
+	if m.query != "" {
+		out = append(out, shared.ChromeBadge{Key: "Q", Value: m.query})
+	}
+	if m.filter != "" {
+		out = append(out, shared.ChromeBadge{Key: "FILTER", Value: m.filter})
+	}
 	return out
 }
 
 // EscapeWillAct reports whether Esc will do something on the Logs
-// screen — clear filter / leave detail / cancel filtering. False
-// when nothing is active so the App Shell surfaces the unified
-// `nothing to close` toast instead of forwarding a silent Esc.
+// screen — clear filter / leave detail / cancel filtering / clear
+// the active server query. False when nothing is active so the App
+// Shell surfaces the unified `nothing to close` toast instead of
+// forwarding a silent Esc.
 func (m SearchModel) EscapeWillAct() bool {
-	return m.filtering || m.opened || m.filter != ""
+	return m.filtering || m.queryEditing || m.opened || m.filter != "" || m.query != ""
 }
 
 // TimeRange reports the active history window — exposed for tests and
@@ -197,6 +215,11 @@ func (m SearchModel) Count() (visible, total int) {
 // into the chrome's upper divider (issues #123 + #153).
 func (m SearchModel) Filtering() bool { return m.filtering }
 func (m SearchModel) Filter() string  { return m.filter }
+
+// QueryEditing / QueryInput implement app.QueryStater so the App
+// Shell renders the floating `Q` server-search input (issue #185).
+func (m SearchModel) QueryEditing() bool { return m.queryEditing }
+func (m SearchModel) QueryInput() string { return m.queryInput }
 
 // visible returns the event slice filtered by the active `/` query.
 // Substring match (case-insensitive) against eventType / displayMsg
@@ -232,7 +255,7 @@ func (m SearchModel) visible() []domain.LogEvent {
 func (m SearchModel) Init() tea.Cmd {
 	var fetch tea.Cmd
 	if len(m.events) == 0 && m.deps.Service != nil {
-		fetch = fetchHistoryWindowCmd(m.deps.Service, m.timeRange)
+		fetch = fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
 	}
 	tick := m.scheduleFollowTickCmd()
 	switch {
@@ -379,6 +402,36 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	// v0.2.1 #185 — server-side query input mode. Operator typed
+	// `Q`; subsequent keys edit queryInput. Enter commits + fires
+	// fetchHistoryWindowQueryCmd; Esc cancels and reverts.
+	if m.queryEditing {
+		switch km.Type {
+		case tea.KeyEnter:
+			m.queryEditing = false
+			m.query = strings.TrimSpace(m.queryInput)
+			m.queryInput = ""
+			m.cursor = 0
+			m.viewportTop = 0
+			if m.deps.Service != nil {
+				return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
+			}
+			return m, nil
+		case tea.KeyEsc:
+			m.queryEditing = false
+			m.queryInput = ""
+			return m, nil
+		case tea.KeyBackspace:
+			if n := len(m.queryInput); n > 0 {
+				m.queryInput = m.queryInput[:n-1]
+			}
+			return m, nil
+		case tea.KeyRunes:
+			m.queryInput += string(km.Runes)
+			return m, nil
+		}
+		return m, nil
+	}
 
 	// Esc on the list with a stuck filter clears it (issue #131
 	// pattern, ported to logs).
@@ -386,6 +439,19 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filter = ""
 		m.cursor = 0
 		m.viewportTop = 0
+		return m, nil
+	}
+	// Esc on the list with an active server query clears it and
+	// re-fetches the unfiltered window (issue #185 v0.2.1). Mirrors
+	// the local-filter Esc semantics so the operator's mental model
+	// stays "Esc undoes the most recent narrowing".
+	if !m.opened && km.Type == tea.KeyEsc && m.query != "" {
+		m.query = ""
+		m.cursor = 0
+		m.viewportTop = 0
+		if m.deps.Service != nil {
+			return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, "")
+		}
 		return m, nil
 	}
 
@@ -489,8 +555,17 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// re-fetched (e.g., after firing a write op elsewhere).
 			m.ggChord.Reset()
 			if m.deps.Service != nil {
-				return m, fetchHistoryWindowCmd(m.deps.Service, m.timeRange)
+				return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
 			}
+		case "Q":
+			// v0.2.1 #185 — server-side full-text search prompt.
+			// Mirrors the Okta web dashboard's Search input: type a
+			// term, Enter re-fetches the history window with q=<term>
+			// against /api/v1/logs. Distinct from the local `/`
+			// filter which narrows already-loaded events client-side.
+			m.ggChord.Reset()
+			m.queryEditing = true
+			m.queryInput = m.query
 		case "j":
 			m.ggChord.Reset()
 			if m.cursor < len(rows)-1 {
@@ -542,7 +617,7 @@ func (m SearchModel) setRange(window time.Duration) (tea.Model, tea.Cmd) {
 		// leave the seeded events alone.
 		return m, nil
 	}
-	return m, fetchHistoryWindowCmd(m.deps.Service, window)
+	return m, fetchHistoryWindowQueryCmd(m.deps.Service, window, m.query)
 }
 
 // View renders SCR-050 (TUI_DESIGN §15.6 / §16.8). Columns:
@@ -1181,9 +1256,21 @@ func fetchHistoryCmd(svc *service.LogsService) tea.Cmd {
 }
 
 func fetchHistoryWindowCmd(svc *service.LogsService, window time.Duration) tea.Cmd {
+	return fetchHistoryWindowQueryCmd(svc, window, "")
+}
+
+// fetchHistoryWindowQueryCmd is the v0.2.1 (#185) variant that
+// pushes a server-side `q=` term into the history fetch — mirrors
+// the Okta dashboard's Search box and lets operators narrow the
+// stream to specific event types / actors / IPs without scrolling
+// through unrelated rows. Empty q falls back to the existing window
+// query (issue #116 ASCENDING + 30m default).
+func fetchHistoryWindowQueryCmd(svc *service.LogsService, window time.Duration, q string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		iter, err := svc.Search(ctx, svc.HistoryQueryWindow(window))
+		query := svc.HistoryQueryWindow(window)
+		query.Q = q
+		iter, err := svc.Search(ctx, query)
 		if err != nil {
 			return logsErrMsg{err: err}
 		}

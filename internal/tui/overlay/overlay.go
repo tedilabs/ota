@@ -477,7 +477,8 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "logs":
 		return []helpEntry{
 			{"Enter / d", "open log event detail"},
-			{"/", "filter events by substring"},
+			{"/", "filter loaded events by substring (client-side)"},
+			{"Q", "search Okta server (q=… history fetch)"},
 			{"s", "toggle tail mode (on/off)"},
 			{"f", "toggle auto-follow (live ↔ paused)"},
 			{"r", "refresh — refetch the current window"},

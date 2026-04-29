@@ -589,7 +589,15 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						start, end = end, start
 					}
 				}
-				selected := strings.Join(lines[start:end+1], "\n")
+				// v0.2.1 #183: strip ANSI escape codes before writing
+				// to the clipboard. Detail bodies render with syntax
+				// highlighting (JSON / YAML token colours, masked-line
+				// annotations) — those CSI sequences get included
+				// verbatim when the lines slice is joined, so the
+				// operator pasted `\x1b[38;5;…m"login":\x1b[0m` into
+				// their notes. shared.StripCSI removes them so the
+				// clipboard carries plain text only.
+				selected := shared.StripCSI(strings.Join(lines[start:end+1], "\n"))
 				if err := clipboard.WriteAll(selected); err != nil {
 					m.detailToast = "yank failed: " + err.Error()
 				} else {
@@ -1519,7 +1527,14 @@ func renderScrollBox(
 		}
 		row = padOrTruncateVisible(row, contentW)
 		if focused && idx == cursor && idx < len(items) {
-			row = tk.RowCursor.Render(row)
+			// v0.2.1 #184 — strip inner ANSI before applying
+			// RowCursor. Groups items render as `[OKTA_GROUP]  name`
+			// with the type prefix wrapped in tk.Muted (issue #170);
+			// the inner Muted style emits its own `\x1b[0m` reset
+			// which terminates RowCursor's bg mid-row, leaving the
+			// trailing group name un-highlighted. Same fix pattern
+			// as #146 for the Pretty 2-col cursor.
+			row = tk.RowCursor.Render(shared.StripCSI(row))
 		}
 		// Scrollbar marker: thumb (▌) when this row is inside the
 		// active scroll window, track (│) otherwise. Position

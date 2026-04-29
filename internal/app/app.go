@@ -515,6 +515,8 @@ func (m Model) View() string {
 	switch {
 	case m.overlay == OverlayPalette:
 		body = stampOverlayOnTop(m.renderPaletteBox(tokens, width-3), body)
+	case m.activeChildIsQueryEditing():
+		body = stampOverlayOnTop(m.renderQueryBox(tokens, width-3), body)
 	case m.activeChildIsFiltering():
 		body = stampOverlayOnTop(m.renderFilterBox(tokens, width-3), body)
 		fallthrough
@@ -765,6 +767,17 @@ func (m Model) renderOverlayPanel(tk shared.Tokens) string {
 	return ""
 }
 
+// QueryStater is implemented by screens that own a server-side
+// query prompt (today: Logs `Q` mirroring Okta's dashboard Search).
+// Distinct from FilterStater so the chrome can render a `Q`-prefixed
+// floating box vs `/`-prefixed filter box without conflating the
+// two — the local filter narrows already-loaded data, the query
+// re-fetches from the API. Issue #185 v0.2.1.
+type QueryStater interface {
+	QueryEditing() bool
+	QueryInput() string
+}
+
 // FilterStater is implemented by list screens that own a `/` incremental
 // filter so the App Shell can render the same floating input box used
 // for the palette (issue #123).
@@ -859,6 +872,31 @@ func (m Model) activeChildIsFiltering() bool {
 	return ok && fs.Filtering()
 }
 
+// activeChildIsQueryEditing reports whether the active screen has
+// its server-side query prompt open (issue #185).
+func (m Model) activeChildIsQueryEditing() bool {
+	child, ok := m.screens[m.active]
+	if !ok {
+		return false
+	}
+	qs, ok := child.(QueryStater)
+	return ok && qs.QueryEditing()
+}
+
+// activeChildQueryInput returns the active screen's in-progress
+// server-query buffer (empty when no QueryStater or not editing).
+func (m Model) activeChildQueryInput() string {
+	child, ok := m.screens[m.active]
+	if !ok {
+		return ""
+	}
+	qs, ok := child.(QueryStater)
+	if !ok {
+		return ""
+	}
+	return qs.QueryInput()
+}
+
 // activeChildFilter returns the active child's applied filter string
 // — empty when no filter is set or the screen doesn't support filters.
 // Surfaced in the chrome's upper divider so operators always see what's
@@ -934,6 +972,19 @@ func (m Model) renderFilterBox(tk shared.Tokens, innerWidth int) string {
 	}
 	cursor := tk.RowCursor.Render(" ")
 	return modalBox(prompt+input+cursor, innerWidth, tk)
+}
+
+// renderQueryBox builds the floating input box for the `Q`
+// server-side query mode (issue #185 v0.2.1). Same chrome as the
+// `/` filter box; the `Q` prefix and the muted hint distinguish
+// it from the local-filter prompt. Body explains the difference
+// inline so the operator doesn't have to remember which is which.
+func (m Model) renderQueryBox(tk shared.Tokens, innerWidth int) string {
+	prompt := tk.Accent.Render("Q ")
+	input := m.activeChildQueryInput()
+	cursor := tk.RowCursor.Render(" ")
+	hint := "\n" + tk.Muted.Render("server-side search · Enter applies · Esc cancels")
+	return modalBox(prompt+input+cursor+hint, innerWidth, tk)
 }
 
 // renderPaletteBox builds the floating input box for the `:` palette.
