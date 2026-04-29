@@ -45,6 +45,10 @@ func (p *bulkUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (stri
 }
 func (p *bulkUsersPort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *bulkUsersPort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *bulkUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *bulkUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *bulkUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *bulkUsersPort) Delete(_ context.Context, _ string) error { return nil }
 
 type bulkUsersIter struct{ remaining []domain.User }
 

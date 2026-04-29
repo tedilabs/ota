@@ -2045,15 +2045,19 @@ func (m ListModel) selected() *domain.User {
 }
 
 // Actions publishes the resource-specific actions surfaced by the
-// `a` action menu (issue #175 v0.1.15). Three Users lifecycle
-// operations: reset password, unlock, reset MFA factors. The IDs
-// match the `:` palette commands so the App Shell can route both
-// entry points through the same confirmation flow.
+// `a` action menu. Started as 3 ops (issue #175 v0.1.15); v0.2.2
+// (#187) added Activate / Deactivate / Expire Password / Delete to
+// cover the full Okta lifecycle. IDs match the `:` palette commands
+// so both entry points share the same confirmation flow.
 func (m ListModel) Actions() []shared.ActionItem {
 	return []shared.ActionItem{
 		{ID: "reset-password", Label: "Reset password", Hint: "send the standard reset email"},
 		{ID: "unlock", Label: "Unlock account", Hint: "clear LOCKED_OUT state"},
 		{ID: "reset-factors", Label: "Reset MFA factors", Hint: "destructive — forces re-enrollment"},
+		{ID: "activate", Label: "Activate user", Hint: "STAGED / DEPROVISIONED → ACTIVE (sends email)"},
+		{ID: "deactivate", Label: "Deactivate user", Hint: "any state → DEPROVISIONED (revocable)"},
+		{ID: "expire-password", Label: "Expire password", Hint: "force change on next sign-in"},
+		{ID: "delete", Label: "Delete user", Hint: "DEPROVISIONED only — permanent"},
 	}
 }
 

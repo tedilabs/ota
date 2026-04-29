@@ -44,6 +44,10 @@ func (p *detailFixturePort) ResetPassword(_ context.Context, _ string, _ bool) (
 }
 func (p *detailFixturePort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *detailFixturePort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *detailFixturePort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *detailFixturePort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *detailFixturePort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *detailFixturePort) Delete(_ context.Context, _ string) error { return nil }
 
 // detailHarness opens an inline Detail surface for a single seeded user
 // so the keyboard-driven Visual / yank test below stays focused on the

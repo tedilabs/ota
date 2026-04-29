@@ -13,6 +13,10 @@ type GroupRulesPortFake struct {
 
 	ListFunc func(ctx context.Context, q domain.GroupRulesQuery) (domain.Iterator[domain.GroupRule], error)
 	GetFunc  func(ctx context.Context, id string) (domain.GroupRule, error)
+	// v0.2.2 #188 — lifecycle hooks. Default to no-op when unset.
+	ActivateFunc   func(ctx context.Context, ruleID string) error
+	DeactivateFunc func(ctx context.Context, ruleID string) error
+	DeleteFunc     func(ctx context.Context, ruleID string) error
 }
 
 func NewGroupRulesPort(t *testing.T) *GroupRulesPortFake {
@@ -34,4 +38,28 @@ func (f *GroupRulesPortFake) Get(ctx context.Context, id string) (domain.GroupRu
 		f.t.Fatalf("GroupRulesPortFake.Get called but GetFunc is not set")
 	}
 	return f.GetFunc(ctx, id)
+}
+
+func (f *GroupRulesPortFake) Activate(ctx context.Context, ruleID string) error {
+	f.t.Helper()
+	if f.ActivateFunc == nil {
+		return nil
+	}
+	return f.ActivateFunc(ctx, ruleID)
+}
+
+func (f *GroupRulesPortFake) Deactivate(ctx context.Context, ruleID string) error {
+	f.t.Helper()
+	if f.DeactivateFunc == nil {
+		return nil
+	}
+	return f.DeactivateFunc(ctx, ruleID)
+}
+
+func (f *GroupRulesPortFake) Delete(ctx context.Context, ruleID string) error {
+	f.t.Helper()
+	if f.DeleteFunc == nil {
+		return nil
+	}
+	return f.DeleteFunc(ctx, ruleID)
 }

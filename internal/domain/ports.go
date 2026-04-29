@@ -38,6 +38,25 @@ type UsersPort interface {
 	// ResetFactors removes every enrolled MFA factor on the user, so
 	// next sign-in forces re-enrollment. Destructive.
 	ResetFactors(ctx context.Context, userID string) error
+
+	// Activate transitions a STAGED / DEPROVISIONED user into ACTIVE
+	// (issue #187 v0.2.2). When sendEmail is true Okta sends the
+	// activation invitation; false suppresses it (typical for
+	// admin-managed flows).
+	Activate(ctx context.Context, userID string, sendEmail bool) error
+	// Deactivate transitions any non-DEPROVISIONED user into
+	// DEPROVISIONED. Reversible only via Activate. sendEmail flag
+	// matches Okta's API.
+	Deactivate(ctx context.Context, userID string, sendEmail bool) error
+	// ExpirePassword forces the next sign-in to require a password
+	// change. The user's existing password remains valid until the
+	// next attempt — distinct from ResetPassword which immediately
+	// invalidates the credential.
+	ExpirePassword(ctx context.Context, userID string) error
+	// Delete removes a DEPROVISIONED user permanently. Okta requires
+	// the account already be deactivated, so callers should chain
+	// Deactivate first when the operator confirms a hard delete.
+	Delete(ctx context.Context, userID string) error
 }
 
 // GroupsPort is the outbound boundary for Okta Groups.
@@ -52,6 +71,16 @@ type GroupsPort interface {
 type GroupRulesPort interface {
 	List(ctx context.Context, q GroupRulesQuery) (Iterator[GroupRule], error)
 	Get(ctx context.Context, id string) (GroupRule, error)
+	// Activate transitions a rule from INACTIVE / INVALID to ACTIVE
+	// (issue #188 v0.2.2). Okta evaluates the rule's expression on
+	// activation; an invalid expression keeps the rule at INVALID
+	// regardless.
+	Activate(ctx context.Context, ruleID string) error
+	// Deactivate transitions a rule to INACTIVE.
+	Deactivate(ctx context.Context, ruleID string) error
+	// Delete removes a rule permanently. Okta requires the rule to
+	// be INACTIVE — callers should chain Deactivate when needed.
+	Delete(ctx context.Context, ruleID string) error
 }
 
 // PoliciesPort is the outbound boundary for Okta Policies.

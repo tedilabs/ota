@@ -43,6 +43,10 @@ func (p *filterRunesPort) ResetPassword(_ context.Context, _ string, _ bool) (st
 }
 func (p *filterRunesPort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *filterRunesPort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *filterRunesPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *filterRunesPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *filterRunesPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *filterRunesPort) Delete(_ context.Context, _ string) error { return nil }
 
 type filterRunesIter struct{ remaining []domain.User }
 

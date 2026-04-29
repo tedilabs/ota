@@ -251,6 +251,10 @@ func (p *seededUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (st
 }
 func (p *seededUsersPort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *seededUsersPort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *seededUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *seededUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *seededUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *seededUsersPort) Delete(_ context.Context, _ string) error { return nil }
 
 type seededUsersIter struct{ remaining []domain.User }
 

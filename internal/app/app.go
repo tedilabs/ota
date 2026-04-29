@@ -103,8 +103,12 @@ type Actioner interface {
 }
 
 // UserActionKind classifies the Users lifecycle action a confirmation
-// modal is gating. Matches the three ports added in issue #125 —
-// password reset, unlock, MFA factor reset.
+// modal is gating. v0.2.2 #187 extends issue #125's original 3 with
+// 4 more lifecycle ops the Okta API exposes:
+//   - Activate    (POST /lifecycle/activate)
+//   - Deactivate  (POST /lifecycle/deactivate)
+//   - ExpirePassword (POST /lifecycle/expire_password)
+//   - Delete      (DELETE /api/v1/users/{id})
 type UserActionKind int
 
 const (
@@ -112,6 +116,10 @@ const (
 	UserActionResetPassword
 	UserActionUnlock
 	UserActionResetFactors
+	UserActionActivate
+	UserActionDeactivate
+	UserActionExpirePassword
+	UserActionDelete
 )
 
 // pendingUserAction is the (kind, target) pair the App Shell keeps in
@@ -120,6 +128,35 @@ const (
 type pendingUserAction struct {
 	Kind UserActionKind
 	User domain.User
+}
+
+// RuleActionKind classifies the Group Rule lifecycle action a
+// confirmation modal is gating (issue #188 v0.2.2). Mirrors
+// UserActionKind for the Group Rules screen — Activate /
+// Deactivate / Delete are the three lifecycle ops Okta exposes.
+type RuleActionKind int
+
+const (
+	RuleActionNone RuleActionKind = iota
+	RuleActionActivate
+	RuleActionDeactivate
+	RuleActionDelete
+)
+
+// pendingRuleAction is the (kind, target) pair the App Shell keeps
+// in flight while OverlayActionConfirm is open with a rule action.
+// Either pendingAction (UserActionKind) OR pendingRule may be set
+// — the modal renders one at a time, mutually exclusive.
+type pendingRuleAction struct {
+	Kind RuleActionKind
+	Rule domain.GroupRule
+}
+
+// SelectedRuleStater is the Group Rule counterpart of
+// SelectedUserStater (issue #188 v0.2.2). Lets the App Shell read
+// the rule the action menu is targeting.
+type SelectedRuleStater interface {
+	SelectedRule() (domain.GroupRule, bool)
 }
 
 // SelectedUserStater is implemented by screens that can surface the
@@ -206,6 +243,12 @@ type Model struct {
 	// `:reset-factors` while the confirmation modal is open. Cleared
 	// when the modal closes either way.
 	pendingAction pendingUserAction
+
+	// pendingRule is the Group Rule counterpart of pendingAction
+	// (issue #188 v0.2.2). Only one of pendingAction / pendingRule
+	// is set at any time; the confirmation modal renders whichever
+	// the operator triggered.
+	pendingRule pendingRuleAction
 
 	// statusToast is the chrome's right-anchored one-shot message on
 	// the status row (v0.2.0): "yanked 5 lines", "nothing to close",
@@ -359,6 +402,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.openActionConfirm(UserActionUnlock)
 		case "reset-factors":
 			return m.openActionConfirm(UserActionResetFactors)
+		case "activate":
+			return m.openActionConfirm(UserActionActivate)
+		case "deactivate":
+			return m.openActionConfirm(UserActionDeactivate)
+		case "expire-password":
+			return m.openActionConfirm(UserActionExpirePassword)
+		case "delete":
+			return m.openActionConfirm(UserActionDelete)
+		}
+		return m, nil
+	case shared.RunRuleActionMsg:
+		// Group Rule lifecycle dispatcher (issue #188 v0.2.2).
+		// Same gate-via-confirm pattern as RunUserActionMsg.
+		switch msg.Kind {
+		case "activate":
+			return m.openRuleActionConfirm(RuleActionActivate)
+		case "deactivate":
+			return m.openRuleActionConfirm(RuleActionDeactivate)
+		case "delete":
+			return m.openRuleActionConfirm(RuleActionDelete)
 		}
 		return m, nil
 	case QuitConfirmRequestMsg:
@@ -756,6 +819,17 @@ func (m Model) renderOverlayPanel(tk shared.Tokens) string {
 	case OverlayQuitConfirm:
 		return tk.Danger.Render("Quit ota?") + tk.Muted.Render("  (y/N)")
 	case OverlayActionConfirm:
+		// v0.2.2 #188: render either pendingAction (user lifecycle)
+		// or pendingRule (group-rule lifecycle) — mutually exclusive.
+		if m.pendingRule.Kind != RuleActionNone {
+			label := ruleActionLabel(m.pendingRule.Kind)
+			name := m.pendingRule.Rule.Name
+			if name == "" {
+				name = m.pendingRule.Rule.ID
+			}
+			return tk.Danger.Render(label+" for ") + tk.Accent.Render(name) +
+				tk.Danger.Render("?") + tk.Muted.Render("  (y/N)")
+		}
 		label := userActionLabel(m.pendingAction.Kind)
 		login := m.pendingAction.User.Profile.Login
 		if login == "" {
@@ -842,12 +916,21 @@ func (m Model) escWillAct() bool {
 // drops trailing entries first.
 func (m Model) composeChromeBadges() []shared.ChromeBadge {
 	var out []shared.ChromeBadge
-	if m.overlay == OverlayActionConfirm && m.pendingAction.Kind != UserActionNone {
-		out = append(out, shared.ChromeBadge{
-			Key:   "ACTION",
-			Value: userActionLabel(m.pendingAction.Kind),
-			Tone:  shared.BadgeDanger,
-		})
+	if m.overlay == OverlayActionConfirm {
+		switch {
+		case m.pendingRule.Kind != RuleActionNone:
+			out = append(out, shared.ChromeBadge{
+				Key:   "ACTION",
+				Value: ruleActionLabel(m.pendingRule.Kind),
+				Tone:  shared.BadgeDanger,
+			})
+		case m.pendingAction.Kind != UserActionNone:
+			out = append(out, shared.ChromeBadge{
+				Key:   "ACTION",
+				Value: userActionLabel(m.pendingAction.Kind),
+				Tone:  shared.BadgeDanger,
+			})
+		}
 	}
 	child, ok := m.screens[m.active]
 	if !ok {
@@ -1490,12 +1573,23 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay == OverlayActionConfirm && msg.Type == tea.KeyRunes {
 		switch string(msg.Runes) {
 		case "y", "Y":
+			// v0.2.2 #188 — pendingRule and pendingAction are
+			// mutually exclusive (openActionConfirm /
+			// openRuleActionConfirm clear the other). Fire the
+			// correct dispatcher based on which is set.
+			if m.pendingRule.Kind != RuleActionNone {
+				ra := m.pendingRule
+				m.pendingRule = pendingRuleAction{}
+				m.overlay = OverlayNone
+				return m, runRuleActionCmd(m.deps.GroupRulesPort, ra)
+			}
 			action := m.pendingAction
 			m.pendingAction = pendingUserAction{}
 			m.overlay = OverlayNone
 			return m, runUserActionCmd(m.deps.UsersPort, action)
 		case "n", "N":
 			m.pendingAction = pendingUserAction{}
+			m.pendingRule = pendingRuleAction{}
 			m.overlay = OverlayNone
 		}
 	}
@@ -1708,8 +1802,75 @@ func (m Model) openActionConfirm(kind UserActionKind) (tea.Model, tea.Cmd) {
 		return m, toastCmdInfo("no user selected")
 	}
 	m.pendingAction = pendingUserAction{Kind: kind, User: user}
+	m.pendingRule = pendingRuleAction{}
 	m.overlay = OverlayActionConfirm
 	return m, nil
+}
+
+// openRuleActionConfirm is the Group Rule sibling (issue #188).
+func (m Model) openRuleActionConfirm(kind RuleActionKind) (tea.Model, tea.Cmd) {
+	child, ok := m.screens[m.active]
+	if !ok {
+		return m, toastCmdInfo("no active screen")
+	}
+	stater, ok := child.(SelectedRuleStater)
+	if !ok {
+		return m, toastCmdInfo("action not available on this screen")
+	}
+	rule, ok := stater.SelectedRule()
+	if !ok {
+		return m, toastCmdInfo("no rule selected")
+	}
+	m.pendingRule = pendingRuleAction{Kind: kind, Rule: rule}
+	m.pendingAction = pendingUserAction{}
+	m.overlay = OverlayActionConfirm
+	return m, nil
+}
+
+// ruleActionLabel returns a human-readable label for the action.
+func ruleActionLabel(k RuleActionKind) string {
+	switch k {
+	case RuleActionActivate:
+		return "Activate rule"
+	case RuleActionDeactivate:
+		return "Deactivate rule"
+	case RuleActionDelete:
+		return "Delete rule"
+	}
+	return ""
+}
+
+// runRuleActionCmd dispatches the active pendingRule against the
+// GroupRulesPort and emits a toast with the result.
+func runRuleActionCmd(port domain.GroupRulesPort, action pendingRuleAction) tea.Cmd {
+	if port == nil {
+		return toastCmdInfo("GroupRulesPort not wired — action skipped")
+	}
+	return func() tea.Msg {
+		ctx := context.Background()
+		name := action.Rule.Name
+		if name == "" {
+			name = action.Rule.ID
+		}
+		switch action.Kind {
+		case RuleActionActivate:
+			if err := port.Activate(ctx, action.Rule.ID); err != nil {
+				return toastErr("activate rule failed: " + err.Error())
+			}
+			return toastInfo("activated rule " + name)
+		case RuleActionDeactivate:
+			if err := port.Deactivate(ctx, action.Rule.ID); err != nil {
+				return toastErr("deactivate rule failed: " + err.Error())
+			}
+			return toastInfo("deactivated rule " + name)
+		case RuleActionDelete:
+			if err := port.Delete(ctx, action.Rule.ID); err != nil {
+				return toastErr("delete rule failed: " + err.Error())
+			}
+			return toastInfo("deleted rule " + name)
+		}
+		return nil
+	}
 }
 
 // userActionLabel returns a human-readable label for the action kind,
@@ -1722,6 +1883,14 @@ func userActionLabel(k UserActionKind) string {
 		return "Unlock account"
 	case UserActionResetFactors:
 		return "Reset MFA factors"
+	case UserActionActivate:
+		return "Activate user"
+	case UserActionDeactivate:
+		return "Deactivate user"
+	case UserActionExpirePassword:
+		return "Expire password"
+	case UserActionDelete:
+		return "Delete user"
 	}
 	return ""
 }
@@ -1756,6 +1925,26 @@ func runUserActionCmd(port domain.UsersPort, action pendingUserAction) tea.Cmd {
 				return toastErr("reset MFA failed: " + err.Error())
 			}
 			return toastInfo("MFA factors reset for " + login)
+		case UserActionActivate:
+			if err := port.Activate(ctx, action.User.ID, true); err != nil {
+				return toastErr("activate failed: " + err.Error())
+			}
+			return toastInfo("activated " + login)
+		case UserActionDeactivate:
+			if err := port.Deactivate(ctx, action.User.ID, false); err != nil {
+				return toastErr("deactivate failed: " + err.Error())
+			}
+			return toastInfo("deactivated " + login)
+		case UserActionExpirePassword:
+			if err := port.ExpirePassword(ctx, action.User.ID); err != nil {
+				return toastErr("expire password failed: " + err.Error())
+			}
+			return toastInfo("password expired for " + login)
+		case UserActionDelete:
+			if err := port.Delete(ctx, action.User.ID); err != nil {
+				return toastErr("delete failed: " + err.Error())
+			}
+			return toastInfo("deleted " + login)
 		}
 		return nil
 	}

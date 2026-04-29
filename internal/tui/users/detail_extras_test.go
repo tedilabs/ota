@@ -47,6 +47,10 @@ func (p *extrasUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (st
 }
 func (p *extrasUsersPort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *extrasUsersPort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *extrasUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *extrasUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *extrasUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *extrasUsersPort) Delete(_ context.Context, _ string) error { return nil }
 
 type extrasIter struct{ rem []domain.User }
 

@@ -227,4 +227,65 @@ func (a *UsersAdapter) ResetFactors(ctx context.Context, userID string) error {
 	return nil
 }
 
+// Activate issues POST /api/v1/users/{id}/lifecycle/activate
+// (issue #187 v0.2.2). sendEmail=true triggers the activation email;
+// false suppresses it for admin-managed flows.
+func (a *UsersAdapter) Activate(ctx context.Context, userID string, sendEmail bool) error {
+	q := url.Values{}
+	q.Set("sendEmail", strconv.FormatBool(sendEmail))
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) +
+		"/lifecycle/activate?" + q.Encode())
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
+// Deactivate issues POST /api/v1/users/{id}/lifecycle/deactivate.
+// Reversible only via Activate.
+func (a *UsersAdapter) Deactivate(ctx context.Context, userID string, sendEmail bool) error {
+	q := url.Values{}
+	q.Set("sendEmail", strconv.FormatBool(sendEmail))
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) +
+		"/lifecycle/deactivate?" + q.Encode())
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
+// ExpirePassword issues POST /api/v1/users/{id}/lifecycle/expire_password
+// — forces the next sign-in to require a password change. Distinct
+// from ResetPassword which immediately invalidates the credential.
+func (a *UsersAdapter) ExpirePassword(ctx context.Context, userID string) error {
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) +
+		"/lifecycle/expire_password")
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
+// Delete issues DELETE /api/v1/users/{id}. Okta requires the user
+// to be DEPROVISIONED first; the App Shell's confirm modal warns
+// the operator and chains Deactivate when needed (the v0.2.2 #187
+// flow asks for an explicit double-confirm via :delete-user, with
+// the caller deactivating beforehand if the account is still
+// active).
+func (a *UsersAdapter) Delete(ctx context.Context, userID string) error {
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID))
+	resp, err := a.client.doDelete(ctx, u)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
 var _ domain.UsersPort = (*UsersAdapter)(nil)

@@ -50,4 +50,43 @@ func (a *GroupRulesAdapter) Get(ctx context.Context, id string) (domain.GroupRul
 	return mapGroupRule(&wr), nil
 }
 
+// Activate issues POST /api/v1/groups/rules/{id}/lifecycle/activate
+// (issue #188 v0.2.2). Okta evaluates the expression on activation;
+// invalid expressions stick at INVALID regardless.
+func (a *GroupRulesAdapter) Activate(ctx context.Context, ruleID string) error {
+	u := a.client.buildURL("/api/v1/groups/rules/" + url.PathEscape(ruleID) +
+		"/lifecycle/activate")
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
+// Deactivate issues POST /api/v1/groups/rules/{id}/lifecycle/deactivate.
+func (a *GroupRulesAdapter) Deactivate(ctx context.Context, ruleID string) error {
+	u := a.client.buildURL("/api/v1/groups/rules/" + url.PathEscape(ruleID) +
+		"/lifecycle/deactivate")
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
+// Delete issues DELETE /api/v1/groups/rules/{id}. Okta requires the
+// rule to be INACTIVE; the App Shell confirms before chaining
+// Deactivate when needed.
+func (a *GroupRulesAdapter) Delete(ctx context.Context, ruleID string) error {
+	u := a.client.buildURL("/api/v1/groups/rules/" + url.PathEscape(ruleID))
+	resp, err := a.client.doDelete(ctx, u)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
 var _ domain.GroupRulesPort = (*GroupRulesAdapter)(nil)

@@ -42,6 +42,10 @@ func (p *actionMenuPort) ResetPassword(_ context.Context, _ string, _ bool) (str
 }
 func (p *actionMenuPort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *actionMenuPort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *actionMenuPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *actionMenuPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *actionMenuPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *actionMenuPort) Delete(_ context.Context, _ string) error { return nil }
 
 type actionMenuIter struct{ users []domain.User }
 

@@ -35,6 +35,12 @@ type ActionItem struct {
 // RunUserActionMsg routes a user-lifecycle action picked from the
 // `a` menu (issue #175) into the App Shell's existing confirmation
 // flow. Kind is the canonical `:` palette command name —
-// "reset-password" / "unlock" / "reset-factors". Lives in shared so
+// "reset-password" / "unlock" / "reset-factors" / "activate" /
+// "deactivate" / "expire-password" / "delete". Lives in shared so
 // the users list can emit it without an app→tui→app cycle.
 type RunUserActionMsg struct{ Kind string }
+
+// RunRuleActionMsg is the Group Rule counterpart to
+// RunUserActionMsg (issue #188 v0.2.2). Kind ∈ {"activate",
+// "deactivate", "delete"}.
+type RunRuleActionMsg struct{ Kind string }

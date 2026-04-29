@@ -53,6 +53,10 @@ func (p *principalUsersPort) ResetPassword(_ context.Context, _ string, _ bool) 
 }
 func (p *principalUsersPort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *principalUsersPort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *principalUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *principalUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *principalUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *principalUsersPort) Delete(_ context.Context, _ string) error { return nil }
 
 type emptyUsersIter struct{}
 

@@ -49,6 +49,10 @@ func (p *countingUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (
 }
 func (p *countingUsersPort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *countingUsersPort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *countingUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *countingUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *countingUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *countingUsersPort) Delete(_ context.Context, _ string) error { return nil }
 
 type countingUsersIter struct{ remaining []domain.User }
 

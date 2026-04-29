@@ -70,6 +70,10 @@ func (p *recordingUsersPort) ResetFactors(_ context.Context, id string) error {
 	p.factorsCalls = append(p.factorsCalls, id)
 	return p.factorsErr
 }
+func (p *recordingUsersPort) Activate(_ context.Context, _ string, _ bool) error   { return nil }
+func (p *recordingUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *recordingUsersPort) ExpirePassword(_ context.Context, _ string) error     { return nil }
+func (p *recordingUsersPort) Delete(_ context.Context, _ string) error             { return nil }
 
 type recordingIter struct{ remaining []domain.User }
 

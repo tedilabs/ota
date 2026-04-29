@@ -736,6 +736,38 @@ func (m ListModel) selected() *domain.GroupRule {
 	return &vs[m.cursor]
 }
 
+// Actions publishes the resource-specific actions surfaced by the
+// `a` action menu (issue #188 v0.2.2). Group Rules expose three
+// lifecycle ops via Okta's API.
+func (m ListModel) Actions() []shared.ActionItem {
+	return []shared.ActionItem{
+		{ID: "activate", Label: "Activate rule", Hint: "INACTIVE → ACTIVE (re-evaluates expression)"},
+		{ID: "deactivate", Label: "Deactivate rule", Hint: "ACTIVE → INACTIVE"},
+		{ID: "delete", Label: "Delete rule", Hint: "INACTIVE only — permanent"},
+	}
+}
+
+// RunAction emits a shared.RunRuleActionMsg back into the App Shell
+// when the operator picks an item from the `a` menu.
+func (m ListModel) RunAction(id string) (tea.Model, tea.Cmd) {
+	return m, func() tea.Msg { return shared.RunRuleActionMsg{Kind: id} }
+}
+
+// SelectedRule surfaces the active rule (the open detail target
+// while m.opened is true, otherwise the cursor row) so the App Shell
+// can hand it to lifecycle confirmation modals (issue #188).
+func (m ListModel) SelectedRule() (domain.GroupRule, bool) {
+	if m.opened {
+		if m.detail.ID != "" {
+			return m.detail, true
+		}
+	}
+	if r := m.selected(); r != nil {
+		return *r, true
+	}
+	return domain.GroupRule{}, false
+}
+
 func ruleStatusBadge(s domain.GroupRuleStatus) string {
 	switch s {
 	case domain.GroupRuleStatusActive:

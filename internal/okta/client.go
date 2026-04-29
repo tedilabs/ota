@@ -235,6 +235,49 @@ func (c *Client) doPost(ctx context.Context, urlStr string, body []byte) (*http.
 	return nil, lastErr
 }
 
+// doDelete performs a DELETE — used by hard-delete user / group-rule
+// endpoints (issue #187 / #188 v0.2.2). Same auth, rate-limit
+// observation, and 429 retry semantics as doGet / doPost.
+func (c *Client) doDelete(ctx context.Context, urlStr string) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+		if err != nil {
+			return nil, fmt.Errorf("okta: build request: %w", err)
+		}
+		req.Header.Set("Authorization", "SSWS "+c.token.reveal())
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", c.ua)
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("okta: %w", errors.Join(domain.ErrNetwork, err))
+		}
+		c.monitor.Observe(resp)
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			rle := errormap.FromResponse(resp)
+			if attempt < c.maxRetries {
+				var detail *domain.RateLimitedError
+				if errors.As(rle, &detail) && detail.RetryAfter > 0 {
+					if err := c.sleepRespectingCtx(ctx, detail.RetryAfter); err != nil {
+						return nil, err
+					}
+				}
+				lastErr = rle
+				drainAndClose(resp)
+				continue
+			}
+			return nil, rle
+		}
+		if resp.StatusCode >= 400 {
+			return nil, errormap.FromResponse(resp)
+		}
+		return resp, nil
+	}
+	return nil, lastErr
+}
+
 // buildURL joins the configured base URL with a path + raw query.
 func (c *Client) buildURL(pathAndQuery string) string {
 	if strings.HasPrefix(pathAndQuery, "http://") || strings.HasPrefix(pathAndQuery, "https://") {

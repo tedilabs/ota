@@ -50,6 +50,10 @@ func (p *drilldownUsersPort) ResetPassword(_ context.Context, _ string, _ bool) 
 }
 func (p *drilldownUsersPort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *drilldownUsersPort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *drilldownUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *drilldownUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *drilldownUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *drilldownUsersPort) Delete(_ context.Context, _ string) error { return nil }
 
 type oneShotUserIter struct {
 	u    domain.User

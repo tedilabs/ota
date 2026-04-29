@@ -19,6 +19,11 @@ type UsersPortFake struct {
 	ResetPasswordFunc func(ctx context.Context, userID string, sendEmail bool) (string, error)
 	UnlockFunc        func(ctx context.Context, userID string) error
 	ResetFactorsFunc  func(ctx context.Context, userID string) error
+	// v0.2.2 #187 — extended lifecycle ops.
+	ActivateFunc       func(ctx context.Context, userID string, sendEmail bool) error
+	DeactivateFunc     func(ctx context.Context, userID string, sendEmail bool) error
+	ExpirePasswordFunc func(ctx context.Context, userID string) error
+	DeleteFunc         func(ctx context.Context, userID string) error
 }
 
 // NewUsersPort returns a fake UsersPort wired to t so unexpected calls fail
@@ -96,4 +101,36 @@ func (f *UsersPortFake) ResetFactors(ctx context.Context, userID string) error {
 		f.t.Fatalf("UsersPortFake.ResetFactors called but ResetFactorsFunc is not set")
 	}
 	return f.ResetFactorsFunc(ctx, userID)
+}
+
+func (f *UsersPortFake) Activate(ctx context.Context, userID string, sendEmail bool) error {
+	f.t.Helper()
+	if f.ActivateFunc == nil {
+		return nil
+	}
+	return f.ActivateFunc(ctx, userID, sendEmail)
+}
+
+func (f *UsersPortFake) Deactivate(ctx context.Context, userID string, sendEmail bool) error {
+	f.t.Helper()
+	if f.DeactivateFunc == nil {
+		return nil
+	}
+	return f.DeactivateFunc(ctx, userID, sendEmail)
+}
+
+func (f *UsersPortFake) ExpirePassword(ctx context.Context, userID string) error {
+	f.t.Helper()
+	if f.ExpirePasswordFunc == nil {
+		return nil
+	}
+	return f.ExpirePasswordFunc(ctx, userID)
+}
+
+func (f *UsersPortFake) Delete(ctx context.Context, userID string) error {
+	f.t.Helper()
+	if f.DeleteFunc == nil {
+		return nil
+	}
+	return f.DeleteFunc(ctx, userID)
 }

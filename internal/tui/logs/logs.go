@@ -413,8 +413,17 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.queryInput = ""
 			m.cursor = 0
 			m.viewportTop = 0
+			// v0.2.2 #186: bump followGen so any in-flight tick
+			// (captured the previous m.query value at scheduling
+			// time) is dropped when its result lands. The fresh
+			// history fetch + the next tick will both use the new
+			// query value.
+			m.followGen++
 			if m.deps.Service != nil {
-				return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
+				return m, tea.Batch(
+					fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query),
+					m.scheduleFollowTickCmd(),
+				)
 			}
 			return m, nil
 		case tea.KeyEsc:
@@ -444,13 +453,19 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Esc on the list with an active server query clears it and
 	// re-fetches the unfiltered window (issue #185 v0.2.1). Mirrors
 	// the local-filter Esc semantics so the operator's mental model
-	// stays "Esc undoes the most recent narrowing".
+	// stays "Esc undoes the most recent narrowing". Bumps followGen
+	// (v0.2.2 #186) so a stale tick captured with the previous query
+	// is dropped when its result lands.
 	if !m.opened && km.Type == tea.KeyEsc && m.query != "" {
 		m.query = ""
 		m.cursor = 0
 		m.viewportTop = 0
+		m.followGen++
 		if m.deps.Service != nil {
-			return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, "")
+			return m, tea.Batch(
+				fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, ""),
+				m.scheduleFollowTickCmd(),
+			)
 		}
 		return m, nil
 	}
@@ -1187,6 +1202,7 @@ func (m SearchModel) scheduleFollowTickCmd() tea.Cmd {
 func (m SearchModel) followFetchCmd() tea.Cmd {
 	gen := m.followGen
 	since := m.followSince
+	q := m.query // v0.2.2 #186 — carry the active server query
 	tail := m.deps.Tail
 	svc := m.deps.Service
 	return func() tea.Msg {
@@ -1200,6 +1216,7 @@ func (m SearchModel) followFetchCmd() tea.Cmd {
 		}
 		query := domain.LogsQuery{
 			Since:     &since,
+			Q:         q,
 			SortOrder: domain.SortAscending,
 			Limit:     1000,
 		}

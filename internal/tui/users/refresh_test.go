@@ -145,6 +145,10 @@ func (p *refreshTickPort) ResetPassword(_ context.Context, _ string, _ bool) (st
 }
 func (p *refreshTickPort) Unlock(_ context.Context, _ string) error       { return nil }
 func (p *refreshTickPort) ResetFactors(_ context.Context, _ string) error { return nil }
+func (p *refreshTickPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *refreshTickPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
+func (p *refreshTickPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *refreshTickPort) Delete(_ context.Context, _ string) error { return nil }
 
 type refreshTickIter struct{}
 
