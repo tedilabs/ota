@@ -2,9 +2,10 @@ package users
 
 import (
 	"context"
-	"strconv"
+	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -222,6 +223,82 @@ func (m ListModel) Init() tea.Cmd {
 
 // LastUpdated implements app.LastUpdatedStater (issue #177 v0.1.16).
 func (m ListModel) LastUpdated() time.Time { return m.lastUpdated }
+
+// StatusBadges publishes the Users screen's transient state to the
+// chrome's v0.2.0 status row. Order: SORT → VISUAL (line selection
+// inside detail) → FOCUS (extras boxes) → FILTER (echo of `/`) →
+// hscroll (when h/l offset > 0). hscroll was silent today; the
+// other states each had bespoke surfaces (header glyph, inline
+// `-- VISUAL --`, green box border) — unified here so operators
+// read every transient mode in one slot.
+func (m ListModel) StatusBadges() []shared.ChromeBadge {
+	var out []shared.ChromeBadge
+	if m.sortBy != SortNone && m.sortDir != SortOff {
+		out = append(out, shared.ChromeBadge{
+			Key:   "SORT",
+			Value: usersSortLabelPlain(m.sortBy, m.sortDir),
+		})
+	}
+	if m.opened && m.detailVisual {
+		n := m.detailLine - m.detailVisualAnchor
+		if n < 0 {
+			n = -n
+		}
+		out = append(out, shared.ChromeBadge{
+			Key:   "VISUAL",
+			Value: fmt.Sprintf("%d lines", n+1),
+			Tone:  shared.BadgeWarning,
+		})
+	}
+	if m.opened && m.detailExtrasFocused {
+		out = append(out, shared.ChromeBadge{Key: "FOCUS", Value: "extras"})
+	}
+	if m.filter != "" {
+		out = append(out, shared.ChromeBadge{Key: "FILTER", Value: m.filter})
+	}
+	if m.hScroll > 0 {
+		out = append(out, shared.ChromeBadge{
+			Key:   "hscroll",
+			Value: strconv.Itoa(m.hScroll),
+			Tone:  shared.BadgeMuted,
+		})
+	}
+	return out
+}
+
+// EscapeWillAct reports whether Esc will do something on the Users
+// screen — clear filter / leave detail / cancel filtering / exit
+// Visual / leave extras focus. False when nothing is active so the
+// App Shell surfaces the unified `nothing to close` toast.
+func (m ListModel) EscapeWillAct() bool {
+	return m.filtering || m.opened || m.filter != "" || m.detailExtrasFocused || m.detailVisual
+}
+
+// usersSortLabelPlain returns the SORT badge value — column name
+// + ↑/↓ glyph. Used by the chrome status badge; the in-header
+// glyph renders alongside via usersSortLabel().
+func usersSortLabelPlain(key SortKey, dir SortDir) string {
+	name := ""
+	switch key {
+	case SortName:
+		name = "name"
+	case SortStatus:
+		name = "status"
+	case SortLastLogin:
+		name = "lastLogin"
+	case SortCreated:
+		name = "lastUpdated"
+	default:
+		return ""
+	}
+	switch dir {
+	case SortAsc:
+		return name + "↑"
+	case SortDesc:
+		return name + "↓"
+	}
+	return name
+}
 
 // scheduleRefreshTickCmd returns a tea.Tick that fires usersRefreshTickMsg
 // after the configured interval. Returns nil when auto-refresh is
@@ -899,12 +976,12 @@ func (m ListModel) renderPrettyWithColumnCursor(tk shared.Tokens) string {
 	}
 
 	var b strings.Builder
+	// v0.2.0: detailToast remains inline (above body) so yank/copy
+	// confirms read where the operator just acted; -- VISUAL -- moves
+	// to the chrome status row via StatusBadges() for screen-wide
+	// consistency with sort / filter / focus / hscroll badges.
 	if m.detailToast != "" {
 		b.WriteString(tk.Header.Render(m.detailToast))
-		b.WriteByte('\n')
-	}
-	if m.detailVisual {
-		b.WriteString(tk.Warning.Render("-- VISUAL --"))
 		b.WriteByte('\n')
 	}
 	for _, line := range headerLines {
@@ -1006,7 +1083,7 @@ func inColumnRange(start, end, leftCount, row int, wantLeft bool) bool {
 // (2 cells)><right>`. We split at sectionWidth (no ellipsis — pure
 // cell slice) and pad the left half out to sectionWidth so the
 // highlight fills the full column width. One or both halves may be
-// active; tk.RowHighlight provides the tint.
+// active; tk.RowCursor provides the tint.
 func splicePrettyHighlight(line string, sectionWidth int, leftHL, rightHL bool, tk shared.Tokens) string {
 	if !leftHL && !rightHL {
 		return line
@@ -1022,11 +1099,11 @@ func splicePrettyHighlight(line string, sectionWidth int, leftHL, rightHL bool, 
 	}
 	leftOut := leftRaw
 	if leftHL {
-		leftOut = tk.RowHighlight.Render(leftRaw)
+		leftOut = tk.RowCursor.Render(leftRaw)
 	}
 	rightOut := rightRaw
 	if rightHL && rightRaw != "" {
-		rightOut = tk.RowHighlight.Render(rightRaw)
+		rightOut = tk.RowCursor.Render(rightRaw)
 	}
 	if rightRaw == "" {
 		return leftOut
@@ -1121,12 +1198,12 @@ func (m ListModel) renderFlatLineCursor(tk shared.Tokens) string {
 		}
 	}
 	var b strings.Builder
+	// v0.2.0: detailToast remains inline (above body) so yank/copy
+	// confirms read where the operator just acted; -- VISUAL -- moves
+	// to the chrome status row via StatusBadges() for screen-wide
+	// consistency with sort / filter / focus / hscroll badges.
 	if m.detailToast != "" {
 		b.WriteString(tk.Header.Render(m.detailToast))
-		b.WriteByte('\n')
-	}
-	if m.detailVisual {
-		b.WriteString(tk.Warning.Render("-- VISUAL --"))
 		b.WriteByte('\n')
 	}
 	maxBodyWidth := 0
@@ -1141,7 +1218,7 @@ func (m ListModel) renderFlatLineCursor(tk shared.Tokens) string {
 		if w < maxBodyWidth {
 			plain = plain + strings.Repeat(" ", maxBodyWidth-w)
 		}
-		return tk.RowHighlight.Render(plain)
+		return tk.RowCursor.Render(plain)
 	}
 	for i, line := range lines {
 		switch {
@@ -1470,7 +1547,7 @@ func renderScrollBox(
 		}
 		row = padOrTruncateVisible(row, contentW)
 		if focused && idx == cursor && idx < len(items) {
-			row = tk.RowHighlight.Render(row)
+			row = tk.RowCursor.Render(row)
 		}
 		// Scrollbar marker: thumb (▌) when this row is inside the
 		// active scroll window, track (│) otherwise. Position

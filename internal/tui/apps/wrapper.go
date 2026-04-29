@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tedilabs/ota/internal/domain"
+	"github.com/tedilabs/ota/internal/tui/shared"
 )
 
 // Wrapper owns the app-type-select → list flow (issue #166), mirroring
@@ -155,6 +156,26 @@ func (w Wrapper) LastUpdated() time.Time {
 		return w.list.LastUpdated()
 	}
 	return time.Time{}
+}
+
+// StatusBadges proxies the typed list's chrome status row badges
+// (v0.2.0). The picker has no transient state.
+func (w Wrapper) StatusBadges() []shared.ChromeBadge {
+	if w.mode == wrapperModeList {
+		return w.list.StatusBadges()
+	}
+	return nil
+}
+
+// EscapeWillAct reports whether Esc has work to do — when the
+// wrapper is in list mode, hands off to the list. Picker mode
+// passes false; the App Shell surfaces the unified `nothing to
+// close` toast.
+func (w Wrapper) EscapeWillAct() bool {
+	if w.mode == wrapperModeList {
+		return w.list.EscapeWillAct() || true // wrapper itself returns to picker
+	}
+	return false
 }
 
 // AppType reports the currently-selected type (zero value while the

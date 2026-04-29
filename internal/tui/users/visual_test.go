@@ -73,10 +73,22 @@ func detailHarness(t *testing.T) users.ListModel {
 
 func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
+// hasVisualBadge reports whether the screen's chrome StatusBadges
+// list includes a [VISUAL N lines] entry. v0.2.0 (#182) moved the
+// inline `-- VISUAL --` banner into the chrome's transient status
+// row, so assertions against m.View() no longer see it.
+func hasVisualBadge(m users.ListModel) bool {
+	for _, b := range m.StatusBadges() {
+		if b.Key == "VISUAL" {
+			return true
+		}
+	}
+	return false
+}
+
 // Test_DetailVisual_VEntersAndShowsBanner asserts the `v` key flips the
-// Detail pane into Visual mode — both the user-visible banner and the
-// internal flag (the banner contains style codes that may strip in
-// tests).
+// Detail pane into Visual mode. The visible badge moved to the chrome
+// status row in v0.2.0 — assert via StatusBadges() instead of View().
 func Test_DetailVisual_VEntersAndShowsBanner(t *testing.T) {
 	t.Parallel()
 	m := detailHarness(t)
@@ -85,8 +97,8 @@ func Test_DetailVisual_VEntersAndShowsBanner(t *testing.T) {
 	m = updated.(users.ListModel)
 
 	assert.True(t, m.DetailVisualActive(), "`v` must enter Visual mode")
-	assert.Contains(t, m.View(), "-- VISUAL --",
-		"Visual mode banner must surface after `v`")
+	assert.True(t, hasVisualBadge(m),
+		"Visual mode must publish a [VISUAL N] chrome status badge")
 }
 
 // Test_DetailVisual_EscCancelsWithoutClosingDetail covers the user
@@ -97,15 +109,14 @@ func Test_DetailVisual_EscCancelsWithoutClosingDetail(t *testing.T) {
 	m := detailHarness(t)
 	updated, _ := m.Update(key('v'))
 	m = updated.(users.ListModel)
-	require.Contains(t, m.View(), "-- VISUAL --", "precondition: visual mode active")
+	require.True(t, hasVisualBadge(m), "precondition: visual mode active")
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(users.ListModel)
 
-	view := m.View()
-	assert.NotContains(t, view, "-- VISUAL --",
+	assert.False(t, hasVisualBadge(m),
 		"first Esc must cancel Visual mode")
-	assert.Contains(t, view, "User Detail",
+	assert.Contains(t, m.View(), "User Detail",
 		"Esc inside Visual must NOT close the detail surface")
 }
 

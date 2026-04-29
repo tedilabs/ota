@@ -143,6 +143,44 @@ func NewSearchModel(deps Deps) SearchModel {
 // the chrome leaves the slot empty.
 func (m SearchModel) LastUpdated() time.Time { return m.lastUpdated }
 
+// StatusBadges publishes the Logs screen's transient state to the
+// chrome's v0.2.0 status row: time range, tail/follow toggles. The
+// inline status lines this replaces used to consume 2 body rows
+// every screen height — Logs reclaims them while making the same
+// state visible alongside the other screens' badges.
+func (m SearchModel) StatusBadges() []shared.ChromeBadge {
+	out := []shared.ChromeBadge{
+		{Key: "RANGE", Value: timeRangeLabel(m.timeRange)},
+	}
+	if m.tail {
+		out = append(out, shared.ChromeBadge{
+			Key:   "TAIL",
+			Value: fmt.Sprintf("%ds", int(m.pollInterval/time.Second)),
+			Tone:  shared.BadgeSuccess,
+		})
+	} else {
+		out = append(out, shared.ChromeBadge{
+			Key:   "TAIL",
+			Value: "off",
+			Tone:  shared.BadgeMuted,
+		})
+	}
+	if m.follow {
+		out = append(out, shared.ChromeBadge{Key: "FOLLOW", Tone: shared.BadgeSuccess})
+	} else {
+		out = append(out, shared.ChromeBadge{Key: "FOLLOW", Value: "off", Tone: shared.BadgeMuted})
+	}
+	return out
+}
+
+// EscapeWillAct reports whether Esc will do something on the Logs
+// screen — clear filter / leave detail / cancel filtering. False
+// when nothing is active so the App Shell surfaces the unified
+// `nothing to close` toast instead of forwarding a silent Esc.
+func (m SearchModel) EscapeWillAct() bool {
+	return m.filtering || m.opened || m.filter != ""
+}
+
 // TimeRange reports the active history window — exposed for tests and
 // other models that need to mirror the operator's selection.
 func (m SearchModel) TimeRange() time.Duration { return m.timeRange }
@@ -523,22 +561,10 @@ func (m SearchModel) View() string {
 	now := m.now()
 
 	var b strings.Builder
-	// Logs status line — surfaces (time-range window | tail | follow)
-	// state at a glance, plus an inline hint for the keys that flip
-	// each one. The user reported they couldn't tell whether `s`/`f`
-	// did anything and didn't know about the time-range shortcuts;
-	// this header makes both visible without leaving the screen
-	// (issue #152).
-	b.WriteString(tk.Muted.Render("range "))
-	b.WriteString(tk.Accent.Render(timeRangeLabel(m.timeRange)))
-	b.WriteString(tk.Muted.Render("  ·  "))
-	b.WriteString(renderTailState(m.tail, m.pollInterval, tk))
-	b.WriteString(tk.Muted.Render("  ·  "))
-	b.WriteString(renderFollowState(m.follow, tk))
-	b.WriteByte('\n')
-	b.WriteString(tk.Muted.Render(
-		"  range: 0=30m 1=1h 3=3h c=12h e=24h  ·  s=toggle tail  ·  f=toggle follow  ·  r=refresh  ·  /=filter"))
-	b.WriteByte('\n')
+	// v0.2.0: tail / follow / range / filter all moved to the chrome
+	// status row via StatusBadges(); the body opens straight with the
+	// column header so we reclaim 2 rows of event data on every screen
+	// height. Hint line ("0=30m 1=1h …") moves into the help overlay.
 	// 2-cell cursor gutter on the header keeps it aligned with data rows.
 	b.WriteString("  ")
 	b.WriteString(tk.Header.Render(m.formatLogsColumns(
@@ -833,39 +859,11 @@ func timeRangeLabel(d time.Duration) string {
 	return "Last " + d.String()
 }
 
-// renderTailState returns the live tail-mode segment for the body
-// status line — colour-coded green when ON, muted when OFF — so the
-// `s` key's effect is obvious even from the corner of the eye.
-func renderTailState(tail bool, interval time.Duration, tk shared.Tokens) string {
-	if !tail {
-		return tk.Muted.Render("tail OFF")
-	}
-	return tk.Success.Render(fmt.Sprintf("tail ON %ds", int(interval/time.Second)))
-}
-
-// renderFollowState returns the live follow-mode segment, paired
-// with renderTailState in the body's status line. Green = follow,
-// warning = paused (so `f` toggling reads as a state change).
-func renderFollowState(follow bool, tk shared.Tokens) string {
-	if follow {
-		return tk.Success.Render("follow ON")
-	}
-	return tk.Warning.Render("follow PAUSED")
-}
-
-// tailIndicator is the legacy combined status form retained for the
-// existing tests; new callers use renderTailState + renderFollowState.
-func tailIndicator(tail bool, interval time.Duration, follow bool) string {
-	tailSeg := "[TAIL OFF]"
-	if tail {
-		tailSeg = fmt.Sprintf("[TAIL %ds]", int(interval/time.Second))
-	}
-	followSeg := "[FOLLOW]"
-	if !follow {
-		followSeg = "[PAUSED]"
-	}
-	return tailSeg + " " + followSeg
-}
+// renderTailState / renderFollowState / tailIndicator removed in
+// v0.2.0 (#182): tail / follow state surfaces via the chrome's
+// transient status row through StatusBadges() rather than inline
+// body lines. timeRangeLabel survives because StatusBadges still
+// formats the active range there.
 
 func formatTime(t time.Time) string {
 	if t.IsZero() {

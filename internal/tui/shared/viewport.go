@@ -16,7 +16,11 @@ func ListBodyRowBudget(height int) int {
 	if height <= 0 {
 		return 0
 	}
-	const reserved = 9
+	// v0.2.0: chrome reserved 7 rows + 1 column header + 1 safety
+	// margin + 1 status row above key hints = 10. Each list emits
+	// header + budget data rows; the chrome cap (height - 7) keeps
+	// the cursor visible on tall terminals.
+	const reserved = 10
 	rows := height - reserved
 	if rows < 3 {
 		rows = 3

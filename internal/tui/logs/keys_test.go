@@ -9,6 +9,7 @@ package logs_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +41,19 @@ func runKey(t *testing.T, m logs.SearchModel, r rune) logs.SearchModel {
 	return out
 }
 
+// hasLogsBadge reports whether the screen's chrome status badges
+// include `key=value` (or `key` for boolean badges). v0.2.0 (#182)
+// moved the inline tail/follow lines into the chrome status row,
+// so the test asserts via StatusBadges() rather than m.View().
+func hasLogsBadge(m logs.SearchModel, key, value string) bool {
+	for _, b := range m.StatusBadges() {
+		if b.Key == key && b.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
 func Test_LogsSearch_F_TogglesFollowVisibly(t *testing.T) {
 	t.Parallel()
 
@@ -50,14 +64,12 @@ func Test_LogsSearch_F_TogglesFollowVisibly(t *testing.T) {
 		Clock:         clock.NewFake(time.Now()),
 	})
 
-	before := m.View()
-	assert.Contains(t, before, "follow ON",
-		"default state must surface 'follow ON' in the body status line")
+	require.True(t, hasLogsBadge(m, "FOLLOW", ""),
+		"default state must publish a [FOLLOW] chrome status badge")
 
 	m = runKey(t, m, 'f')
-	after := m.View()
-	assert.Contains(t, after, "follow PAUSED",
-		"`f` must flip the indicator to 'follow PAUSED' regardless of tail state")
+	assert.True(t, hasLogsBadge(m, "FOLLOW", "off"),
+		"`f` must flip the badge to [FOLLOW: off]")
 }
 
 func Test_LogsSearch_S_TogglesTailVisibly(t *testing.T) {
@@ -70,12 +82,17 @@ func Test_LogsSearch_S_TogglesTailVisibly(t *testing.T) {
 		Clock:         clock.NewFake(time.Now()),
 	})
 
-	require.Contains(t, m.View(), "tail OFF",
-		"default state must show 'tail OFF'")
+	require.True(t, hasLogsBadge(m, "TAIL", "off"),
+		"default state must publish [TAIL: off]")
 
 	m = runKey(t, m, 's')
-	assert.Contains(t, m.View(), "tail ON",
-		"`s` must flip tail off → on ('tail ON Ns')")
+	tailOn := false
+	for _, b := range m.StatusBadges() {
+		if b.Key == "TAIL" && strings.HasSuffix(b.Value, "s") {
+			tailOn = true
+		}
+	}
+	assert.True(t, tailOn, "`s` must flip the tail badge to [TAIL: Ns]")
 }
 
 func Test_LogsSearch_R_RefetchesViaService(t *testing.T) {

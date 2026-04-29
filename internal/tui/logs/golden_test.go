@@ -100,13 +100,19 @@ func Test_LogsList_HasColumnHeaders(t *testing.T) {
 }
 
 // Test_LogsList_TailIndicatorOff locks in REQ-R05 AC-3: with tail off, the
-// status line says `tail OFF`. Issue #152 made the status line a labelled
-// "range … · tail … · follow …" form so the toggles read at a glance.
+// status badges include `[TAIL: off]`. v0.2.0 (#182) moved the inline
+// status line to the chrome's transient status row, so the assertion
+// reads via StatusBadges() instead of the screen body.
 func Test_LogsList_TailIndicatorOff(t *testing.T) {
 	t.Parallel()
 	m := logs.NewSearchModel(logs.Deps{InitialEvents: sampleLogsFixture(), Width: 120, Height: 30})
-	got := testfx.StripANSI(m.View())
-	assert.Contains(t, got, "tail OFF", "Logs list must show 'tail OFF' (REQ-R05 AC-3)")
+	found := false
+	for _, b := range m.StatusBadges() {
+		if b.Key == "TAIL" && b.Value == "off" {
+			found = true
+		}
+	}
+	assert.True(t, found, "Logs list must publish a [TAIL: off] chrome status badge")
 }
 
 // Test_LogsList_RendersFixtureActors guards against a regression where

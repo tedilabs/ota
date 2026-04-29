@@ -23,6 +23,31 @@ const (
 	RateLimitUnknown
 )
 
+// ChromeBadgeTone selects the token applied to a badge's value. Key
+// always renders Muted; the value picks tone per its meaning so
+// operators read state colour-coded at a glance.
+type ChromeBadgeTone int
+
+const (
+	BadgeAccent  ChromeBadgeTone = iota // default — neutral state cue
+	BadgeSuccess                        // tail/follow on, refresh ok
+	BadgeWarning                        // VISUAL, partial state
+	BadgeDanger                         // ACTION pending, ERROR
+	BadgeMuted                          // background trail (hscroll)
+)
+
+// ChromeBadge is one entry in the chrome's status row (v0.2.0).
+// Key surfaces the mode label (Muted), Value carries the data
+// (toned per Tone). When Value is empty the badge collapses to
+// `[Key]` — used for boolean toggles like FOLLOW. Distinct from
+// shared.StatusBadge (resource status icons in badges.go) so
+// operators don't conflate row-state with chrome-state cues.
+type ChromeBadge struct {
+	Key   string
+	Value string
+	Tone  ChromeBadgeTone
+}
+
 // String returns the badge text body.
 func (s RateLimitState) String() string {
 	switch s {
@@ -97,6 +122,22 @@ type ChromeInput struct {
 	// see when the data refreshed last (issue #177 v0.1.16). Empty
 	// disables the segment entirely.
 	DividerRight string
+
+	// StatusBadges feed the always-rendered status row stamped
+	// between the body and the lower divider (v0.2.0 redesign).
+	// Each badge surfaces a transient mode the operator triggered:
+	// `[SORT: name↑]`, `[FILTER: q]`, `[VISUAL N]`, `[FOCUS: extras]`,
+	// `[TAIL 7s]`, `[FOLLOW]`, `[RANGE: 1h]`, `[hscroll N]`,
+	// `[ACTION: <id>]`. The slot stays rendered (blank line) when no
+	// modes are active so the chrome height never twitches. Order is
+	// caller-controlled — chrome only handles overflow truncation
+	// at narrow widths.
+	StatusBadges []ChromeBadge
+
+	// StatusToast is an optional right-anchored one-shot message on
+	// the status row ("yanked 5 lines", "nothing to close"). Empty
+	// disables it.
+	StatusToast string
 
 	// Body is the active child Screen body. Caller is responsible for sizing
 	// the body to (Width-2) columns; chrome only adds the surrounding border.
@@ -191,6 +232,14 @@ func RenderChrome(in ChromeInput) string {
 	}
 	keyHints = padToVisible(keyHints, contentWidth, tk)
 
+	// ---- Status row (v0.2.0) -------------------------------------------
+	// Always rendered between body and lower divider so the chrome
+	// height never twitches. Empty when no badges or toast — the
+	// blank line absorbs operator focus naturally and reclaims the
+	// inline status surfaces (Logs `TAIL`/`FOLLOW` lines, detail
+	// `-- VISUAL --`, hscroll silence) under one consistent slot.
+	statusRow := renderStatusRow(in.StatusBadges, in.StatusToast, contentWidth, tk)
+
 	// ---- Compose --------------------------------------------------------
 	var b strings.Builder
 	b.WriteString(roundedTop(width))
@@ -203,12 +252,73 @@ func RenderChrome(in ChromeInput) string {
 		b.WriteString(contentRow(line))
 		b.WriteByte('\n')
 	}
+	b.WriteString(contentRow(statusRow))
+	b.WriteByte('\n')
 	b.WriteString(dividerRow(width))
 	b.WriteByte('\n')
 	b.WriteString(contentRow(keyHints))
 	b.WriteByte('\n')
 	b.WriteString(roundedBottom(width))
 	return b.String()
+}
+
+// renderStatusRow assembles the chrome's transient status line —
+// space-separated `[KEY: value]` badges left-anchored, optional
+// right-anchored toast. Truncates badges from the right when the
+// row exceeds contentWidth so high-priority entries (caller passes
+// in priority order) survive narrow widths.
+func renderStatusRow(badges []ChromeBadge, toast string, contentWidth int, tk Tokens) string {
+	if contentWidth <= 0 {
+		return ""
+	}
+	var rendered []string
+	for _, bg := range badges {
+		rendered = append(rendered, formatStatusBadge(bg, tk))
+	}
+	left := strings.Join(rendered, " ")
+	if toast == "" {
+		return padToVisible(" "+left, contentWidth, tk)
+	}
+	right := tk.Info.Render(toast)
+	rw := visibleWidth(right)
+	gap := contentWidth - 1 - visibleWidth(left) - rw - 1
+	if gap < 1 {
+		// Drop badges from the right until the toast fits.
+		for gap < 1 && len(rendered) > 0 {
+			rendered = rendered[:len(rendered)-1]
+			left = strings.Join(rendered, " ")
+			gap = contentWidth - 1 - visibleWidth(left) - rw - 1
+		}
+		if gap < 1 {
+			return padToVisible(" "+right, contentWidth, tk)
+		}
+	}
+	return " " + left + strings.Repeat(" ", gap) + right + " "
+}
+
+// formatStatusBadge returns the styled `[Key: value]` (or `[Key]`
+// for boolean badges) rendering for one entry. Key always Muted,
+// Value tinted per badge.Tone, brackets Muted.
+func formatStatusBadge(b ChromeBadge, tk Tokens) string {
+	bracket := tk.Muted
+	key := tk.Muted.Render(b.Key)
+	if b.Value == "" {
+		return bracket.Render("[") + key + bracket.Render("]")
+	}
+	var val string
+	switch b.Tone {
+	case BadgeSuccess:
+		val = tk.Success.Render(b.Value)
+	case BadgeWarning:
+		val = tk.Warning.Render(b.Value)
+	case BadgeDanger:
+		val = tk.Danger.Render(b.Value)
+	case BadgeMuted:
+		val = tk.Muted.Render(b.Value)
+	default:
+		val = tk.Accent.Render(b.Value)
+	}
+	return bracket.Render("[") + key + bracket.Render(": ") + val + bracket.Render("]")
 }
 
 // titleLeftK9s renders the grouped left-hand context segment:

@@ -228,6 +228,23 @@ func (m ListModel) Init() tea.Cmd {
 // LastUpdated implements app.LastUpdatedStater (issue #177 v0.1.16).
 func (m ListModel) LastUpdated() time.Time { return m.lastUpdated }
 
+// StatusBadges publishes Apps screen state (v0.2.0): FILTER echo
+// only — Apps doesn't carry a sort cycle or hscroll today.
+func (m ListModel) StatusBadges() []shared.ChromeBadge {
+	var out []shared.ChromeBadge
+	if m.filter != "" {
+		out = append(out, shared.ChromeBadge{Key: "FILTER", Value: m.filter})
+	}
+	return out
+}
+
+// EscapeWillAct reports whether Esc has work to do (clear filter,
+// close detail, etc.). The Wrapper layer additionally returns to
+// the type picker, but that path always has work.
+func (m ListModel) EscapeWillAct() bool {
+	return m.filtering || m.opened || m.filter != ""
+}
+
 // scheduleRefreshTickCmd returns the auto-refresh tea.Tick.
 func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {
 	if m.deps.RefreshInterval <= 0 || m.deps.Port == nil {

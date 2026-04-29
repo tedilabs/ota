@@ -207,6 +207,12 @@ type Model struct {
 	// when the modal closes either way.
 	pendingAction pendingUserAction
 
+	// statusToast is the chrome's right-anchored one-shot message on
+	// the status row (v0.2.0): "yanked 5 lines", "nothing to close",
+	// "refreshed". Clears on the next key press so the slot stays
+	// available for whichever action the operator just triggered.
+	statusToast string
+
 	// width / height track the current terminal size, updated via
 	// tea.WindowSizeMsg. The chrome renders 100% to width (TUI_DESIGN
 	// §15.0a v1.2.0): widths >= 80 pass through unchanged so wide
@@ -540,6 +546,8 @@ func (m Model) View() string {
 		CountTotal:   total,
 		HasCount:     hasCount,
 		DividerRight: m.activeChildDividerRight(),
+		StatusBadges: m.composeChromeBadges(),
+		StatusToast:  m.statusToast,
 		Body:         body,
 		BodyLines:    bodyLines,
 		KeyHints:     m.keyHints(tokens),
@@ -581,7 +589,11 @@ func clampWidth(w int) int {
 // silently dropped. The cap is gone; tall terminals now use their
 // full vertical budget.
 func clampBodyLines(h int) int {
-	const reserved = 6
+	// v0.2.0 chrome reserves 7 rows: top border, title, upper
+	// divider, body, status row (NEW), lower divider, key hints,
+	// bottom border. Body trades 1 row for permanent state
+	// visibility (sort/filter/follow/tail/visual badges).
+	const reserved = 7
 	if h <= 0 {
 		return 16
 	}
@@ -770,6 +782,72 @@ type Counter interface {
 	Count() (visible int, total int)
 }
 
+// ChromeBadgeStater is implemented by screens that contribute mode
+// badges to the chrome's status row (v0.2.0). The slot replaces the
+// inline status surfaces each screen used to maintain (Logs tail
+// /follow lines, detail `-- VISUAL --`, hscroll silence). Order in
+// the returned slice is preserved; chrome handles overflow truncation
+// from the right.
+type ChromeBadgeStater interface {
+	StatusBadges() []shared.ChromeBadge
+}
+
+// EscapeOpStater is implemented by screens that report whether `Esc`
+// would do something (close detail, clear filter, exit Visual). The
+// App Shell uses it to surface a `nothing to close` toast in the
+// status row when Esc is a no-op — replaces the silent Esc that
+// operators repeatedly reported.
+type EscapeOpStater interface {
+	EscapeWillAct() bool
+}
+
+// escWillAct reports whether the active screen would do something
+// in response to Esc (close detail, clear filter, exit Visual,
+// abort Type-Picker, etc.). When false, the App Shell surfaces a
+// `nothing to close` toast instead of forwarding the keystroke.
+func (m Model) escWillAct() bool {
+	if m.overlay != OverlayNone {
+		return true
+	}
+	child, ok := m.screens[m.active]
+	if !ok {
+		return false
+	}
+	if st, ok := child.(EscapeOpStater); ok {
+		return st.EscapeWillAct()
+	}
+	// Conservative default: forward Esc when the screen doesn't
+	// publish a hint. Otherwise silent-Esc lists never reach the
+	// child, which is worse than forwarding a no-op.
+	return true
+}
+
+// composeChromeBadges assembles the chrome status row contents
+// (v0.2.0). Order: App Shell-owned action / offline first, then
+// the active screen's screen-specific badges (sort, filter, follow,
+// tail, range, focus, hscroll). Truncation under width pressure
+// drops trailing entries first.
+func (m Model) composeChromeBadges() []shared.ChromeBadge {
+	var out []shared.ChromeBadge
+	if m.overlay == OverlayActionConfirm && m.pendingAction.Kind != UserActionNone {
+		out = append(out, shared.ChromeBadge{
+			Key:   "ACTION",
+			Value: userActionLabel(m.pendingAction.Kind),
+			Tone:  shared.BadgeDanger,
+		})
+	}
+	child, ok := m.screens[m.active]
+	if !ok {
+		return out
+	}
+	stater, ok := child.(ChromeBadgeStater)
+	if !ok {
+		return out
+	}
+	out = append(out, stater.StatusBadges()...)
+	return out
+}
+
 // activeChildIsFiltering reports whether the active list child is
 // currently in `/` filter input mode.
 func (m Model) activeChildIsFiltering() bool {
@@ -854,7 +932,7 @@ func (m Model) renderFilterBox(tk shared.Tokens, innerWidth int) string {
 			input = fs.Filter()
 		}
 	}
-	cursor := tk.RowHighlight.Render(" ")
+	cursor := tk.RowCursor.Render(" ")
 	return modalBox(prompt+input+cursor, innerWidth, tk)
 }
 
@@ -866,7 +944,7 @@ func (m Model) renderFilterBox(tk shared.Tokens, innerWidth int) string {
 func (m Model) renderPaletteBox(tk shared.Tokens, innerWidth int) string {
 	prompt := tk.Accent.Render(":")
 	input := m.paletteInput
-	cursor := tk.RowHighlight.Render(" ")
+	cursor := tk.RowCursor.Render(" ")
 
 	var b strings.Builder
 	b.WriteString(prompt + input + cursor)
@@ -880,7 +958,7 @@ func (m Model) renderPaletteBox(tk shared.Tokens, innerWidth int) string {
 		for i := 0; i < max; i++ {
 			line := sugs[i]
 			if i == m.paletteSuggestionIdx {
-				line = tk.RowHighlight.Render("› " + line)
+				line = tk.RowCursor.Render("› " + line)
 			} else {
 				line = tk.Muted.Render("  " + line)
 			}
@@ -1108,6 +1186,10 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 // --- Key handling --------------------------------------------------------
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// v0.2.0: any key dismisses the previous one-shot status toast
+	// so the slot is clear for whatever the operator just triggered.
+	m.statusToast = ""
+
 	// Palette has input focus while open.
 	if m.overlay == OverlayPalette {
 		return m.handlePaletteKey(msg)
@@ -1117,6 +1199,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.overlay == OverlayActionMenu {
 		return m.handleActionMenuKey(msg)
+	}
+
+	// v0.2.0: Esc on a list with no overlay / filter / Visual / detail
+	// open used to be silent — operators repeatedly reported pressing
+	// Esc and getting no feedback. Surface a one-shot toast in the
+	// status row so the no-op is acknowledged without side effects.
+	if msg.Type == tea.KeyEsc && !m.escWillAct() {
+		m.statusToast = "nothing to close"
+		return m, nil
 	}
 
 	switch msg.Type {

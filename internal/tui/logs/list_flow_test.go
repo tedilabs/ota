@@ -58,7 +58,8 @@ func Test_LogsSearchFlow_Render_ShowsEventType(t *testing.T) {
 		"DisplayMsg이 리스트의 MESSAGE 컬럼에 렌더 (REQ-R05 AC-1)")
 }
 
-// REQ-R05 AC-3 — `s` 키로 tail on/off 토글이 되어야 하고, on 상태에서 tail 인디케이터가 노출.
+// REQ-R05 AC-3 — `s` 키로 tail on/off 토글이 되어야 하고, on 상태에서 chrome 의 status row에 [TAIL: Ns] 뱃지가 노출되어야 한다.
+// v0.2.0 (#182) 리디자인에서 inline status line이 chrome의 transient status row로 이동했으므로 본 테스트는 SearchModel.StatusBadges()를 통해 검증한다.
 func Test_LogsSearchFlow_TailToggleKey_S_EnablesIndicator(t *testing.T) {
 	t.Parallel()
 
@@ -69,22 +70,17 @@ func Test_LogsSearchFlow_TailToggleKey_S_EnablesIndicator(t *testing.T) {
 	svc := service.NewLogsService(port)
 	model := logs.NewSearchModel(logs.Deps{Service: svc, Clock: clock.NewFake(time.Now())})
 
-	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(120, 30))
+	// `s` 키 입력 후 모델 상태를 직접 검증 (teatest는 screen body만 캡처해서
+	// chrome status row를 보지 못한다).
+	upd, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	model = upd.(logs.SearchModel)
 
-	// 초기 렌더 후 "s" 키를 눌러 tail 활성.
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool { return len(b) > 0 },
-		teatest.WithDuration(1*time.Second))
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-
-	out, err := io.ReadAll(tm.FinalOutput(t, teatest.WithFinalTimeout(3*time.Second)))
-	require.NoError(t, err)
-
-	// tail on → "tail ON" 세그먼트가 나타나야 한다 (issue #152 status
-	// line은 "tail OFF" / "tail ON Ns" 형태로 표시).
-	s := string(out)
-	require.True(t,
-		bytes.Contains([]byte(s), []byte("tail ON")) &&
-			!bytes.Contains([]byte(s), []byte("tail OFF")),
-		"'s' 키 입력 후 tail 상태가 'tail ON' 으로 변해야 한다 (TUI_DESIGN §3.3, REQ-R05 AC-3)")
+	tailOn := false
+	for _, b := range model.StatusBadges() {
+		if b.Key == "TAIL" && b.Value != "off" {
+			tailOn = true
+		}
+	}
+	require.True(t, tailOn,
+		"'s' 키 입력 후 [TAIL: Ns] 뱃지가 chrome status row에 노출되어야 한다 (TUI_DESIGN §3.3, REQ-R05 AC-3)")
 }

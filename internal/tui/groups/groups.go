@@ -189,6 +189,45 @@ func (m ListModel) Init() tea.Cmd {
 // LastUpdated implements app.LastUpdatedStater (issue #177 v0.1.16).
 func (m ListModel) LastUpdated() time.Time { return m.lastUpdated }
 
+// StatusBadges publishes Groups screen state (v0.2.0): SORT cycle,
+// FILTER echo, hscroll offset. The chrome's status row replaces
+// what each list used to surface in its own bespoke way.
+func (m ListModel) StatusBadges() []shared.ChromeBadge {
+	var out []shared.ChromeBadge
+	if m.sortBy != SortNone && m.sortDir != SortOff {
+		out = append(out, shared.ChromeBadge{Key: "SORT", Value: groupsSortBadge(m.sortBy, m.sortDir)})
+	}
+	if m.filter != "" {
+		out = append(out, shared.ChromeBadge{Key: "FILTER", Value: m.filter})
+	}
+	if m.hScroll > 0 {
+		out = append(out, shared.ChromeBadge{Key: "hscroll", Value: itoaG(m.hScroll), Tone: shared.BadgeMuted})
+	}
+	return out
+}
+
+// EscapeWillAct reports whether Esc has work to do.
+func (m ListModel) EscapeWillAct() bool {
+	return m.filtering || m.opened || m.filter != ""
+}
+
+func groupsSortBadge(key SortKey, dir SortDir) string {
+	name := ""
+	switch key {
+	case SortName:
+		name = "name"
+	default:
+		return ""
+	}
+	switch dir {
+	case SortAsc:
+		return name + "↑"
+	case SortDesc:
+		return name + "↓"
+	}
+	return name
+}
+
 // scheduleRefreshTickCmd returns a tea.Tick that fires
 // groupsRefreshTickMsg after RefreshInterval. nil disables.
 func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {

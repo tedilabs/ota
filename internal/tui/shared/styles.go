@@ -24,11 +24,14 @@ type Tokens struct {
 	BadgeRule    lipgloss.Style
 	BadgeLarge   lipgloss.Style
 	BadgeUnmask  lipgloss.Style
-	// RowHighlight is the cursor-row style: a subtle background tint plus
+	// RowCursor is the cursor-row style: a subtle background tint plus
 	// the foreground accent, so the active row reads at-a-glance even when
 	// the operator's focus is elsewhere on the screen. Mono falls back to
-	// reverse-video for the same purpose (issue #112).
-	RowHighlight lipgloss.Style
+	// reverse-video for the same purpose. Renamed from RowCursor in
+	// v0.2.0 (#182) so the role is unambiguous — every cursor-row tint
+	// across list rows, detail body, 2-col Pretty, and overlays uses
+	// this token.
+	RowCursor lipgloss.Style
 
 	// RowDanger / RowWarning / RowMuted tint the entire row's
 	// background when STATUS is abnormal (issue #155). The bgs are
@@ -66,7 +69,7 @@ func Dark() Tokens {
 		BadgeRule:   lipgloss.NewStyle().Background(lipgloss.Color("#a3be8c")).Foreground(lipgloss.Color("#000000")),
 		BadgeLarge:  lipgloss.NewStyle().Background(lipgloss.Color("#ebcb8b")).Foreground(lipgloss.Color("#000000")),
 		BadgeUnmask: lipgloss.NewStyle().Background(lipgloss.Color("#bf616a")).Foreground(lipgloss.Color("#ffffff")).Bold(true),
-		RowHighlight: lipgloss.NewStyle().
+		RowCursor: lipgloss.NewStyle().
 			Background(lipgloss.Color("#2e3440")).
 			Foreground(lipgloss.Color("#88c0d0")).
 			Bold(true),
@@ -113,7 +116,7 @@ func Monochrome() Tokens {
 		BadgeRule:    plain.Reverse(true),
 		BadgeLarge:   plain.Reverse(true),
 		BadgeUnmask:  plain.Reverse(true).Bold(true),
-		RowHighlight: plain.Reverse(true).Bold(true),
+		RowCursor: plain.Reverse(true).Bold(true),
 		// In monochrome mode the danger/warning/muted bg styles fall
 		// back to bold (danger), italic-ish underline (warning), and
 		// dim (muted) so abnormal rows still read distinctly without
