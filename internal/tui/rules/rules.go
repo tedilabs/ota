@@ -106,6 +106,13 @@ type ListModel struct {
 	spinnerFrame int
 	fetching     bool                 // #U10 v0.2.4
 	failedAt     map[string]time.Time // #U11 v0.2.4
+
+	// detailTargetsFocused / detailTargetCur drive the TARGETS
+	// drill-down cursor on the Rule Detail surface (#G4 / U7 v0.2.4).
+	// `]` enters focused mode; j/k cycle among target groups; Enter
+	// drills into the focused target's Group Detail; Esc / `[` exits.
+	detailTargetsFocused bool
+	detailTargetCur      int
 }
 
 // Fetching implements app.FetchingStater (#U10 v0.2.4).
@@ -331,6 +338,14 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.opened {
 		switch msg.Type {
 		case tea.KeyEsc:
+			// #G4 v0.2.4 — Esc backs out of TARGETS focus first,
+			// then closes detail (mirrors User/Group Detail extras
+			// semantics).
+			if m.detailTargetsFocused {
+				m.detailTargetsFocused = false
+				m.detailTargetCur = 0
+				return m, nil
+			}
 			m.opened = false
 			m.detail = domain.GroupRule{}
 			m.detailTab = RuleDetailTabProfile
@@ -342,8 +357,57 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyShiftTab:
 			m.detailTab = (m.detailTab + ruleDetailTabCount - 1) % ruleDetailTabCount
 			return m, nil
+		case tea.KeyEnter:
+			// #G4 / U7 v0.2.4 — drill into the focused target's
+			// Group Detail. No-op when targets aren't focused so the
+			// keystroke doesn't accidentally re-open this rule.
+			if m.detailTargetsFocused {
+				ids := m.detail.TargetGroupIDs
+				if cur := m.detailTargetCur; cur >= 0 && cur < len(ids) {
+					if id := ids[cur]; id != "" {
+						return m, openGroupDetailCmd(id)
+					}
+				}
+			}
+			return m, nil
 		case tea.KeyRunes:
-			if string(msg.Runes) == "r" {
+			runes := string(msg.Runes)
+			switch runes {
+			case "]":
+				// Enter or advance the TARGETS cursor.
+				ids := m.detail.TargetGroupIDs
+				if !m.detailTargetsFocused {
+					if len(ids) == 0 {
+						return m, nil
+					}
+					m.detailTargetsFocused = true
+					m.detailTargetCur = 0
+				} else if len(ids) > 0 {
+					m.detailTargetCur = (m.detailTargetCur + 1) % len(ids)
+				}
+				return m, nil
+			case "[":
+				// Exit TARGETS focus back to the body.
+				if m.detailTargetsFocused {
+					m.detailTargetsFocused = false
+					m.detailTargetCur = 0
+				}
+				return m, nil
+			case "j":
+				if m.detailTargetsFocused {
+					if n := len(m.detail.TargetGroupIDs); n > 0 {
+						m.detailTargetCur = (m.detailTargetCur + 1) % n
+					}
+					return m, nil
+				}
+			case "k":
+				if m.detailTargetsFocused {
+					if n := len(m.detail.TargetGroupIDs); n > 0 {
+						m.detailTargetCur = (m.detailTargetCur - 1 + n) % n
+					}
+					return m, nil
+				}
+			case "r":
 				if m.detailTab == RuleDetailTabRaw {
 					m.detailTab = m.detailRawReturn
 				} else {
@@ -484,7 +548,14 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // summarizes the count (REQ-R03 AC-3).
 func (m ListModel) View() string {
 	if m.opened {
-		return renderRuleDetailTabbed(m.detail, m.detailTab)
+		// #G4 / U7 v0.2.4 — pass the TARGETS focus state so the
+		// renderer marks the focused target with `▸` and surfaces a
+		// footer hint.
+		focusIdx := -1
+		if m.detailTargetsFocused {
+			focusIdx = m.detailTargetCur
+		}
+		return renderRuleDetailTabbedWithFocus(m.detail, m.detailTab, focusIdx, m.groupNames)
 	}
 	if m.lastErr != nil {
 		return "Group Rules  (error)\n" + shared.ErrorPanel("group rules", m.lastErr)
@@ -922,6 +993,15 @@ func (m DetailModel) View() string { return renderRuleDetailTabbed(m.rule, RuleD
 // serialises domain.GroupRule as JSON; Conditions / Targets are
 // placeholders until v0.2.
 func renderRuleDetailTabbed(r domain.GroupRule, active RuleDetailTab) string {
+	return renderRuleDetailTabbedWithFocus(r, active, -1, nil)
+}
+
+// renderRuleDetailTabbedWithFocus is the focus-aware variant: when
+// focusIdx ≥ 0 and the active tab is Pretty, the corresponding
+// TARGETS row is marked with `▸` and a footer hint surfaces the
+// drill-down affordance (#G4 / U7 v0.2.4). groupNames resolves IDs
+// to human names when populated.
+func renderRuleDetailTabbedWithFocus(r domain.GroupRule, active RuleDetailTab, focusIdx int, groupNames map[string]string) string {
 	var b strings.Builder
 	b.WriteString("Group Rule Detail\n")
 	b.WriteString(renderRuleTabBar(active))
@@ -934,7 +1014,15 @@ func renderRuleDetailTabbed(r domain.GroupRule, active RuleDetailTab) string {
 	case RuleDetailTabYAML:
 		b.WriteString(renderRuleYAMLTab(r))
 	default:
-		b.WriteString(renderRuleDetail(r))
+		b.WriteString(renderRuleDetailWithFocus(r, focusIdx, groupNames))
+	}
+	if active == RuleDetailTabPretty && len(r.TargetGroupIDs) > 0 {
+		b.WriteByte('\n')
+		if focusIdx >= 0 {
+			b.WriteString("Enter to drill into focused target group · j/k cycle · [ exits · Esc closes detail")
+		} else {
+			b.WriteString("] focuses TARGETS for drill-down")
+		}
 	}
 	return b.String()
 }
@@ -1041,6 +1129,51 @@ func renderRuleDetail(r domain.GroupRule) string {
 	return b.String()
 }
 
+// renderRuleDetailWithFocus renders the same body as renderRuleDetail
+// but marks the focused target group row with `▸` and resolves IDs
+// to human names via groupNames when available (#G4 / U7 v0.2.4).
+func renderRuleDetailWithFocus(r domain.GroupRule, focusIdx int, groupNames map[string]string) string {
+	if focusIdx < 0 && groupNames == nil {
+		return renderRuleDetail(r)
+	}
+	var b strings.Builder
+	b.WriteString("  id:     ")
+	b.WriteString(r.ID)
+	b.WriteString("\n")
+	b.WriteString("  name:   ")
+	b.WriteString(r.Name)
+	b.WriteString("\n")
+	b.WriteString("  status: ")
+	b.WriteString(ruleStatusBadge(r.Status))
+	b.WriteString("\n")
+	if r.Status == domain.GroupRuleStatusInvalid {
+		b.WriteString("  ⚠ INVALID — this rule is broken and memberships are not being applied.\n")
+	}
+	b.WriteString("\nExpression:\n")
+	b.WriteString("  ")
+	b.WriteString(r.Expression)
+	b.WriteString("\n")
+	if len(r.TargetGroupIDs) > 0 {
+		b.WriteString("\nTarget groups:\n")
+		for i, id := range r.TargetGroupIDs {
+			marker := "  - "
+			if i == focusIdx {
+				marker = "▸ - "
+			}
+			b.WriteString(marker)
+			label := id
+			if name, ok := groupNames[id]; ok && name != "" {
+				label = name + "  (" + id + ")"
+			}
+			b.WriteString(label)
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n⚠ Deactivating this rule would remove all memberships it created.\n")
+	b.WriteString("   This action is disabled in read-only mode.\n")
+	return b.String()
+}
+
 // groupNamesLoadedMsg delivers the id→name resolution for the
 // TARGETS column (issue #163).
 type groupNamesLoadedMsg struct{ names map[string]string }
@@ -1105,6 +1238,13 @@ func fetchRulesCmd(port domain.GroupRulesPort) tea.Cmd {
 		}
 		return rulesLoadedMsg{rules: out}
 	}
+}
+
+// openGroupDetailCmd asks the App Shell to switch to Groups and open
+// the matching group's Detail by ID — used by Rule Detail's TARGETS
+// drill-down (#G4 / U7 v0.2.4).
+func openGroupDetailCmd(id string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenGroupDetailMsg{ID: id} }
 }
 
 var (
