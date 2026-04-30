@@ -3,6 +3,7 @@ package app
 import (
 	"log/slog"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -1503,13 +1504,14 @@ func tenantFromOrgURL(orgURL string) string {
 	return parsed.Host
 }
 
-// activeTokens picks the token set based on the NO_COLOR env var. Called per
-// View() so a runtime toggle (e.g., test pinning) takes effect immediately.
+// activeTokens picks the token set. NO_COLOR forces Monochrome.
+// Otherwise an OTA_THEME env var override (when set to "dark" /
+// "light" / "high-contrast" / "monochrome") wins; absent that,
+// COLORFGBG-based detection picks Light on light terminals and
+// falls back to Dark. Called per View() so a runtime toggle takes
+// effect immediately. Issue #U12 v0.2.5.
 func activeTokens() shared.Tokens {
-	if shared.MonochromeEnabled() {
-		return shared.Monochrome()
-	}
-	return shared.Dark()
+	return shared.PickTheme(shared.ResolveTheme(os.Getenv("OTA_THEME")))
 }
 
 // Active reports the active resource screen (useful for tests / wiring).

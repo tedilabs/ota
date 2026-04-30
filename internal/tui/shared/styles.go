@@ -57,6 +57,84 @@ func MonochromeEnabled() bool {
 	return os.Getenv("NO_COLOR") != ""
 }
 
+// ThemeName classifies the active token set. Issue #U12 v0.2.5 — adds
+// the Light variant for operators on white-background terminals.
+type ThemeName string
+
+const (
+	ThemeDark         ThemeName = "dark"
+	ThemeLight        ThemeName = "light"
+	ThemeHighContrast ThemeName = "high-contrast"
+	ThemeMonochrome   ThemeName = "monochrome"
+)
+
+// ResolveTheme picks the active theme based on (in priority order):
+//  1. NO_COLOR env var → ThemeMonochrome.
+//  2. Explicit override (e.g., from cfg / --theme flag) when non-empty
+//     and recognised.
+//  3. COLORFGBG env var heuristic (terminals like xterm export
+//     "fg;bg" with bg ∈ {0…15} — bg ≥ 8 is a light terminal).
+//  4. Fallback to ThemeDark.
+//
+// override accepts any ThemeName-stringly-equal value ("dark" /
+// "light" / "high-contrast" / "monochrome"); unknown values fall
+// through to the env-based detection.
+func ResolveTheme(override string) ThemeName {
+	if MonochromeEnabled() {
+		return ThemeMonochrome
+	}
+	switch ThemeName(override) {
+	case ThemeDark, ThemeLight, ThemeHighContrast, ThemeMonochrome:
+		return ThemeName(override)
+	}
+	if isLightTerminal() {
+		return ThemeLight
+	}
+	return ThemeDark
+}
+
+// isLightTerminal heuristically detects a light-background terminal
+// via the COLORFGBG env var. xterm + many descendants export
+// "<fg>;<bg>" where bg is an ANSI 16-color index — bg ≥ 8 indicates
+// a bright/light background. Returns false on parse failure so the
+// default stays the existing Dark theme.
+func isLightTerminal() bool {
+	v := os.Getenv("COLORFGBG")
+	if v == "" {
+		return false
+	}
+	// Parse last component as the bg index.
+	for i := len(v) - 1; i >= 0; i-- {
+		if v[i] == ';' {
+			tail := v[i+1:]
+			n := 0
+			for _, c := range tail {
+				if c < '0' || c > '9' {
+					return false
+				}
+				n = n*10 + int(c-'0')
+			}
+			return n >= 8 && n <= 15
+		}
+	}
+	return false
+}
+
+// PickTheme returns the Tokens set matching the named theme. Used by
+// the App Shell's activeTokens helper and by tests that want to pin
+// a specific theme regardless of env.
+func PickTheme(name ThemeName) Tokens {
+	switch name {
+	case ThemeMonochrome:
+		return Monochrome()
+	case ThemeHighContrast:
+		return HighContrast()
+	case ThemeLight:
+		return Light()
+	}
+	return Dark()
+}
+
 // Dark returns the default dark theme (TUI_DESIGN §6.1).
 func Dark() Tokens {
 	return Tokens{
@@ -97,6 +175,61 @@ func Dark() Tokens {
 		RowChanged: lipgloss.NewStyle().
 			Background(lipgloss.Color("#1f3d4c")).
 			Foreground(lipgloss.Color("#d4ecf0")),
+	}
+}
+
+// Light returns the light-terminal theme (#U12 v0.2.5). Inverts the
+// Dark palette's lightness while keeping each role's hue family so
+// the colour-per-role mapping stays stable: blue accents read as
+// "active / focus", green as "ok", amber as "warning", red as
+// "danger". Tested against the Solarized-Light + Tomorrow-Light +
+// macOS Default-Light terminal palettes.
+func Light() Tokens {
+	return Tokens{
+		BG:      lipgloss.NewStyle().Background(lipgloss.Color("#fdf6e3")),
+		FG:      lipgloss.NewStyle().Foreground(lipgloss.Color("#1c2733")),
+		Muted:   lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7a89")),
+		Header:  lipgloss.NewStyle().Foreground(lipgloss.Color("#1f6f8b")).Bold(true),
+		Accent:  lipgloss.NewStyle().Foreground(lipgloss.Color("#1f6f8b")),
+		Primary: lipgloss.NewStyle().Foreground(lipgloss.Color("#214b73")),
+		Success: lipgloss.NewStyle().Foreground(lipgloss.Color("#3f7d3f")),
+		Warning: lipgloss.NewStyle().Foreground(lipgloss.Color("#a17317")),
+		Danger:  lipgloss.NewStyle().Foreground(lipgloss.Color("#a8323a")).Bold(true),
+		Info:    lipgloss.NewStyle().Foreground(lipgloss.Color("#1f6f8b")),
+		Magenta: lipgloss.NewStyle().Foreground(lipgloss.Color("#7a3a76")),
+		BadgeSys: lipgloss.NewStyle().
+			Background(lipgloss.Color("#d3d8dc")).
+			Foreground(lipgloss.Color("#1c2733")),
+		BadgeRule: lipgloss.NewStyle().
+			Background(lipgloss.Color("#3f7d3f")).
+			Foreground(lipgloss.Color("#ffffff")),
+		BadgeLarge: lipgloss.NewStyle().
+			Background(lipgloss.Color("#a17317")).
+			Foreground(lipgloss.Color("#ffffff")),
+		BadgeUnmask: lipgloss.NewStyle().
+			Background(lipgloss.Color("#a8323a")).
+			Foreground(lipgloss.Color("#ffffff")).
+			Bold(true),
+		RowCursor: lipgloss.NewStyle().
+			Background(lipgloss.Color("#cfe1f0")).
+			Foreground(lipgloss.Color("#214b73")).
+			Bold(true),
+		// Light-bg row tints — pastel reds / ambers / grays that
+		// pop without overwhelming the body text. Same hue families
+		// as Dark so abnormal-row recognition transfers between
+		// themes without retraining the operator.
+		RowDanger: lipgloss.NewStyle().
+			Background(lipgloss.Color("#f9d3d6")).
+			Foreground(lipgloss.Color("#5a1d22")),
+		RowWarning: lipgloss.NewStyle().
+			Background(lipgloss.Color("#f5e7c1")).
+			Foreground(lipgloss.Color("#5b4111")),
+		RowMuted: lipgloss.NewStyle().
+			Background(lipgloss.Color("#e6e9ec")).
+			Foreground(lipgloss.Color("#6c7a89")),
+		RowChanged: lipgloss.NewStyle().
+			Background(lipgloss.Color("#cfe6e9")).
+			Foreground(lipgloss.Color("#1f4f5b")),
 	}
 }
 

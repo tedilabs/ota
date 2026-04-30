@@ -28,3 +28,55 @@ func Test_Styles_NoNOCOLOR_ColoredByDefault(t *testing.T) {
 	assert.False(t, shared.MonochromeEnabled(),
 		"NO_COLOR 미설정 시 monochrome=false")
 }
+
+// #U12 v0.2.5 — ResolveTheme priority: NO_COLOR wins everything,
+// override second, COLORFGBG heuristic third, Dark by default.
+func Test_ResolveTheme_NOCOLOR_TrumpsOverride(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("COLORFGBG", "0;15") // would otherwise pick light
+	assert.Equal(t, shared.ThemeMonochrome, shared.ResolveTheme("light"),
+		"NO_COLOR must win over override + COLORFGBG")
+}
+
+func Test_ResolveTheme_OverrideAcceptsKnownNames(t *testing.T) {
+	os.Unsetenv("NO_COLOR")
+	for _, name := range []shared.ThemeName{
+		shared.ThemeDark, shared.ThemeLight,
+		shared.ThemeHighContrast, shared.ThemeMonochrome,
+	} {
+		assert.Equal(t, name, shared.ResolveTheme(string(name)),
+			"override %q must be honoured", name)
+	}
+}
+
+func Test_ResolveTheme_UnknownOverrideFallsThrough(t *testing.T) {
+	os.Unsetenv("NO_COLOR")
+	os.Unsetenv("COLORFGBG")
+	assert.Equal(t, shared.ThemeDark, shared.ResolveTheme("nope"),
+		"unknown override must fall through to env detection (Dark default)")
+}
+
+func Test_ResolveTheme_COLORFGBG_LightBgPicksLight(t *testing.T) {
+	os.Unsetenv("NO_COLOR")
+	t.Setenv("COLORFGBG", "0;15") // ANSI white bg
+	assert.Equal(t, shared.ThemeLight, shared.ResolveTheme(""),
+		"COLORFGBG with bg ≥ 8 must pick the Light theme")
+}
+
+func Test_ResolveTheme_COLORFGBG_DarkBgPicksDark(t *testing.T) {
+	os.Unsetenv("NO_COLOR")
+	t.Setenv("COLORFGBG", "15;0")
+	assert.Equal(t, shared.ThemeDark, shared.ResolveTheme(""),
+		"COLORFGBG with bg < 8 must keep Dark default")
+}
+
+func Test_PickTheme_AllVariantsPopulateTokens(t *testing.T) {
+	for _, name := range []shared.ThemeName{
+		shared.ThemeDark, shared.ThemeLight,
+		shared.ThemeHighContrast, shared.ThemeMonochrome,
+	} {
+		tk := shared.PickTheme(name)
+		assert.NotNil(t, tk,
+			"PickTheme(%q) must return a populated Tokens", name)
+	}
+}
