@@ -434,6 +434,33 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// last-visited non-Raw tab.
 	if m.opened {
 		switch msg.Type {
+		case tea.KeyEnter:
+			// #G1 + #G3 / U7 v0.2.4 — drill-down on the Members /
+			// Apps boxes. Linear cursor flows across both: cursor <
+			// len(Members) selects a user; the rest selects an app.
+			// Without this case, Enter used to fall through to the
+			// outer list-mode handler which silently re-opened the
+			// list-cursor row's detail and reset the extras caches —
+			// confusing the operator.
+			if m.detailExtrasFocused {
+				if cur := m.detailExtrasCur; cur >= 0 && cur < len(m.detailMembers) {
+					id := m.detailMembers[cur].ID
+					if id == "" {
+						id = m.detailMembers[cur].Profile.Login
+					}
+					if id != "" {
+						return m, openUserDetailCmd(id)
+					}
+				} else if appIdx := m.detailExtrasCur - len(m.detailMembers); appIdx >= 0 && appIdx < len(m.detailApps) {
+					id := m.detailApps[appIdx].ID
+					if id != "" {
+						return m, openAppDetailCmd(id)
+					}
+				}
+			}
+			// Detail-open with no extras focus: no-op so we don't
+			// re-fire the same fetch.
+			return m, nil
 		case tea.KeyEsc:
 			// v0.2.2 #189: Esc backs out of the boxes first, then
 			// closes detail (mirrors User Detail's extras semantics).
@@ -1498,6 +1525,19 @@ func (m ListModel) maybeFetchMembers() (tea.Model, tea.Cmd) {
 	m.detailMembers = nil
 	m.detailMembersErr = nil
 	return m, fetchGroupMembersCmd(m.deps.Port, m.detail.ID)
+}
+
+// openUserDetailCmd / openAppDetailCmd return a tea.Cmd that asks
+// the App Shell to switch screens and open the matching detail by
+// ID — used by Group Detail Members + Apps box drill-down (#G1 /
+// #G3 / U7 v0.2.4). Lives here to avoid a groups → users / apps
+// import cycle (the msg types live in the shared package).
+func openUserDetailCmd(id string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenUserDetailMsg{ID: id} }
+}
+
+func openAppDetailCmd(id string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenAppDetailMsg{ID: id} }
 }
 
 var (
