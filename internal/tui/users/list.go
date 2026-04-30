@@ -194,6 +194,17 @@ type usersRefreshTickMsg struct{ gen int }
 // userOpenedMsg delivers the result of a detail fetch.
 type userOpenedMsg struct{ user domain.User }
 
+// OpenDetailByIDMsg routes a cross-screen drill-down request from
+// another screen (Group Detail Members box, Log Detail actor) into
+// the Users list (#G2 / U7 v0.2.4). Mirrors apps.OpenDetailByIDMsg.
+// ID may be a userID or a login — UsersPort.Get accepts both.
+type OpenDetailByIDMsg struct{ ID string }
+
+// userOpenByIDErrMsg surfaces a drill-down fetch failure so the
+// list's lastErr panel can render the cause instead of a silent
+// no-op (#G2 v0.2.4).
+type userOpenByIDErrMsg struct{ err error }
+
 // userDetailGroupsLoadedMsg / userDetailGroupsErrMsg deliver the
 // result of the per-user assigned-groups fetch the detail view
 // renders below the 2-col Pretty layout (issue #168). The userID is
@@ -406,6 +417,19 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.fetching = true
 		return m, fetchUsersCmd(m.deps.Port)
+	case OpenDetailByIDMsg:
+		// #G2 / U7 v0.2.4 — cross-screen drill-down from Group
+		// Detail Members box, Log Detail actor row, etc. Fire a
+		// Get-by-ID and surface detail mode on the loaded user.
+		if msg.ID == "" || m.deps.Port == nil {
+			return m, nil
+		}
+		return m, fetchUserByIDCmd(m.deps.Port, msg.ID)
+	case userOpenByIDErrMsg:
+		// Drill-down fetch errored — surface on the error panel
+		// instead of silently swallowing.
+		m.lastErr = msg.err
+		return m, nil
 	case shared.ActionFailedMsg:
 		// #U11 v0.2.4 — flash the row whose action errored. Reuses
 		// the highlight tick chain; the View checks failedAt against
@@ -2242,6 +2266,20 @@ func openUserCmd(port domain.UsersPort, id string) tea.Cmd {
 		u, err := port.Get(context.Background(), id)
 		if err != nil {
 			return userOpenedMsg{user: domain.User{ID: id}}
+		}
+		return userOpenedMsg{user: u}
+	}
+}
+
+// fetchUserByIDCmd is the drill-down counterpart of openUserCmd —
+// resolves a user via the port and surfaces errors on failure rather
+// than silently constructing a placeholder. Used by the cross-screen
+// OpenDetailByIDMsg path (#G2 / U7 v0.2.4).
+func fetchUserByIDCmd(port domain.UsersPort, id string) tea.Cmd {
+	return func() tea.Msg {
+		u, err := port.Get(context.Background(), id)
+		if err != nil {
+			return userOpenByIDErrMsg{err: err}
 		}
 		return userOpenedMsg{user: u}
 	}

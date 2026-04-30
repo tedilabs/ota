@@ -529,6 +529,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, fwd := child.Update(apps.OpenDetailByIDMsg{ID: msg.ID})
 		m.screens[ScreenApps] = updated
 		return m, tea.Batch(cmd, fwd)
+	case OpenUserDetailMsg:
+		// #G2 / U7 v0.2.4 — Users counterpart. The Users list owns
+		// the OpenDetailByIDMsg handler directly (no Wrapper).
+		m.active = ScreenUsers
+		m.overlay = OverlayNone
+		var cmd tea.Cmd
+		m, cmd = m.ensureScreen(ScreenUsers)
+		child := m.screens[ScreenUsers]
+		updated, fwd := child.Update(users.OpenDetailByIDMsg{ID: msg.ID})
+		m.screens[ScreenUsers] = updated
+		return m, tea.Batch(cmd, fwd)
 	case OpenPolicyTypeMsg:
 		// Issue #165 — replace the Policies wrapper with one scoped
 		// to the requested type so the picker doesn't render

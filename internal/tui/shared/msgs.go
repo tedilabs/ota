@@ -23,6 +23,12 @@ type OpenGroupDetailMsg struct{ ID string }
 // drill into an app's detail surface from another screen (issue #171).
 type OpenAppDetailMsg struct{ ID string }
 
+// OpenUserDetailMsg is the Users counterpart — drill into a user's
+// detail surface from another screen (#G2 / U7 v0.2.4). ID may be a
+// userID or a login (Okta APIs accept either). Used by Group Detail
+// Members box drill-down and Log Detail actor drill-down.
+type OpenUserDetailMsg struct{ ID string }
+
 // ActionItem is a single row in the resource action menu (issue
 // #175 v0.1.15). Each screen exposes Actions() []ActionItem; the
 // App Shell builds the picker around them and dispatches RunAction

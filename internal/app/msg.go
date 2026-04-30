@@ -107,4 +107,5 @@ type OpenResourceMsg struct {
 type (
 	OpenGroupDetailMsg = shared.OpenGroupDetailMsg
 	OpenAppDetailMsg   = shared.OpenAppDetailMsg
+	OpenUserDetailMsg  = shared.OpenUserDetailMsg
 )
