@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/tedilabs/ota/internal/app"
+	"github.com/tedilabs/ota/internal/tui/shared"
 )
 
 // REQ-E03 AC-1 — 오프라인 감지 시 statusbar에 "offline" 표시를 유도하는
@@ -39,6 +40,6 @@ func Test_AppModel_OnlineRestored_EmitsRefreshCmd(t *testing.T) {
 		t.Fatalf("NetworkRestoredMsg 수신 시 리프레시 Cmd 발행되어야 한다 (REQ-E03 AC-3)")
 	}
 	got := cmd()
-	_, ok := got.(app.RefreshActiveScreenMsg)
+	_, ok := got.(shared.RefreshScreenMsg)
 	assert.True(t, ok, "복구 후 active screen 리프레시 Msg 발행 (REQ-E03 AC-3)")
 }

@@ -9,9 +9,10 @@ import "strings"
 type ModalTone int
 
 const (
-	ModalToneNormal ModalTone = iota // default — Header bold
-	ModalToneAccent                  // Accent (palette / picker)
-	ModalToneDanger                  // Danger (quit / destructive ops)
+	ModalToneNormal  ModalTone = iota // default — Header bold
+	ModalToneAccent                   // Accent (palette / picker)
+	ModalToneWarning                  // Warning (reversible prompts: Quit)
+	ModalToneDanger                   // Danger (irreversible ops: Reset MFA, Delete)
 )
 
 // ModalIn collects the pieces every overlay supplies so MountModal
@@ -57,6 +58,10 @@ func MountModal(in ModalIn) string {
 		case ModalToneAccent:
 			if in.Tokens.Accent.GetForeground() != nil {
 				title = in.Tokens.Accent.Render(in.Title)
+			}
+		case ModalToneWarning:
+			if in.Tokens.Warning.GetForeground() != nil {
+				title = in.Tokens.Warning.Render(in.Title)
 			}
 		case ModalToneDanger:
 			if in.Tokens.Danger.GetForeground() != nil {

@@ -8,7 +8,6 @@ package app_test
 // applying a filter.
 
 import (
-	"context"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,49 +21,8 @@ import (
 	"github.com/tedilabs/ota/internal/testfx"
 )
 
-type countingUsersPort struct{ users []domain.User }
-
-func (p *countingUsersPort) List(_ context.Context, _ domain.UsersQuery) (domain.Iterator[domain.User], error) {
-	return &countingUsersIter{remaining: p.users}, nil
-}
-func (p *countingUsersPort) Get(_ context.Context, id string) (domain.User, error) {
-	for _, u := range p.users {
-		if u.ID == id || u.Profile.Login == id {
-			return u, nil
-		}
-	}
-	return domain.User{}, domain.ErrNotFound
-}
-func (p *countingUsersPort) ListGroups(_ context.Context, _ string) ([]domain.Group, error) {
-	return nil, nil
-}
-func (p *countingUsersPort) ListFactors(_ context.Context, _ string) ([]domain.Factor, error) {
-	return nil, nil
-}
-func (p *countingUsersPort) ListAppLinks(_ context.Context, _ string) ([]domain.AppLink, error) {
-	return nil, nil
-}
-func (p *countingUsersPort) ResetPassword(_ context.Context, _ string, _ bool) (string, error) {
-	return "", nil
-}
-func (p *countingUsersPort) Unlock(_ context.Context, _ string) error       { return nil }
-func (p *countingUsersPort) ResetFactors(_ context.Context, _ string) error { return nil }
-func (p *countingUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
-func (p *countingUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
-func (p *countingUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
-func (p *countingUsersPort) Delete(_ context.Context, _ string) error { return nil }
-
-type countingUsersIter struct{ remaining []domain.User }
-
-func (it *countingUsersIter) Next(_ context.Context) (domain.User, bool, error) {
-	if len(it.remaining) == 0 {
-		return domain.User{}, false, nil
-	}
-	u := it.remaining[0]
-	it.remaining = it.remaining[1:]
-	return u, true, nil
-}
-func (it *countingUsersIter) Close() error { return nil }
+// #A5 v0.2.4 — was a 40-line `countingUsersPort` + `countingUsersIter`
+// pair; now backed by testfx.SeededUsersPort.
 
 func sampleUsersForCount() []domain.User {
 	out := make([]domain.User, 5)
@@ -82,7 +40,7 @@ func sampleUsersForCount() []domain.User {
 
 func bootUsersAppForCount(t *testing.T) app.Model {
 	t.Helper()
-	port := &countingUsersPort{users: sampleUsersForCount()}
+	port := testfx.SeededUsersPort(sampleUsersForCount())
 	keymap, _, err := keys.Resolve(nil)
 	require.NoError(t, err)
 	m := app.New(app.Deps{

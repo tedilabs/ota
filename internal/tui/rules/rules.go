@@ -104,7 +104,12 @@ type ListModel struct {
 	// arrives; before then View renders a spinner (issue #194 v0.2.4).
 	loaded       bool
 	spinnerFrame int
+	fetching     bool                 // #U10 v0.2.4
+	failedAt     map[string]time.Time // #U11 v0.2.4
 }
+
+// Fetching implements app.FetchingStater (#U10 v0.2.4).
+func (m ListModel) Fetching() bool { return m.fetching }
 
 // rulesRefreshTickMsg fires the auto-refresh tick (issue #177).
 type rulesRefreshTickMsg struct{ gen int }
@@ -117,15 +122,15 @@ type rulesHighlightTickMsg struct{}
 // v0.2.4).
 type rulesSpinnerTickMsg struct{}
 
-// RuleDetailTab indexes the Group Rule Detail tab bar. v0.1.2 collapsed
-// the placeholder tabs into Pretty / JSON / YAML; the old Profile / Raw
-// constants survive as aliases for backward compatibility.
-type RuleDetailTab int
+// RuleDetailTab is an alias of shared.DetailTab so the canonical
+// Pretty/JSON/YAML tab order + labels live in one place (#A4 v0.2.4).
+// Profile / Raw aliases survive for v0.1.1 callers.
+type RuleDetailTab = shared.DetailTab
 
 const (
-	RuleDetailTabPretty RuleDetailTab = iota
-	RuleDetailTabJSON
-	RuleDetailTabYAML
+	RuleDetailTabPretty = shared.DetailTabPretty
+	RuleDetailTabJSON   = shared.DetailTabJSON
+	RuleDetailTabYAML   = shared.DetailTabYAML
 )
 
 const (
@@ -133,8 +138,8 @@ const (
 	RuleDetailTabRaw     = RuleDetailTabJSON
 )
 
-var ruleDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
-var ruleDetailTabCount = RuleDetailTab(len(ruleDetailTabLabels))
+var ruleDetailTabLabels = shared.DetailTabLabels
+var ruleDetailTabCount = shared.DetailTabCount
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
@@ -214,13 +219,11 @@ func rulesSortBadge(key SortKey, dir SortDir) string {
 
 // scheduleRefreshTickCmd returns the auto-refresh tea.Tick.
 func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {
-	if m.deps.RefreshInterval <= 0 || m.deps.Port == nil {
+	if m.deps.Port == nil {
 		return nil
 	}
-	gen := m.refreshGen
-	return tea.Tick(m.deps.RefreshInterval, func(time.Time) tea.Msg {
-		return rulesRefreshTickMsg{gen: gen}
-	})
+	return shared.ScheduleRefreshTickCmd(m.deps.RefreshInterval,
+		rulesRefreshTickMsg{gen: m.refreshGen})
 }
 
 // Update handles key input and fetch results.
@@ -234,19 +237,12 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case rulesLoadedMsg:
-		// v0.2.4 #202 — skip the diff on the first load so initial
-		// rows don't all flash; highlights start with refresh #2.
-		now := m.now()
-		if m.loaded {
-			m.changedAt = shared.DiffChanges(m.rules, msg.rules, m.changedAt, now,
-				func(r domain.GroupRule) string { return r.ID }, ruleTrackedEqual)
-		} else {
-			m.changedAt = nil
-		}
+		flash := shared.LoadDiff(&m.loaded, &m.lastUpdated, &m.changedAt,
+			m.rules, msg.rules, m.now(),
+			func(r domain.GroupRule) string { return r.ID }, ruleTrackedEqual)
 		m.rules = msg.rules
 		m.lastErr = nil
-		m.lastUpdated = now
-		m.loaded = true
+		m.fetching = false
 		// Once rules are loaded, fire a Cmd that resolves target
 		// group IDs → names so TARGETS reads as a list of human
 		// names rather than 00g_… opaque IDs (issue #163).
@@ -259,7 +255,7 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		var highlight tea.Cmd
-		if shared.HasFreshHighlights(m.changedAt, now) {
+		if flash {
 			highlight = shared.ScheduleHighlightTickCmd(rulesHighlightTickMsg{})
 		}
 		switch {
@@ -272,31 +268,43 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case rulesHighlightTickMsg:
-		if shared.HasFreshHighlights(m.changedAt, m.now()) {
+		now := m.now()
+		if shared.HasFreshHighlights(m.changedAt, now) ||
+			shared.HasFreshHighlights(m.failedAt, now) {
 			return m, shared.ScheduleHighlightTickCmd(rulesHighlightTickMsg{})
 		}
 		return m, nil
 	case rulesSpinnerTickMsg:
-		if m.loaded {
+		if !shared.BumpSpinner(m.loaded, &m.spinnerFrame) {
 			return m, nil
 		}
-		m.spinnerFrame++
 		return m, shared.ScheduleSpinnerTickCmd(rulesSpinnerTickMsg{})
 	case rulesErrMsg:
 		m.lastErr = msg.err
 		m.loaded = true
+		m.fetching = false
 		return m, nil
 	case rulesRefreshTickMsg:
 		if msg.gen != m.refreshGen || m.deps.Port == nil {
 			return m, nil
 		}
+		m.fetching = true
 		return m, tea.Batch(fetchRulesCmd(m.deps.Port), m.scheduleRefreshTickCmd())
 	case shared.RefreshScreenMsg:
-		// Issue #192 v0.2.3 — out-of-band refresh from the App Shell.
 		if m.deps.Port == nil {
 			return m, nil
 		}
+		m.fetching = true
 		return m, fetchRulesCmd(m.deps.Port)
+	case shared.ActionFailedMsg:
+		if msg.TargetID == "" {
+			return m, nil
+		}
+		if m.failedAt == nil {
+			m.failedAt = map[string]time.Time{}
+		}
+		m.failedAt[msg.TargetID] = m.now()
+		return m, shared.ScheduleHighlightTickCmd(rulesHighlightTickMsg{})
 	case groupNamesLoadedMsg:
 		if m.groupNames == nil {
 			m.groupNames = map[string]string{}
@@ -484,7 +492,7 @@ func (m ListModel) View() string {
 
 	tk := activeTokens()
 	if !m.loaded {
-		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading group rules…",
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading…",
 			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
 	}
 	rows := m.visible()
@@ -512,12 +520,16 @@ func (m ListModel) View() string {
 		if i == m.cursor {
 			prefix = "▸ "
 		}
-		// v0.2.0 #182 — unified cursor pipeline (issue #155
-		// INVALID/INACTIVE row tint applies via shared.RenderRowCursor).
+		// v0.2.0 #182 — unified cursor pipeline.
 		// v0.2.3 #193 — flash RowChanged for rows whose tracked
 		// fields just changed during a refresh.
+		// #U11 v0.2.4 — flash RowDanger on a recent failed action.
 		changed := shared.IsRowChanged(m.changedAt, rows[i].ID, now)
-		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), changed, tk))
+		tone := shared.RowToneNone
+		if shared.IsRowChanged(m.failedAt, rows[i].ID, now) {
+			tone = shared.RowToneFailed
+		}
+		b.WriteString(shared.RenderRowCursorTone(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), changed, tone, tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}

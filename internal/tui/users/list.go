@@ -77,9 +77,6 @@ type ListModel struct {
 	// `v` enters Visual, j/k extend, `y` copies, Esc cancels.
 	detailVisual       bool
 	detailVisualAnchor int
-	// detailToast is a transient one-line message shown above the body
-	// (e.g. "5 lines copied"). Cleared on the next key press.
-	detailToast string
 	// detailUnmasked is the per-field PII unmask flag set, persisted on
 	// the ListModel so it survives DetailModel reconstruction every render
 	// (issue #115). Toggled by :unmask <field> / :mask palette commands.
@@ -160,7 +157,17 @@ type ListModel struct {
 	// of the empty-list table (issue #194 v0.2.4).
 	loaded       bool
 	spinnerFrame int
+	// fetching is true while an auto-refresh / on-demand fetch is in
+	// flight (#U10 v0.2.4). The App Shell stamps a `↻` glyph next to
+	// the upper-divider timestamp while it's set.
+	fetching bool
+	// failedAt timestamps the most recent failed action per row id
+	// (#U11 v0.2.4). Drives the RowDanger flash for HighlightWindow.
+	failedAt map[string]time.Time
 }
+
+// Fetching implements app.FetchingStater (#U10 v0.2.4).
+func (m ListModel) Fetching() bool { return m.fetching }
 
 // usersHighlightTickMsg fires while at least one row's RowChanged
 // flash is still active, forcing a re-render so the highlight fades
@@ -332,13 +339,11 @@ func usersSortLabelPlain(key SortKey, dir SortDir) string {
 // after the configured interval. Returns nil when auto-refresh is
 // disabled (RefreshInterval == 0) or the port isn't wired.
 func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {
-	if m.deps.RefreshInterval <= 0 || m.deps.Port == nil {
+	if m.deps.Port == nil {
 		return nil
 	}
-	gen := m.refreshGen
-	return tea.Tick(m.deps.RefreshInterval, func(time.Time) tea.Msg {
-		return usersRefreshTickMsg{gen: gen}
-	})
+	return shared.ScheduleRefreshTickCmd(m.deps.RefreshInterval,
+		usersRefreshTickMsg{gen: m.refreshGen})
 }
 
 // Update handles key presses, the list fetch Msg, and the detail fetch Msg.
@@ -357,61 +362,62 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case usersLoadedMsg:
-		// Issue #193 v0.2.3 — diff incoming vs cached so rows with
-		// changed tracked fields flash RowChanged for the next ~1s.
-		// Issue #202 v0.2.4 — skip the diff on the FIRST load (every
-		// row would flash because prev was empty). Highlights kick
-		// in starting with the first auto-refresh tick.
-		now := m.now()
-		if m.loaded {
-			m.changedAt = shared.DiffChanges(m.users, msg.users, m.changedAt, now,
-				func(u domain.User) string { return u.ID }, userTrackedEqual)
-		} else {
-			m.changedAt = nil
-		}
+		flash := shared.LoadDiff(&m.loaded, &m.lastUpdated, &m.changedAt,
+			m.users, msg.users, m.now(),
+			func(u domain.User) string { return u.ID }, userTrackedEqual)
 		m.users = msg.users
 		m.lastErr = nil
-		m.lastUpdated = now
-		m.loaded = true
-		if shared.HasFreshHighlights(m.changedAt, now) {
+		m.fetching = false
+		if flash {
 			return m, shared.ScheduleHighlightTickCmd(usersHighlightTickMsg{})
 		}
 		return m, nil
 	case usersHighlightTickMsg:
-		if shared.HasFreshHighlights(m.changedAt, m.now()) {
+		now := m.now()
+		if shared.HasFreshHighlights(m.changedAt, now) ||
+			shared.HasFreshHighlights(m.failedAt, now) {
 			return m, shared.ScheduleHighlightTickCmd(usersHighlightTickMsg{})
 		}
-		// All highlights aged out; let the model re-render once
-		// without rescheduling so the last flash clears.
 		return m, nil
 	case usersSpinnerTickMsg:
-		if m.loaded {
+		if !shared.BumpSpinner(m.loaded, &m.spinnerFrame) {
 			return m, nil
 		}
-		m.spinnerFrame++
 		return m, shared.ScheduleSpinnerTickCmd(usersSpinnerTickMsg{})
 	case usersErrMsg:
 		m.lastErr = msg.err
 		m.loaded = true
+		m.fetching = false
 		return m, nil
 	case usersRefreshTickMsg:
 		// Stale tick (model rebuilt / generation bumped) — drop.
 		if msg.gen != m.refreshGen || m.deps.Port == nil {
 			return m, nil
 		}
+		m.fetching = true
 		// Re-fetch + reschedule. Using tea.Batch keeps the tick
 		// chain alive even when the fetch is in flight so a slow
 		// API doesn't pause the loop.
 		return m, tea.Batch(fetchUsersCmd(m.deps.Port), m.scheduleRefreshTickCmd())
 	case shared.RefreshScreenMsg:
-		// Issue #192 v0.2.3 — operator-triggered refresh (after a
-		// destructive action completes, after network-restored,
-		// etc). Fires the main fetch out of band; the auto-tick
-		// chain stays untouched.
+		// Issue #192 v0.2.3 — operator-triggered refresh.
 		if m.deps.Port == nil {
 			return m, nil
 		}
+		m.fetching = true
 		return m, fetchUsersCmd(m.deps.Port)
+	case shared.ActionFailedMsg:
+		// #U11 v0.2.4 — flash the row whose action errored. Reuses
+		// the highlight tick chain; the View checks failedAt against
+		// shared.HighlightWindow.
+		if msg.TargetID == "" {
+			return m, nil
+		}
+		if m.failedAt == nil {
+			m.failedAt = map[string]time.Time{}
+		}
+		m.failedAt[msg.TargetID] = m.now()
+		return m, shared.ScheduleHighlightTickCmd(usersHighlightTickMsg{})
 	case userOpenedMsg:
 		m.detailUser = msg.user
 		m.opened = true
@@ -495,8 +501,6 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// where they came from. Line-cursor + Visual mode (v / V / y) live
 	// alongside the tab navigation.
 	if m.opened {
-		// Any keypress dismisses the previous "5 lines copied" toast.
-		m.detailToast = ""
 		switch msg.Type {
 		case tea.KeyEsc:
 			if m.detailVisual {
@@ -673,17 +677,19 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// their notes. shared.StripCSI removes them so the
 				// clipboard carries plain text only.
 				selected := shared.StripCSI(strings.Join(lines[start:end+1], "\n"))
+				var toastCmd tea.Cmd
 				if err := clipboard.WriteAll(selected); err != nil {
-					m.detailToast = "yank failed: " + err.Error()
+					toastCmd = emitToast(shared.ToastError, "yank failed: "+err.Error())
 				} else {
 					n := end - start + 1
 					unit := "line"
 					if n != 1 {
 						unit = "lines"
 					}
-					m.detailToast = "yanked " + itoaSimple(n) + " " + unit
+					toastCmd = emitToast(shared.ToastSuccess, "yanked "+itoaSimple(n)+" "+unit)
 				}
 				m.detailVisual = false
+				return m, toastCmd
 			}
 			return m, nil
 		}
@@ -901,7 +907,7 @@ func (m ListModel) View() string {
 		// Issue #194 v0.2.4 — first fetch in flight. Show a spinner
 		// instead of an empty table so the operator sees the boot
 		// path is alive.
-		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading users…",
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading…",
 			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
 	}
 
@@ -936,7 +942,11 @@ func (m ListModel) View() string {
 		// loses to the cursor tint but beats the abnormal-status
 		// background so an active row stays visually anchored.
 		changed := shared.IsRowChanged(m.changedAt, rows[i].ID, now)
-		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), changed, tk))
+		tone := shared.RowToneNone
+		if shared.IsRowChanged(m.failedAt, rows[i].ID, now) {
+			tone = shared.RowToneFailed
+		}
+		b.WriteString(shared.RenderRowCursorTone(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), changed, tone, tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
@@ -1051,14 +1061,9 @@ func (m ListModel) renderPrettyWithColumnCursor(tk shared.Tokens) string {
 	}
 
 	var b strings.Builder
-	// v0.2.0: detailToast remains inline (above body) so yank/copy
-	// confirms read where the operator just acted; -- VISUAL -- moves
-	// to the chrome status row via StatusBadges() for screen-wide
-	// consistency with sort / filter / focus / hscroll badges.
-	if m.detailToast != "" {
-		b.WriteString(tk.Header.Render(m.detailToast))
-		b.WriteByte('\n')
-	}
+	// v0.2.4 #A7 — yank/copy feedback now flows through the App
+	// Shell's unified ToastMsg band; the inline detailToast slot is
+	// gone.
 	for _, line := range headerLines {
 		b.WriteString(line)
 		b.WriteByte('\n')
@@ -1273,14 +1278,8 @@ func (m ListModel) renderFlatLineCursor(tk shared.Tokens) string {
 		}
 	}
 	var b strings.Builder
-	// v0.2.0: detailToast remains inline (above body) so yank/copy
-	// confirms read where the operator just acted; -- VISUAL -- moves
-	// to the chrome status row via StatusBadges() for screen-wide
-	// consistency with sort / filter / focus / hscroll badges.
-	if m.detailToast != "" {
-		b.WriteString(tk.Header.Render(m.detailToast))
-		b.WriteByte('\n')
-	}
+	// v0.2.4 #A7 — yank/copy feedback now flows through the App
+	// Shell's unified ToastMsg band.
 	maxBodyWidth := 0
 	for i := headerLines; i < len(lines); i++ {
 		if w := shared.VisibleWidth(lines[i]); w > maxBodyWidth {
@@ -1689,6 +1688,19 @@ func maxInt(a, b int) int {
 // itoaSimple is a tiny strconv.Itoa shim used by handleKey's toast string
 // (avoids importing strconv elsewhere in list.go for one usage).
 func itoaSimple(n int) string { return strconv.Itoa(n) }
+
+// emitToast returns a tea.Cmd that fires a shared.ToastMsg the App
+// Shell consumes (#A7 v0.2.4). Centralizes Until defaulting so
+// yank/copy / Visual-mode feedback uses the same 3s window.
+func emitToast(level shared.ToastLevel, text string) tea.Cmd {
+	return func() tea.Msg {
+		return shared.ToastMsg{
+			Text:  text,
+			Level: level,
+			Until: time.Now().Add(3 * time.Second),
+		}
+	}
+}
 
 // windowBounds returns the [top, end) slice of rows that should render
 // given the current cursor position and viewportTop. Delegates to the

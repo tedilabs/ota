@@ -24,12 +24,14 @@ import (
 // DetailTabRaw is kept as an alias for DetailTabJSON so v0.1.1 callers
 // using `WithActiveTab(DetailTabRaw)` continue to compile and behave the
 // same way.
-type DetailTab int
+// DetailTab aliases shared.DetailTab so the User Detail's tab bar
+// shares its definition with every other detail surface (#A4 v0.2.4).
+type DetailTab = shared.DetailTab
 
 const (
-	DetailTabPretty DetailTab = iota
-	DetailTabJSON
-	DetailTabYAML
+	DetailTabPretty = shared.DetailTabPretty
+	DetailTabJSON   = shared.DetailTabJSON
+	DetailTabYAML   = shared.DetailTabYAML
 )
 
 // DetailTabRaw is the legacy alias for DetailTabJSON. v0.1.2+ code should
@@ -39,16 +41,8 @@ const (
 	DetailTabRaw     = DetailTabJSON
 )
 
-// detailTabLabels lists the label rendered for each DetailTab in the tab
-// bar. Index aligns with the DetailTab iota.
-var detailTabLabels = []string{
-	"Pretty",
-	"JSON",
-	"YAML",
-}
-
-// detailTabCount is the number of detail tabs (used by Tab/Shift-Tab cycling).
-var detailTabCount = DetailTab(len(detailTabLabels))
+var detailTabLabels = shared.DetailTabLabels
+var detailTabCount = shared.DetailTabCount
 
 // DetailModel is SCR-011 User detail with tabs (Profile/Credentials/
 // Timestamps/Groups/Factors/Recent/Raw — TUI_DESIGN §15.7 v1.2.0). The

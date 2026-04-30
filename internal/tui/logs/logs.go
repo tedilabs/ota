@@ -58,16 +58,17 @@ type logsErrMsg struct{ err error }
 // (issue #135). The Pretty tab keeps the v0.1.0 curated layout; JSON
 // and YAML render the full Raw payload from Okta with shared syntax
 // highlighting so operators can pull any field they need.
-type LogDetailTab int
+// LogDetailTab is an alias of shared.DetailTab (#A4 v0.2.4).
+type LogDetailTab = shared.DetailTab
 
 const (
-	LogDetailTabPretty LogDetailTab = iota
-	LogDetailTabJSON
-	LogDetailTabYAML
+	LogDetailTabPretty = shared.DetailTabPretty
+	LogDetailTabJSON   = shared.DetailTabJSON
+	LogDetailTabYAML   = shared.DetailTabYAML
 )
 
-var logDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
-var logDetailTabCount = LogDetailTab(len(logDetailTabLabels))
+var logDetailTabLabels = shared.DetailTabLabels
+var logDetailTabCount = shared.DetailTabCount
 
 type SearchModel struct {
 	deps         Deps
@@ -128,7 +129,11 @@ type SearchModel struct {
 	// arrives; before then View renders a spinner (issue #194 v0.2.4).
 	loaded       bool
 	spinnerFrame int
+	fetching     bool // #U10 v0.2.4 — fetch in flight (history window or follow tick)
 }
+
+// Fetching implements app.FetchingStater (#U10 v0.2.4).
+func (m SearchModel) Fetching() bool { return m.fetching }
 
 // logsSpinnerTickMsg advances the loading spinner frame (issue #194
 // v0.2.4).
@@ -296,6 +301,7 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.events = msg.events
 		m.lastErr = nil
 		m.loaded = true
+		m.fetching = false
 		// Logs render newest-at-bottom, so the operator's mental model
 		// is: open the screen → land on the most recent entry, scroll
 		// upward (k) to view older ones. Park the cursor on the last
@@ -324,18 +330,19 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logsErrMsg:
 		m.lastErr = msg.err
 		m.loaded = true
+		m.fetching = false
 		return m, nil
 	case logsSpinnerTickMsg:
-		if m.loaded {
+		if !shared.BumpSpinner(m.loaded, &m.spinnerFrame) {
 			return m, nil
 		}
-		m.spinnerFrame++
 		return m, shared.ScheduleSpinnerTickCmd(logsSpinnerTickMsg{})
 	case shared.RefreshScreenMsg:
 		// Issue #192 v0.2.3 — out-of-band refresh from the App Shell.
 		if m.deps.Service == nil {
 			return m, nil
 		}
+		m.fetching = true
 		return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
 	case followTickMsg:
 		// Stale tick — operator toggled follow off and back on, or
@@ -344,8 +351,10 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.followGen || !m.follow {
 			return m, nil
 		}
+		m.fetching = true
 		return m, m.followFetchCmd()
 	case followFetchedMsg:
+		m.fetching = false
 		if msg.gen != m.followGen || !m.follow {
 			// Stale result — schedule the next tick if follow is
 			// still on so the loop resumes naturally on the
@@ -678,7 +687,7 @@ func (m SearchModel) View() string {
 
 	tk := activeTokens()
 	if !m.loaded {
-		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading logs…",
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading…",
 			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
 	}
 	now := m.now()
@@ -1219,13 +1228,11 @@ type followFetchedMsg struct {
 // follow is off OR the interval is zero so callers can chain it
 // safely.
 func (m SearchModel) scheduleFollowTickCmd() tea.Cmd {
-	if !m.follow || m.pollInterval <= 0 {
+	if !m.follow {
 		return nil
 	}
-	gen := m.followGen
-	return tea.Tick(m.pollInterval, func(time.Time) tea.Msg {
-		return followTickMsg{gen: gen}
-	})
+	return shared.ScheduleRefreshTickCmd(m.pollInterval,
+		followTickMsg{gen: m.followGen})
 }
 
 // followFetchCmd issues one tail-style poll and returns a

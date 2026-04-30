@@ -90,21 +90,39 @@ func ScrollbarMark(r, scrollTop, budget, total int) string {
 	return "│"
 }
 
+// RowTone classifies the row-level decoration RenderRowCursor applies
+// when neither `changed` nor the per-row status maps to anything.
+// Issue #U11 v0.2.4 — gives the failed-action red flash a slot in the
+// styling precedence without overloading `changed`.
+type RowTone int
+
+const (
+	RowToneNone   RowTone = iota
+	RowToneFailed         // red flash for ~1.5s after an action errored on this row
+)
+
 // RenderRowCursor unifies the per-screen list-row decoration
-// pipeline (v0.2.0 #182). Pad → status tint → changed flash →
-// cursor (last so it wins over the others). Centralising the
-// styling order codifies the strip-CSI ordering once so screens
-// can't get it wrong.
+// pipeline (v0.2.0 #182). Precedence (highest first): cursor →
+// failed flash → changed flash → status tint → plain.
 //
 // statusKind is the value returned by domain.UserStatus / .Status;
 // pass "" when the row has no status semantics. changed surfaces
-// the "this row just refreshed" highlight (issue #193 v0.2.3) —
-// applied for ~1s on diff detection, beats the status tint but
-// still loses to the cursor.
+// the "this row just refreshed" highlight (issue #193 v0.2.3).
+// tone surfaces transient action-result states (#U11 v0.2.4).
 func RenderRowCursor(line string, targetWidth int, isCursor bool, statusKind string, changed bool, tk Tokens) string {
+	return RenderRowCursorTone(line, targetWidth, isCursor, statusKind, changed, RowToneNone, tk)
+}
+
+// RenderRowCursorTone is the toned variant of RenderRowCursor —
+// failed flash slots between cursor and changed so the row reads as
+// "action just failed on me" without the cursor losing its anchor.
+func RenderRowCursorTone(line string, targetWidth int, isCursor bool, statusKind string, changed bool, tone RowTone, tk Tokens) string {
 	line = PadOrTruncateVisible(line, targetWidth)
 	if isCursor {
 		return tk.RowCursor.Render(StripCSI(line))
+	}
+	if tone == RowToneFailed {
+		return tk.RowDanger.Render(StripCSI(line))
 	}
 	if changed {
 		return tk.RowChanged.Render(StripCSI(line))

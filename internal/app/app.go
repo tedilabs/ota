@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -257,21 +256,12 @@ type Model struct {
 	// the operator triggered.
 	pendingRule pendingRuleAction
 
-	// statusToast is the chrome's right-anchored one-shot message on
-	// the status row (v0.2.0): "yanked 5 lines", "nothing to close",
-	// "refreshed". Clears on the next key press so the slot stays
-	// available for whichever action the operator just triggered.
-	statusToast string
-
 	// toast is the most recent ToastMsg awaiting render — shown as a
 	// color-coded floating band stamped on top of the body for the
-	// duration set on Until (issue #195 v0.2.4). Nil when no toast
-	// is active. Distinct from statusToast (single-line right slot
-	// for terse one-keystroke feedback like "yanked 5 lines"); the
-	// floating band is for action results — Activate / Reset MFA /
-	// Delete — where the user explicitly took an action and needs
-	// a clear pass / fail signal.
-	toast *ToastMsg
+	// duration set on Until (issues #195/#A7 v0.2.4). Single canonical
+	// transient-message slot for action results (Activate / Reset MFA
+	// / Delete), Esc no-ops, and yank/copy feedback alike.
+	toast *shared.ToastMsg
 	// toastGen invalidates stale clear ticks if a newer toast lands
 	// before the old one's expiry fires.
 	toastGen int
@@ -321,134 +311,6 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-// kickPrincipalFetch returns the /me probe Cmd the first time it's
-// invoked (mutating m so the caller persists the latch flag) and nil
-// thereafter. Returns nil when no UsersPort is wired so chrome-only
-// tests stay free of background fetches.
-func (m *Model) kickPrincipalFetch() tea.Cmd {
-	if m.principalRequested || m.deps.UsersPort == nil {
-		return nil
-	}
-	m.principalRequested = true
-	return fetchPrincipalCmd(m.deps.UsersPort)
-}
-
-// kickOktaStatusFetch returns the first status.okta.com probe Cmd
-// (issue #190 v0.2.2). Subsequent ticks self-schedule via the
-// oktaStatusFetchedMsg handler — this only runs at boot. Returns
-// nil when the endpoint is unset (test harnesses) so unit tests
-// don't burn outbound HTTP.
-func (m *Model) kickOktaStatusFetch() tea.Cmd {
-	if m.deps.OktaStatusEndpoint == "" {
-		return nil
-	}
-	if !m.oktaStatus.FetchedAt.IsZero() {
-		return nil
-	}
-	return fetchOktaStatusCmd(m.deps.OktaStatusEndpoint)
-}
-
-// principalLoadedMsg carries the authenticated principal's login back
-// into Update so the chrome ContextBar can render it.
-type principalLoadedMsg struct{ Login string }
-
-// fetchPrincipalCmd issues GET /api/v1/users/me through the existing
-// UsersPort.Get path — Okta accepts "me" as an alias for the token's
-// owner — and converts the result into principalLoadedMsg. Failures are
-// silenced (the chrome simply omits the principal segment).
-func fetchPrincipalCmd(port domain.UsersPort) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		u, err := port.Get(ctx, "me")
-		if err != nil {
-			return principalLoadedMsg{}
-		}
-		login := u.Profile.Login
-		if login == "" {
-			login = u.ID
-		}
-		return principalLoadedMsg{Login: login}
-	}
-}
-
-// oktaStatusFetchedMsg carries a status.okta.com snapshot back into
-// Update (issue #190 v0.2.2).
-type oktaStatusFetchedMsg struct {
-	snap oktastatus.Snapshot
-}
-
-// fetchOktaStatusCmd polls the configured status endpoint once.
-// Failures collapse to IndicatorUnknown so the chrome shows a
-// muted glyph instead of crashing the boot path.
-func fetchOktaStatusCmd(endpoint string) tea.Cmd {
-	return func() tea.Msg {
-		probe := oktastatus.Probe{Endpoint: endpoint}
-		return oktaStatusFetchedMsg{snap: probe.Fetch(context.Background())}
-	}
-}
-
-// oktaStatusEmojiOrEmpty / oktaStatusLabelOrEmpty render the
-// title-bar status segment. Issue #198 v0.2.4 — falls back to a
-// tenant-reachability signal when the public statuspage probe fails.
-// Order of preference:
-//
-//  1. Statuspage probe succeeded → use its real Indicator/Label
-//     (🟢 ok / 🟡 minor / 🟠 major / 🔴 critical / 🛠 maint).
-//  2. Statuspage probe failed (Indicator==Unknown) but the operator's
-//     /me call succeeded → show 🟢 Okta:ok. The operator can hit the
-//     tenant API, which is the signal that actually matters to them.
-//  3. Probe still in flight + no principal yet → ⏳ Okta:….
-//  4. Probe failed and no principal yet → hide entirely.
-//
-// The legacy `status.okta.com/api/v2/status.json` URL has migrated
-// to a Salesforce-backed page that no longer publishes JSON, so #2
-// is the fallback most operators will see day-to-day. Empty when the
-// probe is disabled (Deps.OktaStatusEndpoint == "").
-func oktaStatusEmojiOrEmpty(s oktastatus.Snapshot, enabled, tenantReachable bool) string {
-	if !enabled {
-		return ""
-	}
-	if !s.FetchedAt.IsZero() && s.Indicator != oktastatus.IndicatorUnknown {
-		return s.Indicator.Emoji()
-	}
-	if tenantReachable {
-		return "🟢"
-	}
-	if s.FetchedAt.IsZero() {
-		return "⏳"
-	}
-	return ""
-}
-
-func oktaStatusLabelOrEmpty(s oktastatus.Snapshot, enabled, tenantReachable bool) string {
-	if !enabled {
-		return ""
-	}
-	if !s.FetchedAt.IsZero() && s.Indicator != oktastatus.IndicatorUnknown {
-		return s.Indicator.Label()
-	}
-	if tenantReachable {
-		return "ok"
-	}
-	if s.FetchedAt.IsZero() {
-		return "…"
-	}
-	return ""
-}
-
-// scheduleOktaStatusTickCmd reschedules the status fetch every 5
-// minutes regardless of the last result. Failed probes are rendered
-// as a hidden segment (issue #196 v0.2.4), so an aggressive retry
-// burns network for no operator benefit.
-func scheduleOktaStatusTickCmd(endpoint string, _ oktastatus.Indicator) tea.Cmd {
-	if endpoint == "" {
-		return nil
-	}
-	return tea.Tick(5*time.Minute, func(time.Time) tea.Msg {
-		probe := oktastatus.Probe{Endpoint: endpoint}
-		return oktaStatusFetchedMsg{snap: probe.Fetch(context.Background())}
-	})
-}
 
 // Update implements tea.Model. Handles global shortcuts (`:`, `?`, Ctrl-c),
 // palette input, broadcasts toast/offline/refresh messages, and delegates
@@ -509,15 +371,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, offlineCmd(true)
 	case NetworkRestoredMsg:
 		m.offline = false
-		// REQ-E03 AC-3 — emit RefreshActiveScreenMsg so the
-		// network-restored test still verifies the contract.
-		// The shell's RefreshActiveScreenMsg handler then fans
-		// out shared.RefreshScreenMsg to the active screen.
-		return m, refreshActiveCmd()
-	case RefreshActiveScreenMsg:
-		// Translate the shell-level refresh signal into the
-		// per-screen shared.RefreshScreenMsg that list / detail
-		// models listen for (v0.2.3 #192).
+		// REQ-E03 AC-3 — fan out shared.RefreshScreenMsg so the
+		// active list / detail re-fetches as soon as the network
+		// is back. v0.2.4 #A6: dropped the legacy
+		// RefreshActiveScreenMsg shim — shared.RefreshScreenMsg is
+		// the single canonical refresh signal now.
 		return m, refreshScreenCmd()
 	case OfflineStateMsg:
 		m.offline = msg.Offline
@@ -549,9 +407,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// screen's Actioner. The `a` key handler already gated on
 		// activeChildHasActions(), so by the time we arrive here
 		// the assertion is reliable.
+		// #U8 v0.2.4 — extra defense: if the screen's Actions slice
+		// happens to be empty for the current row (e.g., already-
+		// deleted user, no row selected), fall through to a toast
+		// instead of opening an empty picker.
 		acts, ok := m.activeChildActions()
 		if !ok {
 			return m, nil
+		}
+		if len(acts) == 0 {
+			return m, toastCmdInfo("no actions available for this row")
 		}
 		picker := overlay.NewActionMenuModel(m.resourceLabel(), acts)
 		m.actionMenu = &picker
@@ -603,6 +468,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			func() tea.Msg { return toast },
 			refreshScreenCmd(),
+		)
+	case actionFailedMsg:
+		// #U11 v0.2.4 — destructive op errored. Surface the red toast
+		// AND broadcast shared.ActionFailedMsg{TargetID} so the active
+		// list can flash that row red. Failed actions don't change
+		// state, so no refresh is fired.
+		toast := msg.toast
+		failed := shared.ActionFailedMsg{TargetID: msg.targetID}
+		return m, tea.Batch(
+			func() tea.Msg { return toast },
+			func() tea.Msg { return failed },
 		)
 	case QuitConfirmRequestMsg:
 		m.overlay = OverlayQuitConfirm
@@ -778,14 +654,16 @@ func (m Model) View() string {
 			}
 		}
 	}
-	// Issue #195 v0.2.4 — floating toast band: stamp on top of the body
-	// (under any other overlay) so action results pop visibly without
-	// stealing chrome space. Suppressed when a confirmation modal owns
-	// the body so the band doesn't compete with the popup.
+	// Issue #195 v0.2.4 — floating toast band stamped on top of the
+	// body, suppressed when a confirmation modal owns the body so the
+	// band doesn't compete with the popup. #U4 v0.2.4 — band lands on
+	// the LAST body row (replacing it for the toast's lifetime) instead
+	// of the first, so it doesn't cover the column header / first
+	// data rows where the operator's reading focus is.
 	if m.toast != nil && m.overlay != OverlayActionConfirm && m.overlay != OverlayQuitConfirm {
 		band := renderToastBand(*m.toast, width-3, tokens)
 		if band != "" {
-			body = stampOverlayOnTop(band, body)
+			body = stampOverlayAtBottom(band, body, bodyLines)
 		}
 	}
 	visible, total, hasCount := m.activeChildCount()
@@ -806,7 +684,6 @@ func (m Model) View() string {
 		HasCount:        hasCount,
 		DividerRight:    m.activeChildDividerRight(),
 		StatusBadges: m.composeChromeBadges(),
-		StatusToast:  m.statusToast,
 		// Issue #190 v0.2.2 — suppress the title-bar status segment
 		// until the first probe completes so the chrome doesn't
 		// flash a misleading "❔" on every cold start.
@@ -952,11 +829,12 @@ func (m Model) composeModalOverDimmedBody(modal string) string {
 	return stampOverlayAtRow(centered, dimmed, topRow)
 }
 
-// renderQuitConfirmModal builds the centered red-title modal for the
-// `q` quit prompt (issue #197 v0.2.4). Same shape as the action
-// confirm modal so operators recognise both as destructive prompts.
+// renderQuitConfirmModal builds the centered yellow-title modal for
+// the `q` quit prompt (#U1 v0.2.4). Tone=Warning, distinct from the
+// red Danger tone reserved for irreversible ops (Reset MFA, Delete);
+// quitting ota is reversible — operators just relaunch.
 func (m Model) renderQuitConfirmModal(tk shared.Tokens) string {
-	body := tk.Danger.Render("Quit ota?")
+	body := tk.Warning.Render("Quit ota?")
 	width := 60
 	if w := shared.VisibleWidth(body) + 6; w > width {
 		width = w
@@ -967,8 +845,8 @@ func (m Model) renderQuitConfirmModal(tk shared.Tokens) string {
 	return shared.MountModal(shared.ModalIn{
 		Title:  "Quit",
 		Body:   body,
-		Footer: "y to quit — n / Esc to cancel",
-		Tone:   shared.ModalToneDanger,
+		Footer: "y / Enter to quit — n / Esc to cancel",
+		Tone:   shared.ModalToneWarning,
 		Width:  width,
 		Tokens: tk,
 	})
@@ -1008,7 +886,7 @@ func (m Model) renderActionConfirmModal(tk shared.Tokens) string {
 	return shared.MountModal(shared.ModalIn{
 		Title:  "Confirm action",
 		Body:   body,
-		Footer: "y to confirm — n / Esc to cancel",
+		Footer: "y / Enter to confirm — n / Esc to cancel",
 		Tone:   shared.ModalToneDanger,
 		Width:  width,
 		Tokens: tk,
@@ -1295,6 +1173,15 @@ func (m Model) activeChildFilter() string {
 	return fs.Filter()
 }
 
+// FetchingStater is implemented by list screens that publish whether
+// an auto-refresh / on-demand fetch is currently in flight (#U10
+// v0.2.4). The App Shell stamps a `↻` glyph next to the upper-divider
+// timestamp while Fetching=true so operators see refresh activity on
+// slow networks.
+type FetchingStater interface {
+	Fetching() bool
+}
+
 // LastUpdatedStater is implemented by screens that publish a
 // last-refresh timestamp for the chrome's upper-divider right slot
 // (issue #177 v0.1.16). Returning the zero time disables the segment.
@@ -1320,7 +1207,13 @@ func (m Model) activeChildDividerRight() string {
 	if t.IsZero() {
 		return ""
 	}
-	return "updated " + t.UTC().Format("15:04:05") + " UTC"
+	stamp := "updated " + t.UTC().Format("15:04:05") + " UTC"
+	// #U10 v0.2.4 — append a refresh glyph while a fetch is in
+	// flight so operators see auto-refresh activity on slow nets.
+	if fs, ok := child.(FetchingStater); ok && fs.Fetching() {
+		stamp = "↻ " + stamp
+	}
+	return stamp
 }
 
 // activeChildCount returns the (visible, total, ok) triple for the
@@ -1344,8 +1237,10 @@ func (m Model) activeChildCount() (visible, total int, ok bool) {
 // renderFilterBox builds the floating input box for `/` filter mode.
 // Sibling of renderPaletteBox — same chrome, different prompt — sized
 // to the data box width so the boxes line up vertically (issue #129).
+// #U13 v0.2.4 — explicit "client filter" hint distinguishes it from
+// the server-side `Q` query box; the prompt stays Accent (cyan).
 func (m Model) renderFilterBox(tk shared.Tokens, innerWidth int) string {
-	prompt := tk.Accent.Render("/")
+	prompt := tk.Accent.Render("/ ")
 	input := ""
 	if child, ok := m.screens[m.active]; ok {
 		if fs, ok := child.(FilterStater); ok {
@@ -1353,19 +1248,20 @@ func (m Model) renderFilterBox(tk shared.Tokens, innerWidth int) string {
 		}
 	}
 	cursor := tk.RowCursor.Render(" ")
-	return modalBox(prompt+input+cursor, innerWidth, tk)
+	hint := "\n" + tk.Muted.Render("client filter · narrows loaded rows · Esc cancels")
+	return modalBox(prompt+input+cursor+hint, innerWidth, tk)
 }
 
 // renderQueryBox builds the floating input box for the `Q`
-// server-side query mode (issue #185 v0.2.1). Same chrome as the
-// `/` filter box; the `Q` prefix and the muted hint distinguish
-// it from the local-filter prompt. Body explains the difference
-// inline so the operator doesn't have to remember which is which.
+// server-side query mode (issue #185 v0.2.1). #U13 v0.2.4 — prompt
+// + hint use the Warning tone (yellow) so operators see at a glance
+// that this box hits the API, distinct from the cyan client-side
+// `/` filter.
 func (m Model) renderQueryBox(tk shared.Tokens, innerWidth int) string {
-	prompt := tk.Accent.Render("Q ")
+	prompt := tk.Warning.Render("Q ")
 	input := m.activeChildQueryInput()
 	cursor := tk.RowCursor.Render(" ")
-	hint := "\n" + tk.Muted.Render("server-side search · Enter applies · Esc cancels")
+	hint := "\n" + tk.Warning.Render("server search") + tk.Muted.Render(" · re-fetches from Okta · Enter applies · Esc cancels")
 	return modalBox(prompt+input+cursor+hint, innerWidth, tk)
 }
 
@@ -1422,6 +1318,34 @@ func stampOverlayOnTop(overlay, body string) string {
 		out = append(out, bodyLines[len(overlayLines):]...)
 	}
 	return strings.Join(out, "\n")
+}
+
+// stampOverlayAtBottom replaces the last N rows of body with overlay
+// (where N == overlay's line count). Pads the body up to bodyLines
+// rows first so the band always lands at the visible bottom of the
+// chrome's body region, not at the bottom of a short list. Used by
+// the floating toast band (#U4 v0.2.4).
+func stampOverlayAtBottom(overlay, body string, bodyLines int) string {
+	overlayRows := strings.Split(overlay, "\n")
+	bodyRows := strings.Split(body, "\n")
+	for len(bodyRows) < bodyLines {
+		bodyRows = append(bodyRows, "")
+	}
+	if len(bodyRows) > bodyLines {
+		bodyRows = bodyRows[:bodyLines]
+	}
+	start := len(bodyRows) - len(overlayRows)
+	if start < 0 {
+		start = 0
+	}
+	for i, ol := range overlayRows {
+		idx := start + i
+		if idx < 0 || idx >= len(bodyRows) {
+			continue
+		}
+		bodyRows[idx] = ol
+	}
+	return strings.Join(bodyRows, "\n")
 }
 
 // stampOverlayAtRow replaces body lines starting at topRow with
@@ -1657,9 +1581,14 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 // --- Key handling --------------------------------------------------------
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// v0.2.0: any key dismisses the previous one-shot status toast
-	// so the slot is clear for whatever the operator just triggered.
-	m.statusToast = ""
+	// #U5 v0.2.4 — any keypress dismisses the floating toast band so
+	// operators can clear it manually without waiting for Until. Bump
+	// the toast generation so the in-flight clear tick doesn't stomp
+	// a future toast set in the same Update pass.
+	if m.toast != nil {
+		m.toast = nil
+		m.toastGen++
+	}
 
 	// Palette has input focus while open.
 	if m.overlay == OverlayPalette {
@@ -1674,11 +1603,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// v0.2.0: Esc on a list with no overlay / filter / Visual / detail
 	// open used to be silent — operators repeatedly reported pressing
-	// Esc and getting no feedback. Surface a one-shot toast in the
-	// status row so the no-op is acknowledged without side effects.
+	// Esc and getting no feedback. Surface a transient toast so the
+	// no-op is acknowledged without side effects.
+	// #A7 v0.2.4 — uses the unified ToastMsg path now.
 	if msg.Type == tea.KeyEsc && !m.escWillAct() {
-		m.statusToast = "nothing to close"
-		return m, nil
+		return m, toastCmdInfo("nothing to close")
 	}
 
 	switch msg.Type {
@@ -1773,6 +1702,11 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, screenChangeCmd(target)
 		case paletteCmdQuit:
 			return m, quitConfirmCmd()
+		case paletteCmdHelp:
+			// #U14 v0.2.4 — `:help` opens the help overlay. Same
+			// path the `?` shortcut takes; lets operators discover
+			// the help surface via palette autocomplete.
+			return m, openHelpCmd()
 		case paletteCmdUnmask:
 			if child, ok := m.screens[m.active]; ok {
 				updated, c := child.Update(UnmaskFieldMsg{Field: arg})
@@ -1866,7 +1800,7 @@ func paletteCommandPool() []string {
 		"scim-app",
 		"unmask", "mask",
 		"reset-password", "unlock", "reset-mfa",
-		"quit",
+		"help", "quit",
 	}
 }
 
@@ -2032,6 +1966,10 @@ const (
 	// paletteCmdAppType opens ScreenApps straight on a list for the
 	// given AppType — issue #166 (`:saml-app`, `:oidc-app`, ...).
 	paletteCmdAppType
+	// paletteCmdHelp opens the help overlay (#U14 v0.2.4). Same Cmd
+	// the `?` shortcut fires; exposed as a palette command so the
+	// route is discoverable via Tab-autocomplete.
+	paletteCmdHelp
 )
 
 // UnmaskFieldMsg / MaskAllMsg are re-exported from the shared msgs
@@ -2060,6 +1998,8 @@ func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, arg 
 	switch verb {
 	case "quit", "q", "exit":
 		return paletteCmdQuit, 0, "", true
+	case "help", "h", "?":
+		return paletteCmdHelp, 0, "", true
 	case "mask":
 		return paletteCmdMask, 0, "", true
 	case "unmask":
@@ -2145,185 +2085,12 @@ func policyTypeFromName(name string) (domain.PolicyType, bool) {
 // confirmation. Looks up the active screen's selected user, falls back
 // to a transient toast when none is available (e.g., the operator
 // fired the command from a non-Users screen).
-func (m Model) openActionConfirm(kind UserActionKind) (tea.Model, tea.Cmd) {
-	child, ok := m.screens[m.active]
-	if !ok {
-		return m, toastCmdInfo("no active screen")
-	}
-	stater, ok := child.(SelectedUserStater)
-	if !ok {
-		return m, toastCmdInfo("action not available on this screen")
-	}
-	user, ok := stater.SelectedUser()
-	if !ok {
-		return m, toastCmdInfo("no user selected")
-	}
-	m.pendingAction = pendingUserAction{Kind: kind, User: user}
-	m.pendingRule = pendingRuleAction{}
-	m.overlay = OverlayActionConfirm
-	return m, nil
-}
+// (Action types + open*Confirm + run*ActionCmd + actionCompletedMsg
+// + label helpers moved to actions.go in #A2 v0.2.4.)
 
-// openRuleActionConfirm is the Group Rule sibling (issue #188).
-func (m Model) openRuleActionConfirm(kind RuleActionKind) (tea.Model, tea.Cmd) {
-	child, ok := m.screens[m.active]
-	if !ok {
-		return m, toastCmdInfo("no active screen")
-	}
-	stater, ok := child.(SelectedRuleStater)
-	if !ok {
-		return m, toastCmdInfo("action not available on this screen")
-	}
-	rule, ok := stater.SelectedRule()
-	if !ok {
-		return m, toastCmdInfo("no rule selected")
-	}
-	m.pendingRule = pendingRuleAction{Kind: kind, Rule: rule}
-	m.pendingAction = pendingUserAction{}
-	m.overlay = OverlayActionConfirm
-	return m, nil
-}
-
-// ruleActionLabel returns a human-readable label for the action.
-func ruleActionLabel(k RuleActionKind) string {
-	switch k {
-	case RuleActionActivate:
-		return "Activate rule"
-	case RuleActionDeactivate:
-		return "Deactivate rule"
-	case RuleActionDelete:
-		return "Delete rule"
-	}
-	return ""
-}
-
-// runRuleActionCmd dispatches the active pendingRule against the
-// GroupRulesPort and emits a toast with the result.
-func runRuleActionCmd(port domain.GroupRulesPort, action pendingRuleAction) tea.Cmd {
-	if port == nil {
-		return toastCmdInfo("GroupRulesPort not wired — action skipped")
-	}
-	return func() tea.Msg {
-		ctx := context.Background()
-		name := action.Rule.Name
-		if name == "" {
-			name = action.Rule.ID
-		}
-		switch action.Kind {
-		case RuleActionActivate:
-			if err := port.Activate(ctx, action.Rule.ID); err != nil {
-				return toastErr("activate rule failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("activated rule " + name)}
-		case RuleActionDeactivate:
-			if err := port.Deactivate(ctx, action.Rule.ID); err != nil {
-				return toastErr("deactivate rule failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("deactivated rule " + name)}
-		case RuleActionDelete:
-			if err := port.Delete(ctx, action.Rule.ID); err != nil {
-				return toastErr("delete rule failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("deleted rule " + name)}
-		}
-		return nil
-	}
-}
-
-// userActionLabel returns a human-readable label for the action kind,
-// rendered in the confirmation modal and the post-action toast.
-func userActionLabel(k UserActionKind) string {
-	switch k {
-	case UserActionResetPassword:
-		return "Reset password"
-	case UserActionUnlock:
-		return "Unlock account"
-	case UserActionResetFactors:
-		return "Reset MFA factors"
-	case UserActionActivate:
-		return "Activate user"
-	case UserActionDeactivate:
-		return "Deactivate user"
-	case UserActionExpirePassword:
-		return "Expire password"
-	case UserActionDelete:
-		return "Delete user"
-	}
-	return ""
-}
-
-// actionCompletedMsg wraps the toast a successful action emits so
-// the App Shell can chain a screen refresh in the same Update pass
-// (issue #192 v0.2.3). The handler turns it into a ToastMsg AND a
-// RefreshScreenMsg via tea.Batch.
-type actionCompletedMsg struct {
-	toast ToastMsg
-}
-
-// runUserActionCmd dispatches the active pendingAction against the
-// UsersPort and emits an actionCompletedMsg with the toast. The Cmd
-// returns nil when called without a wired UsersPort so tests can
-// drive the flow without a network round-trip.
-func runUserActionCmd(port domain.UsersPort, action pendingUserAction) tea.Cmd {
-	if port == nil {
-		return toastCmdInfo("UsersPort not wired — action skipped")
-	}
-	return func() tea.Msg {
-		ctx := context.Background()
-		login := action.User.Profile.Login
-		if login == "" {
-			login = action.User.ID
-		}
-		switch action.Kind {
-		case UserActionResetPassword:
-			if _, err := port.ResetPassword(ctx, action.User.ID, true); err != nil {
-				return toastErr("reset password failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("reset password email sent to " + login)}
-		case UserActionUnlock:
-			if err := port.Unlock(ctx, action.User.ID); err != nil {
-				return toastErr("unlock failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("unlocked " + login)}
-		case UserActionResetFactors:
-			if err := port.ResetFactors(ctx, action.User.ID); err != nil {
-				return toastErr("reset MFA failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("MFA factors reset for " + login)}
-		case UserActionActivate:
-			if err := port.Activate(ctx, action.User.ID, true); err != nil {
-				return toastErr("activate failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("activated " + login)}
-		case UserActionDeactivate:
-			if err := port.Deactivate(ctx, action.User.ID, false); err != nil {
-				return toastErr("deactivate failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("deactivated " + login)}
-		case UserActionExpirePassword:
-			if err := port.ExpirePassword(ctx, action.User.ID); err != nil {
-				return toastErr("expire password failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("password expired for " + login)}
-		case UserActionDelete:
-			if err := port.Delete(ctx, action.User.ID); err != nil {
-				return toastErr("delete failed: " + err.Error())
-			}
-			return actionCompletedMsg{toast: toastInfo("deleted " + login)}
-		}
-		return nil
-	}
-}
-
-func toastInfo(text string) ToastMsg {
-	return ToastMsg{Text: text, Level: ToastSuccess, Until: time.Now().Add(3 * time.Second)}
-}
-func toastErr(text string) ToastMsg {
-	return ToastMsg{Text: text, Level: ToastError, Until: time.Now().Add(5 * time.Second)}
-}
-func toastCmdInfo(text string) tea.Cmd {
-	return func() tea.Msg { return toastInfo(text) }
-}
+// (toastInfo / toastErr / toastCmdInfo / toastCmdError /
+// scheduleToastClearCmd / renderToastBand / toastClearMsg moved to
+// toast.go in #A2 v0.2.4.)
 
 // --- Cmd factories -------------------------------------------------------
 
@@ -2357,22 +2124,8 @@ func screenChangeCmd(target Screen) tea.Cmd {
 	return func() tea.Msg { return ScreenChangeMsg{Target: target} }
 }
 
-func toastCmdError(e ErrorMsg) tea.Cmd {
-	return func() tea.Msg {
-		return ToastMsg{
-			Text:  e.Err.Error(),
-			Level: ToastError,
-			Until: time.Now().Add(3 * time.Second),
-		}
-	}
-}
-
 func offlineCmd(offline bool) tea.Cmd {
 	return func() tea.Msg { return OfflineStateMsg{Offline: offline} }
-}
-
-func refreshActiveCmd() tea.Cmd {
-	return func() tea.Msg { return RefreshActiveScreenMsg{} }
 }
 
 // refreshScreenCmd returns a Cmd that fires shared.RefreshScreenMsg
@@ -2381,65 +2134,6 @@ func refreshActiveCmd() tea.Cmd {
 // reflect destructive ops in the active surface immediately.
 func refreshScreenCmd() tea.Cmd {
 	return func() tea.Msg { return shared.RefreshScreenMsg{} }
-}
-
-// toastClearMsg fires when a stored ToastMsg's expiry has elapsed and
-// the floating band should disappear. gen guards against an older
-// pending clear knocking out a newer toast (issue #195 v0.2.4).
-type toastClearMsg struct{ gen int }
-
-// scheduleToastClearCmd returns a tea.Tick that clears the floating
-// toast after `d`. Negative / zero d collapses to a 1.5s minimum so
-// the band is at least readable before it fades.
-func scheduleToastClearCmd(gen int, d time.Duration) tea.Cmd {
-	if d < 1500*time.Millisecond {
-		d = 1500 * time.Millisecond
-	}
-	return tea.Tick(d, func(time.Time) tea.Msg {
-		return toastClearMsg{gen: gen}
-	})
-}
-
-// renderToastBand returns a 1-line color-coded band — green for
-// Success, red for Error, yellow for Warn, muted for Info — centered
-// inside the chrome's content width (issue #195 v0.2.4). The band
-// stamps on top of the body via stampOverlayOnTop so action results
-// pop without stealing a chrome row.
-func renderToastBand(t ToastMsg, contentWidth int, tk shared.Tokens) string {
-	if t.Text == "" {
-		return ""
-	}
-	var icon string
-	var styler lipgloss.Style
-	switch t.Level {
-	case ToastSuccess:
-		icon = "✓"
-		styler = tk.Success
-	case ToastError:
-		icon = "✗"
-		styler = tk.Danger
-	case ToastWarn:
-		icon = "!"
-		styler = tk.Warning
-	default:
-		icon = "•"
-		styler = tk.Accent
-	}
-	body := icon + "  " + t.Text
-	w := shared.VisibleWidth(body)
-	if contentWidth <= 0 {
-		contentWidth = w + 4
-	}
-	if w > contentWidth {
-		body = shared.Truncate(body, contentWidth)
-		w = shared.VisibleWidth(body)
-	}
-	pad := 0
-	if contentWidth > w {
-		pad = (contentWidth - w) / 2
-	}
-	line := strings.Repeat(" ", pad) + styler.Bold(true).Render(body)
-	return line
 }
 
 // Internal activation markers consumed by overlay models once wired.

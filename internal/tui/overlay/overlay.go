@@ -194,11 +194,13 @@ func (m HelpModel) View() string {
 	resource := filtered(screenSpecificHelpEntries(m.screen))
 	general := filtered(generalHelpEntries())
 	navigation := filtered(navigationHelpEntries())
+	palette := filtered(paletteHelpEntries())
 
 	cols := []helpColumn{
 		{Title: "Resource", Entries: resource},
 		{Title: "General", Entries: general},
 		{Title: "Navigation", Entries: navigation},
+		{Title: "Palette", Entries: palette},
 	}
 	colWidths, totalWidth := pickHelpColumnLayout(cols, m.width)
 
@@ -414,6 +416,33 @@ func generalHelpEntries() []helpEntry {
 		{"Ctrl-c", "soft quit (tail confirm)"},
 		{"Ctrl-l", "force redraw"},
 		{"R", "refresh (cache invalidate)"},
+		{":quit", "quit ota"},
+	}
+}
+
+// paletteHelpEntries lists the canonical `:` palette commands so
+// operators can discover routes without reading the source. Issue
+// #U14 v0.2.4 — surfaced in the Help overlay's 4th column. Aliases
+// (e.g. `q`, `gr`) are intentionally omitted — only canonical names
+// appear here so the column stays readable.
+func paletteHelpEntries() []helpEntry {
+	return []helpEntry{
+		{":users", "Users list"},
+		{":groups", "Groups list"},
+		{":group-rules", "Group Rules list"},
+		{":policies", "Policies (with type picker)"},
+		{":apps", "Apps (with type picker)"},
+		{":logs", "System Log"},
+		{":saml-app", "SAML apps"},
+		{":oidc-app", "OIDC apps"},
+		{":okta-sign-on", "Okta Sign-On policies"},
+		{":password-policy", "Password policies"},
+		{":reset-password", "trigger Reset Password"},
+		{":unlock", "Unlock the selected user"},
+		{":reset-mfa", "Reset MFA factors"},
+		{":unmask <fld>", "reveal a masked detail field"},
+		{":mask", "re-mask all PII fields"},
+		{":help", "open this overlay"},
 		{":quit", "quit ota"},
 	}
 }

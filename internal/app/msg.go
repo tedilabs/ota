@@ -1,8 +1,6 @@
 package app
 
 import (
-	"time"
-
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/tui/shared"
 )
@@ -21,21 +19,18 @@ type ErrorMsg struct {
 	Source string // e.g., "users.list", "logs.tail.poll"
 }
 
-// ToastMsg is a short status-bar message.
-type ToastMsg struct {
-	Text  string
-	Level ToastLevel
-	Until time.Time // auto-dismiss
-}
-
-// ToastLevel categorizes toast severity.
-type ToastLevel int
+// ToastMsg is the canonical toast type now living in shared so any
+// TUI package can emit one without an import cycle (#A7 v0.2.4).
+// Re-exported here as type aliases so existing app.ToastMsg /
+// app.ToastError callers keep working.
+type ToastMsg = shared.ToastMsg
+type ToastLevel = shared.ToastLevel
 
 const (
-	ToastInfo ToastLevel = iota
-	ToastSuccess
-	ToastWarn
-	ToastError
+	ToastInfo    = shared.ToastInfo
+	ToastSuccess = shared.ToastSuccess
+	ToastWarn    = shared.ToastWarn
+	ToastError   = shared.ToastError
 )
 
 // ProfileSwitchStartedMsg triggers "Switching to <name>…" toast and cache
@@ -64,9 +59,6 @@ type NetworkRestoredMsg struct{}
 type OfflineStateMsg struct {
 	Offline bool
 }
-
-// RefreshActiveScreenMsg asks the active screen to re-fetch (REQ-E03 AC-3).
-type RefreshActiveScreenMsg struct{}
 
 // ScreenChangeMsg requests a switch of the active resource screen (REQ-U02 AC-1).
 // Used by the palette after a `:users`/`:groups`/… command resolves.

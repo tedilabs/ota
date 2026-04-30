@@ -34,6 +34,37 @@ func ScheduleSpinnerTickCmd(msg tea.Msg) tea.Cmd {
 	})
 }
 
+// EmptyPlaceholder renders a centered muted message used when a list
+// finished loading but has zero rows (filtered out, no resources of
+// the picked type, etc.). Issue #U3 v0.2.4 — same vertical centering
+// as LoadingPlaceholder so the layout doesn't pop.
+func EmptyPlaceholder(label string, bodyWidth, bodyHeight int, tk Tokens) string {
+	if bodyWidth < 1 {
+		bodyWidth = 1
+	}
+	if bodyHeight < 1 {
+		bodyHeight = 1
+	}
+	line := tk.Muted.Render(label)
+	w := VisibleWidth(line)
+	var hpad string
+	if bodyWidth > w {
+		hpad = strings.Repeat(" ", (bodyWidth-w)/2)
+	}
+	centered := hpad + line
+	var b strings.Builder
+	topPad := bodyHeight / 2
+	for i := 0; i < topPad; i++ {
+		b.WriteByte('\n')
+	}
+	b.WriteString(centered)
+	bottomPad := bodyHeight - topPad - 1
+	for i := 0; i < bottomPad; i++ {
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // LoadingPlaceholder renders a centered "<spinner>  <label>" block
 // padded to roughly fill the body region, so the chrome's lower
 // divider doesn't snap upward when data finally lands. Issue #194

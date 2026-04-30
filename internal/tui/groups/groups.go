@@ -123,7 +123,12 @@ type ListModel struct {
 	// arrives; before then View renders a spinner (issue #194 v0.2.4).
 	loaded       bool
 	spinnerFrame int
+	fetching     bool                 // #U10 v0.2.4 — auto-refresh / on-demand fetch in flight
+	failedAt     map[string]time.Time // #U11 v0.2.4 — failed-action row flash stamps
 }
+
+// Fetching implements app.FetchingStater (#U10 v0.2.4).
+func (m ListModel) Fetching() bool { return m.fetching }
 
 // groupsRefreshTickMsg fires the auto-refresh tick (issue #177
 // v0.1.16). gen matches refreshGen; mismatches are dropped.
@@ -287,13 +292,11 @@ func groupsSortBadge(key SortKey, dir SortDir) string {
 // scheduleRefreshTickCmd returns a tea.Tick that fires
 // groupsRefreshTickMsg after RefreshInterval. nil disables.
 func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {
-	if m.deps.RefreshInterval <= 0 || m.deps.Port == nil {
+	if m.deps.Port == nil {
 		return nil
 	}
-	gen := m.refreshGen
-	return tea.Tick(m.deps.RefreshInterval, func(time.Time) tea.Msg {
-		return groupsRefreshTickMsg{gen: gen}
-	})
+	return shared.ScheduleRefreshTickCmd(m.deps.RefreshInterval,
+		groupsRefreshTickMsg{gen: m.refreshGen})
 }
 
 // Update handles key input and fetch results.
@@ -307,49 +310,55 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case groupsLoadedMsg:
-		// v0.2.4 #202 — skip the diff on the first load so initial
-		// rows don't all flash; highlights start with refresh #2.
-		now := m.now()
-		if m.loaded {
-			m.changedAt = shared.DiffChanges(m.groups, msg.groups, m.changedAt, now,
-				func(g domain.Group) string { return g.ID }, groupTrackedEqual)
-		} else {
-			m.changedAt = nil
-		}
+		flash := shared.LoadDiff(&m.loaded, &m.lastUpdated, &m.changedAt,
+			m.groups, msg.groups, m.now(),
+			func(g domain.Group) string { return g.ID }, groupTrackedEqual)
 		m.groups = msg.groups
 		m.lastErr = nil
-		m.lastUpdated = now
-		m.loaded = true
-		if shared.HasFreshHighlights(m.changedAt, now) {
+		m.fetching = false
+		if flash {
 			return m, shared.ScheduleHighlightTickCmd(groupsHighlightTickMsg{})
 		}
 		return m, nil
 	case groupsHighlightTickMsg:
-		if shared.HasFreshHighlights(m.changedAt, m.now()) {
+		now := m.now()
+		if shared.HasFreshHighlights(m.changedAt, now) ||
+			shared.HasFreshHighlights(m.failedAt, now) {
 			return m, shared.ScheduleHighlightTickCmd(groupsHighlightTickMsg{})
 		}
 		return m, nil
 	case groupsSpinnerTickMsg:
-		if m.loaded {
+		if !shared.BumpSpinner(m.loaded, &m.spinnerFrame) {
 			return m, nil
 		}
-		m.spinnerFrame++
 		return m, shared.ScheduleSpinnerTickCmd(groupsSpinnerTickMsg{})
 	case groupsErrMsg:
 		m.lastErr = msg.err
 		m.loaded = true
+		m.fetching = false
 		return m, nil
 	case groupsRefreshTickMsg:
 		if msg.gen != m.refreshGen || m.deps.Port == nil {
 			return m, nil
 		}
+		m.fetching = true
 		return m, tea.Batch(fetchGroupsCmd(m.deps.Port), m.scheduleRefreshTickCmd())
 	case shared.RefreshScreenMsg:
 		// Issue #192 v0.2.3 — out-of-band refresh from the App Shell.
 		if m.deps.Port == nil {
 			return m, nil
 		}
+		m.fetching = true
 		return m, fetchGroupsCmd(m.deps.Port)
+	case shared.ActionFailedMsg:
+		if msg.TargetID == "" {
+			return m, nil
+		}
+		if m.failedAt == nil {
+			m.failedAt = map[string]time.Time{}
+		}
+		m.failedAt[msg.TargetID] = m.now()
+		return m, shared.ScheduleHighlightTickCmd(groupsHighlightTickMsg{})
 	case groupMembersLoadedMsg:
 		// Only accept if it matches the currently-open group — a stale
 		// fetch from a previously-opened detail must not overwrite.
@@ -852,7 +861,7 @@ func (m ListModel) View() string {
 	tk := activeTokens()
 
 	if !m.loaded {
-		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading groups…",
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading…",
 			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
 	}
 
@@ -884,8 +893,14 @@ func (m ListModel) View() string {
 		// v0.2.0 #182 — unified cursor pipeline.
 		// v0.2.3 #193 — flash RowChanged for rows whose tracked
 		// fields just changed during a refresh.
+		// #U11 v0.2.4 — flash RowDanger for rows with a recent
+		// failed action.
 		changed := shared.IsRowChanged(m.changedAt, rows[i].ID, now)
-		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, "", changed, tk))
+		tone := shared.RowToneNone
+		if shared.IsRowChanged(m.failedAt, rows[i].ID, now) {
+			tone = shared.RowToneFailed
+		}
+		b.WriteString(shared.RenderRowCursorTone(prefix+row, rowTarget, i == m.cursor, "", changed, tone, tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}

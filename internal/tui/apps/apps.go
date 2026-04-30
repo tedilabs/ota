@@ -187,7 +187,11 @@ type ListModel struct {
 	// arrives; before then View renders a spinner (issue #194 v0.2.4).
 	loaded       bool
 	spinnerFrame int
+	fetching     bool // #U10 v0.2.4 — auto-refresh / on-demand fetch in flight
 }
+
+// Fetching implements app.FetchingStater (#U10 v0.2.4).
+func (m ListModel) Fetching() bool { return m.fetching }
 
 // appsRefreshTickMsg fires the auto-refresh tick (issue #177).
 type appsRefreshTickMsg struct{ gen int }
@@ -200,18 +204,18 @@ type appsHighlightTickMsg struct{}
 // v0.2.4).
 type appsSpinnerTickMsg struct{}
 
-// AppDetailTab indexes the detail tab bar — Pretty / JSON / YAML
-// (matches the rest of the detail surfaces in ota).
-type AppDetailTab int
+// AppDetailTab is an alias of shared.DetailTab so the canonical
+// Pretty/JSON/YAML tab order + labels live in one place (#A4 v0.2.4).
+type AppDetailTab = shared.DetailTab
 
 const (
-	AppDetailTabPretty AppDetailTab = iota
-	AppDetailTabJSON
-	AppDetailTabYAML
+	AppDetailTabPretty = shared.DetailTabPretty
+	AppDetailTabJSON   = shared.DetailTabJSON
+	AppDetailTabYAML   = shared.DetailTabYAML
 )
 
-var appDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
-var appDetailTabCount = AppDetailTab(len(appDetailTabLabels))
+var appDetailTabLabels = shared.DetailTabLabels
+var appDetailTabCount = shared.DetailTabCount
 
 func NewListModel(deps Deps, t domain.AppType) ListModel {
 	m := ListModel{
@@ -266,13 +270,11 @@ func (m ListModel) EscapeWillAct() bool {
 
 // scheduleRefreshTickCmd returns the auto-refresh tea.Tick.
 func (m ListModel) scheduleRefreshTickCmd() tea.Cmd {
-	if m.deps.RefreshInterval <= 0 || m.deps.Port == nil {
+	if m.deps.Port == nil {
 		return nil
 	}
-	gen := m.refreshGen
-	return tea.Tick(m.deps.RefreshInterval, func(time.Time) tea.Msg {
-		return appsRefreshTickMsg{gen: gen}
-	})
+	return shared.ScheduleRefreshTickCmd(m.deps.RefreshInterval,
+		appsRefreshTickMsg{gen: m.refreshGen})
 }
 
 // Filtering / Filter / Count satisfy the App Shell's state interfaces.
@@ -307,20 +309,13 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case appsLoadedMsg:
-		// v0.2.4 #202 — skip the diff on the first load so initial
-		// rows don't all flash; highlights start with refresh #2.
-		now := m.now()
-		if m.loaded {
-			m.changedAt = shared.DiffChanges(m.apps, msg.apps, m.changedAt, now,
-				func(a domain.App) string { return a.ID }, appTrackedEqual)
-		} else {
-			m.changedAt = nil
-		}
+		flash := shared.LoadDiff(&m.loaded, &m.lastUpdated, &m.changedAt,
+			m.apps, msg.apps, m.now(),
+			func(a domain.App) string { return a.ID }, appTrackedEqual)
 		m.apps = msg.apps
 		m.lastErr = nil
-		m.lastUpdated = now
-		m.loaded = true
-		if shared.HasFreshHighlights(m.changedAt, now) {
+		m.fetching = false
+		if flash {
 			return m, shared.ScheduleHighlightTickCmd(appsHighlightTickMsg{})
 		}
 		return m, nil
@@ -330,25 +325,26 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case appsSpinnerTickMsg:
-		if m.loaded {
+		if !shared.BumpSpinner(m.loaded, &m.spinnerFrame) {
 			return m, nil
 		}
-		m.spinnerFrame++
 		return m, shared.ScheduleSpinnerTickCmd(appsSpinnerTickMsg{})
 	case appsErrMsg:
 		m.lastErr = msg.err
 		m.loaded = true
+		m.fetching = false
 		return m, nil
 	case appsRefreshTickMsg:
 		if msg.gen != m.refreshGen || m.deps.Port == nil {
 			return m, nil
 		}
+		m.fetching = true
 		return m, tea.Batch(fetchAppsCmd(m.deps.Port, m.appType), m.scheduleRefreshTickCmd())
 	case shared.RefreshScreenMsg:
-		// Issue #192 v0.2.3 — out-of-band refresh from the App Shell.
 		if m.deps.Port == nil {
 			return m, nil
 		}
+		m.fetching = true
 		return m, fetchAppsCmd(m.deps.Port, m.appType)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -476,7 +472,7 @@ func (m ListModel) View() string {
 	}
 	tk := activeTokens()
 	if !m.loaded {
-		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading apps…",
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading…",
 			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
 	}
 	now := m.now()

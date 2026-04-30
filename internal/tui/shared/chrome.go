@@ -143,9 +143,10 @@ type ChromeInput struct {
 	// at narrow widths.
 	StatusBadges []ChromeBadge
 
-	// StatusToast is an optional right-anchored one-shot message on
-	// the status row ("yanked 5 lines", "nothing to close"). Empty
-	// disables it.
+	// StatusToast is retained for backwards compat with callers that
+	// still reference the field; the App Shell now routes all
+	// transient messages through the floating toast band (#A7
+	// v0.2.4). Empty by default.
 	StatusToast string
 
 	// Body is the active child Screen body. Caller is responsible for sizing

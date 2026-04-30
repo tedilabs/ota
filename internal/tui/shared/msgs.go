@@ -1,5 +1,7 @@
 package shared
 
+import "time"
+
 // UnmaskFieldMsg asks the active Detail screen to reveal a specific PII
 // field. Sent by the App Shell when the operator types :unmask <field>
 // into the command palette (issue #115). Lives here in shared so both
@@ -53,3 +55,36 @@ type RunRuleActionMsg struct{ Kind string }
 // Each list / detail screen handles this by firing its main fetch
 // Cmd; the auto-refresh tick chain continues unchanged.
 type RefreshScreenMsg struct{}
+
+// ToastLevel categorizes toast severity. Issue #A7 v0.2.4 — moved
+// from internal/app to shared so any TUI package can emit a toast
+// without an import cycle through the App Shell.
+type ToastLevel int
+
+const (
+	ToastInfo ToastLevel = iota
+	ToastSuccess
+	ToastWarn
+	ToastError
+)
+
+// ActionFailedMsg is broadcast by the App Shell when a destructive
+// action errored against a specific resource ID, so the active list
+// can flash that row red (#U11 v0.2.4). The list looks up the row by
+// TargetID and stamps a `failedAt` timestamp; View renders RowDanger
+// for HighlightWindow.
+type ActionFailedMsg struct {
+	TargetID string
+}
+
+// ToastMsg is a transient message rendered as a color-coded floating
+// band (success: green ✓, error: red ✗, warn: yellow !, info: accent
+// •). Until is the auto-dismiss time (zero → defaults to ~3s).
+// Issue #A7 v0.2.4 — single canonical toast type that consolidates
+// the prior `app.ToastMsg`, the chrome's right-anchored statusToast
+// slot, and the per-screen `detailToast` strings.
+type ToastMsg struct {
+	Text  string
+	Level ToastLevel
+	Until time.Time
+}

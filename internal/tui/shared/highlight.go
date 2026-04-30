@@ -89,6 +89,61 @@ func ScheduleHighlightTickCmd(msg tea.Msg) tea.Cmd {
 	})
 }
 
+// LoadDiff is the canonical handler for a list's *LoadedMsg: on the
+// FIRST load it adopts the data without flashing any rows (loaded
+// becomes true, changedAt cleared); on subsequent loads it diffs the
+// incoming slice against the cached one so rows whose tracked fields
+// just changed get stamped at `now` and flash via RowChanged. Returns
+// whether the caller should schedule a highlight tick (i.e. at least
+// one fresh stamp landed). Issue #A1 v0.2.4 — collapses the
+// `if m.loaded { Diff } else { nil }` gate that every list duplicated.
+func LoadDiff[T any](
+	loaded *bool,
+	lastUpdated *time.Time,
+	changedAt *map[string]time.Time,
+	prev, next []T,
+	now time.Time,
+	idOf func(T) string,
+	equal func(T, T) bool,
+) bool {
+	if *loaded {
+		*changedAt = DiffChanges(prev, next, *changedAt, now, idOf, equal)
+	} else {
+		*changedAt = nil
+	}
+	*lastUpdated = now
+	*loaded = true
+	return HasFreshHighlights(*changedAt, now)
+}
+
+// BumpSpinner advances the spinner frame and returns whether to
+// reschedule the spinner tick. Returns false once loaded becomes
+// true so the caller can stop ticking. Issue #A1 v0.2.4.
+func BumpSpinner(loaded bool, frame *int) bool {
+	if loaded {
+		return false
+	}
+	*frame++
+	return true
+}
+
+// ScheduleRefreshTickCmd is the per-list auto-refresh scheduler.
+// Returns nil when interval ≤ 0 (auto-refresh disabled) so callers
+// can pass through `nil` without gating. Each list passes its own
+// already-tagged msg (e.g. `usersRefreshTickMsg{gen: m.refreshGen}`)
+// so the Update switch can route on type and the gen field guards
+// against stale ticks. Issue #A3 v0.2.4 — replaces the
+// `tea.Tick(...)` wrapper duplicated in every list's
+// scheduleRefreshTickCmd helper.
+func ScheduleRefreshTickCmd(interval time.Duration, msg tea.Msg) tea.Cmd {
+	if interval <= 0 {
+		return nil
+	}
+	return tea.Tick(interval, func(time.Time) tea.Msg {
+		return msg
+	})
+}
+
 // TimePtrsEqual returns true when two *time.Time values represent the
 // same instant, treating nil == nil as equal. Useful when implementing
 // a tracked-field comparator for DiffChanges over domain types whose

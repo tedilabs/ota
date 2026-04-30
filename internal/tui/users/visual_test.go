@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tedilabs/ota/internal/domain"
+	"github.com/tedilabs/ota/internal/tui/shared"
 	"github.com/tedilabs/ota/internal/tui/users"
 )
 
@@ -125,9 +126,10 @@ func Test_DetailVisual_EscCancelsWithoutClosingDetail(t *testing.T) {
 }
 
 // Test_DetailVisual_YankProducesToast asserts that pressing `y` ends
-// Visual mode and surfaces a toast — either "yanked N lines" on systems
-// where atotto/clipboard succeeded, or "yank failed:" otherwise. Either
-// path proves the keypath ran end-to-end.
+// Visual mode and emits a shared.ToastMsg — either success ("yanked N
+// lines") on systems where atotto/clipboard succeeded, or error
+// ("yank failed:") otherwise. The App Shell consumes the msg and
+// renders the floating band; this test exercises the cmd contract.
 func Test_DetailVisual_YankProducesToast(t *testing.T) {
 	t.Parallel()
 	m := detailHarness(t)
@@ -135,14 +137,17 @@ func Test_DetailVisual_YankProducesToast(t *testing.T) {
 	m = updated.(users.ListModel)
 	updated, _ = m.Update(key('j'))
 	m = updated.(users.ListModel)
-	updated, _ = m.Update(key('y'))
+	updated, cmd := m.Update(key('y'))
 	m = updated.(users.ListModel)
 
-	view := m.View()
-	hasOK := strings.Contains(view, "yanked") && strings.Contains(view, "line")
-	hasErr := strings.Contains(view, "yank failed:")
+	require.NotNil(t, cmd, "after `y`, the keypath must emit a ToastMsg cmd")
+	msg := cmd()
+	toast, ok := msg.(shared.ToastMsg)
+	require.True(t, ok, "yank cmd must produce a shared.ToastMsg, got %T", msg)
+	hasOK := strings.Contains(toast.Text, "yanked") && strings.Contains(toast.Text, "line")
+	hasErr := strings.Contains(toast.Text, "yank failed:")
 	assert.True(t, hasOK || hasErr,
-		"after `y`, View must surface a yank toast (success or failure):\n%s", view)
+		"toast text must read as a yank success or failure: %q", toast.Text)
 	assert.False(t, m.DetailVisualActive(),
 		"Visual mode must end after `y` regardless of clipboard success")
 }

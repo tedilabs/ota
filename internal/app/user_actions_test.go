@@ -230,6 +230,10 @@ func Test_AppShell_ActionConfirm_NCancels_NoPortCall(t *testing.T) {
 // Test_AppShell_ActionConfirm_PortError_SurfacesToast — when the port
 // returns an error, the App Shell renders an error-level toast carrying
 // the failure detail so operators see why the action didn't take.
+// #U11 v0.2.4 — the error path now emits an internal actionFailedMsg
+// the shell expands into a toast + an ActionFailed broadcast; this
+// test drives that whole pipeline and asserts the rendered View
+// contains the failure detail.
 func Test_AppShell_ActionConfirm_PortError_SurfacesToast(t *testing.T) {
 	t.Parallel()
 
@@ -242,14 +246,39 @@ func Test_AppShell_ActionConfirm_PortError_SurfacesToast(t *testing.T) {
 	m := newAppWithUsers(t, port)
 	m = typePalette(t, m, "unlock")
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = updated.(app.Model)
 	require.NotNil(t, cmd)
-	msg := cmd()
-	require.NotNil(t, msg)
+	failedMsg := cmd()
+	require.NotNil(t, failedMsg, "y on the action confirm must produce a Cmd that emits an internal failure msg")
 
-	toast, ok := msg.(app.ToastMsg)
-	require.True(t, ok, "action failure must produce a ToastMsg")
-	assert.Equal(t, app.ToastError, toast.Level)
-	assert.Contains(t, toast.Text, "unlock failed")
-	assert.Contains(t, toast.Text, "403 forbidden")
+	// Drive the msg through the App Shell. It dispatches a toast + a
+	// shared.ActionFailedMsg broadcast via tea.Batch.
+	updated2, batched := m.Update(failedMsg)
+	m = updated2.(app.Model)
+	require.NotNil(t, batched, "App Shell must batch toast + failure broadcast")
+
+	// Drain the Batch — drives the toast into m.toast so View renders the band.
+	// The Cmd returns a tea.BatchMsg ([]tea.Cmd). Drive each contained
+	// Cmd individually so the toast lands in m.toast for View().
+	if batched != nil {
+		bm := batched()
+		if cmds, ok := bm.(tea.BatchMsg); ok {
+			for _, c := range cmds {
+				if c == nil {
+					continue
+				}
+				if inner := c(); inner != nil {
+					updated3, _ := m.Update(inner)
+					m = updated3.(app.Model)
+				}
+			}
+		}
+	}
+
+	view := m.View()
+	assert.Contains(t, view, "unlock failed",
+		"the floating toast band must surface the action label on failure")
+	assert.Contains(t, view, "403 forbidden",
+		"the toast band must carry the underlying error detail")
 }
