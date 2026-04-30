@@ -651,6 +651,59 @@ func truncateVisible(s string, width int) string {
 // exit escape mode prematurely.
 func VisibleWidth(s string) int { return visibleWidth(s) }
 
+// SliceVisiblePrefix returns the prefix of `s` (assumed CSI-stripped)
+// up to `w` visible cells, padded with trailing spaces when `s` is
+// shorter than `w`. Used by the App Shell's modal-over-dimmed-body
+// splicer (#U16 v0.2.5) so the body content to the LEFT of a popup
+// modal stays visible at the right column position.
+func SliceVisiblePrefix(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	visible := 0
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if rw == 0 {
+			b.WriteRune(r)
+			continue
+		}
+		if visible+rw > w {
+			break
+		}
+		b.WriteRune(r)
+		visible += rw
+	}
+	if visible < w {
+		b.WriteString(strings.Repeat(" ", w-visible))
+	}
+	return b.String()
+}
+
+// SliceVisibleSuffix returns the suffix of `s` (assumed CSI-stripped)
+// starting AFTER the first `from` visible cells. Used together with
+// SliceVisiblePrefix to splice a modal into the middle of body rows
+// while keeping body content on either side visible (#U16 v0.2.5).
+func SliceVisibleSuffix(s string, from int) string {
+	if from <= 0 {
+		return s
+	}
+	visible := 0
+	idx := 0
+	for i, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if visible >= from {
+			return s[i:]
+		}
+		visible += rw
+		idx = i + utf8.RuneLen(r)
+	}
+	if visible >= from {
+		return s[idx:]
+	}
+	return ""
+}
+
 // PadOrTruncateVisible pads s with trailing spaces to exactly `width`
 // visible cells, or truncates when s is wider — honouring inner ANSI
 // styling. The list views call this to hold the scrollbar gutter

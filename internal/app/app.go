@@ -826,18 +826,58 @@ func (m Model) composeModalOverDimmedBody(modal string) string {
 	for len(bodyLines) < bodyHeight {
 		bodyLines = append(bodyLines, "")
 	}
-	body = strings.Join(bodyLines[:bodyHeight], "\n")
+	bodyLines = bodyLines[:bodyHeight]
 
-	dimmed := dimBody(body, tk)
-
-	// Center the modal vertically inside the body window.
-	modalLines := strings.Count(modal, "\n") + 1
-	topRow := (bodyHeight - modalLines) / 2
+	// Compute the modal's footprint so we can splice it into body
+	// rows and keep body content visible on either side.
+	modalRows := strings.Split(strings.TrimRight(modal, "\n"), "\n")
+	modalWidth := 0
+	for _, ml := range modalRows {
+		if w := shared.VisibleWidth(ml); w > modalWidth {
+			modalWidth = w
+		}
+	}
+	leftCol := (contentWidth - modalWidth) / 2
+	if leftCol < 0 {
+		leftCol = 0
+	}
+	rightStart := leftCol + modalWidth
+	topRow := (bodyHeight - len(modalRows)) / 2
 	if topRow < 0 {
 		topRow = 0
 	}
-	centered := centerInBody(modal, contentWidth)
-	return stampOverlayAtRow(centered, dimmed, topRow)
+
+	// #U16 v0.2.5 — splice the modal into body rows column-wise so
+	// content peeks through to the LEFT and RIGHT of the popup, with
+	// the surrounding cells dimmed via Muted.Faint(true). Was
+	// previously stamping over the entire row, which erased body
+	// content on the modal's row range.
+	out := make([]string, len(bodyLines))
+	for r, line := range bodyLines {
+		plain := shared.StripCSI(line)
+		modalRowIdx := r - topRow
+		if modalRowIdx < 0 || modalRowIdx >= len(modalRows) {
+			// Outside the modal's row range: dim the whole row.
+			if plain == "" {
+				out[r] = ""
+			} else {
+				out[r] = tk.Muted.Faint(true).Render(plain)
+			}
+			continue
+		}
+		left := shared.SliceVisiblePrefix(plain, leftCol)
+		right := shared.SliceVisibleSuffix(plain, rightStart)
+		var sb strings.Builder
+		if leftCol > 0 {
+			sb.WriteString(tk.Muted.Faint(true).Render(left))
+		}
+		sb.WriteString(modalRows[modalRowIdx])
+		if right != "" {
+			sb.WriteString(tk.Muted.Faint(true).Render(right))
+		}
+		out[r] = sb.String()
+	}
+	return strings.Join(out, "\n")
 }
 
 // renderQuitConfirmModal builds the centered yellow-title modal for
