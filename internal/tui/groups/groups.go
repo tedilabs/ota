@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,13 +85,30 @@ type ListModel struct {
 	// column slice when the natural row exceeds the viewport.
 	hScroll int
 	// detailMembers is the lazy-loaded member list rendered on the
-	// Members detail tab (issue #142). Nil until the operator visits
-	// the tab; once loaded, future Tab cycles re-show without
-	// re-fetching.
+	// Members detail tab (issue #142). Nil until the operator opens
+	// the detail surface; v0.2.2 #189 promotes the fetch to fire on
+	// open so the side-by-side Members + Apps boxes mirror the User
+	// Detail Groups + Apps layout (issue #170 pattern).
 	detailMembers       []domain.User
 	detailMembersGroup  string // group ID the cached list belongs to
 	detailMembersErr    error
 	detailMembersLoaded bool
+
+	// detailApps holds the lazy-loaded apps assigned to this group
+	// (issue #189 v0.2.2). Same per-group keying pattern as members.
+	detailApps       []domain.App
+	detailAppsGroup  string
+	detailAppsErr    error
+	detailAppsLoaded bool
+
+	// detailExtrasFocused / detailExtrasCur drive the linear cursor
+	// flow across the Members + Apps boxes (mirrors User Detail
+	// issue #174). `]` enters the boxes; j/k flows from the last
+	// Members row into the first Apps row and wraps.
+	detailExtrasFocused bool
+	detailExtrasCur     int
+	detailMembersTop    int
+	detailAppsTop       int
 
 	// lastUpdated stamps the most recent successful list fetch (issue
 	// #177 v0.1.16). Surfaced via LastUpdated() for the chrome.
@@ -98,11 +116,26 @@ type ListModel struct {
 	// refreshGen guards against stale refresh-tick Cmds firing
 	// after the model was rebuilt or a refresh cycle was forced.
 	refreshGen int
+	// changedAt — per-row "just changed" stamps for the RowChanged
+	// flash on refresh (issue #193 v0.2.3).
+	changedAt map[string]time.Time
+	// loaded flips true once the first groupsLoadedMsg / groupsErrMsg
+	// arrives; before then View renders a spinner (issue #194 v0.2.4).
+	loaded       bool
+	spinnerFrame int
 }
 
 // groupsRefreshTickMsg fires the auto-refresh tick (issue #177
 // v0.1.16). gen matches refreshGen; mismatches are dropped.
 type groupsRefreshTickMsg struct{ gen int }
+
+// groupsHighlightTickMsg keeps the View re-rendering while at least
+// one row is still inside shared.HighlightWindow (issue #193 v0.2.3).
+type groupsHighlightTickMsg struct{}
+
+// groupsSpinnerTickMsg advances the loading spinner frame (issue
+// #194 v0.2.4).
+type groupsSpinnerTickMsg struct{}
 
 // GroupDetailTab indexes the Group Detail tab bar. v0.1.2 collapsed the
 // placeholder tabs into the three structural views (Pretty / JSON / YAML).
@@ -115,9 +148,11 @@ const (
 	GroupDetailTabJSON
 	GroupDetailTabYAML
 	// GroupDetailTabMembers lists the users that belong to this group
-	// (issue #142). Populated lazily — entering the tab fires a Cmd
-	// against GroupsPort.Members; the result lands on the model via
-	// groupMembersLoadedMsg.
+	// (issue #142). v0.2.2 #189 demoted from a tab to a side-by-side
+	// box rendered beneath the Pretty layout — mirrors User Detail
+	// Groups+Apps. The constant survives so the `m` shortcut still
+	// has a target (it now jumps cursor focus into the Members box
+	// instead of switching tab).
 	GroupDetailTabMembers
 )
 
@@ -126,7 +161,10 @@ const (
 	GroupDetailTabRaw     = GroupDetailTabJSON
 )
 
-var groupDetailTabLabels = []string{"Pretty", "JSON", "YAML", "Members"}
+// v0.2.2 #189 — Members dropped from the tab bar into a side-by-side
+// box; tab list shrinks back to the Pretty / JSON / YAML triplet
+// every other detail surface uses.
+var groupDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
 var groupDetailTabCount = GroupDetailTab(len(groupDetailTabLabels))
 
 // groupsErrMsg surfaces a fetch failure to View() (TUI_DESIGN §17).
@@ -139,6 +177,20 @@ type groupMembersLoadedMsg struct {
 	members []domain.User
 }
 type groupMembersErrMsg struct {
+	groupID string
+	err     error
+}
+
+// groupAppsLoadedMsg / groupAppsErrMsg deliver the result of the
+// per-group apps fetch — issue #189 v0.2.2 powers the Group Detail
+// Apps box. Per-group keying mirrors the Members fetch so a stale
+// fetch from a previously-open group can't overwrite the current
+// one.
+type groupAppsLoadedMsg struct {
+	groupID string
+	apps    []domain.App
+}
+type groupAppsErrMsg struct {
 	groupID string
 	err     error
 }
@@ -159,12 +211,16 @@ type groupOpenByIDErrMsg struct{ err error }
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
-	return ListModel{
+	m := ListModel{
 		deps:   deps,
 		groups: deps.InitialGroups,
 		width:  deps.Width,
 		height: deps.Height,
 	}
+	if len(m.groups) > 0 || deps.Port == nil {
+		m.loaded = true
+	}
+	return m
 }
 
 // Init fetches the groups list on entry (REQ-R02 AC-1) and schedules
@@ -246,20 +302,54 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if !m.loaded {
+			return m, shared.ScheduleSpinnerTickCmd(groupsSpinnerTickMsg{})
+		}
 		return m, nil
 	case groupsLoadedMsg:
+		// v0.2.4 #202 — skip the diff on the first load so initial
+		// rows don't all flash; highlights start with refresh #2.
+		now := m.now()
+		if m.loaded {
+			m.changedAt = shared.DiffChanges(m.groups, msg.groups, m.changedAt, now,
+				func(g domain.Group) string { return g.ID }, groupTrackedEqual)
+		} else {
+			m.changedAt = nil
+		}
 		m.groups = msg.groups
 		m.lastErr = nil
-		m.lastUpdated = m.now()
+		m.lastUpdated = now
+		m.loaded = true
+		if shared.HasFreshHighlights(m.changedAt, now) {
+			return m, shared.ScheduleHighlightTickCmd(groupsHighlightTickMsg{})
+		}
 		return m, nil
+	case groupsHighlightTickMsg:
+		if shared.HasFreshHighlights(m.changedAt, m.now()) {
+			return m, shared.ScheduleHighlightTickCmd(groupsHighlightTickMsg{})
+		}
+		return m, nil
+	case groupsSpinnerTickMsg:
+		if m.loaded {
+			return m, nil
+		}
+		m.spinnerFrame++
+		return m, shared.ScheduleSpinnerTickCmd(groupsSpinnerTickMsg{})
 	case groupsErrMsg:
 		m.lastErr = msg.err
+		m.loaded = true
 		return m, nil
 	case groupsRefreshTickMsg:
 		if msg.gen != m.refreshGen || m.deps.Port == nil {
 			return m, nil
 		}
 		return m, tea.Batch(fetchGroupsCmd(m.deps.Port), m.scheduleRefreshTickCmd())
+	case shared.RefreshScreenMsg:
+		// Issue #192 v0.2.3 — out-of-band refresh from the App Shell.
+		if m.deps.Port == nil {
+			return m, nil
+		}
+		return m, fetchGroupsCmd(m.deps.Port)
 	case groupMembersLoadedMsg:
 		// Only accept if it matches the currently-open group — a stale
 		// fetch from a previously-opened detail must not overwrite.
@@ -274,6 +364,20 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.opened && m.detail.ID == msg.groupID {
 			m.detailMembersErr = msg.err
 			m.detailMembersLoaded = true
+		}
+		return m, nil
+	case groupAppsLoadedMsg:
+		if m.opened && m.detail.ID == msg.groupID {
+			m.detailApps = msg.apps
+			m.detailAppsGroup = msg.groupID
+			m.detailAppsErr = nil
+			m.detailAppsLoaded = true
+		}
+		return m, nil
+	case groupAppsErrMsg:
+		if m.opened && m.detail.ID == msg.groupID {
+			m.detailAppsErr = msg.err
+			m.detailAppsLoaded = true
 		}
 		return m, nil
 	case OpenDetailByIDMsg:
@@ -292,7 +396,14 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detailMembersGroup = ""
 		m.detailMembersErr = nil
 		m.detailMembersLoaded = false
-		return m, nil
+		m.detailApps = nil
+		m.detailAppsGroup = ""
+		m.detailAppsErr = nil
+		m.detailAppsLoaded = false
+		m.detailExtrasFocused = false
+		m.detailExtrasCur = 0
+		// v0.2.2 #189: kick the lazy fetches that fill the boxes.
+		return m, m.fetchExtrasOnOpen()
 	case groupOpenByIDErrMsg:
 		m.lastErr = msg.err
 		return m, nil
@@ -315,6 +426,12 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.opened {
 		switch msg.Type {
 		case tea.KeyEsc:
+			// v0.2.2 #189: Esc backs out of the boxes first, then
+			// closes detail (mirrors User Detail's extras semantics).
+			if m.detailExtrasFocused {
+				m.detailExtrasFocused = false
+				return m, nil
+			}
 			m.opened = false
 			m.detail = domain.Group{}
 			m.detailTab = GroupDetailTabProfile
@@ -323,19 +440,59 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailMembersGroup = ""
 			m.detailMembersErr = nil
 			m.detailMembersLoaded = false
+			m.detailApps = nil
+			m.detailAppsGroup = ""
+			m.detailAppsErr = nil
+			m.detailAppsLoaded = false
+			m.detailExtrasFocused = false
+			m.detailExtrasCur = 0
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = (m.detailTab + 1) % groupDetailTabCount
-			return m.maybeFetchMembers()
+			return m, nil
 		case tea.KeyShiftTab:
 			m.detailTab = (m.detailTab + groupDetailTabCount - 1) % groupDetailTabCount
-			return m.maybeFetchMembers()
+			return m, nil
 		case tea.KeyRunes:
 			runes := string(msg.Runes)
-			if runes == "m" {
-				// Direct shortcut to the Members tab (issue #142).
-				m.detailTab = GroupDetailTabMembers
-				return m.maybeFetchMembers()
+			// v0.2.2 #189: `m` jumps focus to the Members box (was
+			// the Members tab); `]` enters the boxes; `[` returns to
+			// the body. Same flow as User Detail Groups+Apps boxes.
+			switch runes {
+			case "m":
+				m.detailExtrasFocused = true
+				m.detailExtrasCur = 0
+				return m, nil
+			case "]":
+				if !m.detailExtrasFocused {
+					m.detailExtrasFocused = true
+					m.detailExtrasCur = 0
+				} else {
+					m.detailExtrasCur = len(m.detailMembers)
+					if m.detailExtrasCur >= m.detailExtrasTotal() {
+						m.detailExtrasCur = 0
+					}
+				}
+				return m, nil
+			case "[":
+				if m.detailExtrasFocused {
+					m.detailExtrasCur = 0
+				}
+				return m, nil
+			case "j":
+				if m.detailExtrasFocused {
+					if total := m.detailExtrasTotal(); total > 0 {
+						m.detailExtrasCur = (m.detailExtrasCur + 1) % total
+					}
+					return m, nil
+				}
+			case "k":
+				if m.detailExtrasFocused {
+					if total := m.detailExtrasTotal(); total > 0 {
+						m.detailExtrasCur = (m.detailExtrasCur - 1 + total) % total
+					}
+					return m, nil
+				}
 			}
 			if runes == "r" {
 				if m.detailTab == GroupDetailTabRaw {
@@ -457,7 +614,8 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.detail = *sel
 			m.opened = true
-			return m, nil
+			m.resetExtras()
+			return m, m.fetchExtrasOnOpen()
 		}
 	}
 	if msg.Type == tea.KeyEnter {
@@ -467,8 +625,185 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.detail = *sel
 		m.opened = true
+		m.resetExtras()
+		return m, m.fetchExtrasOnOpen()
 	}
 	return m, nil
+}
+
+// resetExtras clears the per-group lazy-fetch caches when the
+// operator opens a new detail surface (issue #189 v0.2.2).
+func (m *ListModel) resetExtras() {
+	m.detailMembers = nil
+	m.detailMembersGroup = ""
+	m.detailMembersErr = nil
+	m.detailMembersLoaded = false
+	m.detailApps = nil
+	m.detailAppsGroup = ""
+	m.detailAppsErr = nil
+	m.detailAppsLoaded = false
+	m.detailExtrasFocused = false
+	m.detailExtrasCur = 0
+	m.detailMembersTop = 0
+	m.detailAppsTop = 0
+}
+
+// fetchExtrasOnOpen returns a tea.Batch that fires both the Members
+// and Apps lazy fetches for the just-opened detail surface (issue
+// #189 v0.2.2). Used by every detail-open path so the boxes
+// populate from the moment the surface mounts.
+func (m ListModel) fetchExtrasOnOpen() tea.Cmd {
+	if m.deps.Port == nil || m.detail.ID == "" {
+		return nil
+	}
+	return tea.Batch(
+		fetchGroupMembersCmd(m.deps.Port, m.detail.ID),
+		fetchGroupAppsCmd(m.deps.Port, m.detail.ID),
+	)
+}
+
+// detailExtrasTotal returns the linear cursor space across the
+// Members + Apps boxes — used by j/k wrap arithmetic.
+func (m ListModel) detailExtrasTotal() int {
+	mem := 0
+	if m.detailMembersLoaded && m.detailMembersErr == nil {
+		mem = len(m.detailMembers)
+	}
+	apps := 0
+	if m.detailAppsLoaded && m.detailAppsErr == nil {
+		apps = len(m.detailApps)
+	}
+	return mem + apps
+}
+
+// renderGroupExtras builds the side-by-side Members + Apps boxes
+// rendered beneath the Pretty body (issue #189 v0.2.2). Mirrors
+// the User Detail Groups + Apps layout (#170): linear cursor flows
+// across both boxes, only one box highlights at a time, both share
+// the same height for predictable chrome budgeting.
+func (m ListModel) renderGroupExtras(tk shared.Tokens) string {
+	innerHeight := m.groupExtrasBoxHeight()
+	leftW, rightW := m.groupExtrasBoxWidths()
+
+	memberItems := m.formatMembersItems(tk)
+	appItems := m.formatGroupAppsItems(tk)
+
+	memberTitle := "Members"
+	if m.detailMembersLoaded {
+		memberTitle = memberTitle + "  (" + strconv.Itoa(len(m.detailMembers)) + ")"
+	}
+	appTitle := "Apps"
+	if m.detailAppsLoaded {
+		appTitle = appTitle + "  (" + strconv.Itoa(len(m.detailApps)) + ")"
+	}
+
+	memFocus := m.detailExtrasFocused && m.detailExtrasCur < len(m.detailMembers)
+	appFocus := m.detailExtrasFocused && m.detailExtrasCur >= len(m.detailMembers)
+	memRow := -1
+	appRow := -1
+	if memFocus {
+		memRow = m.detailExtrasCur
+	}
+	if appFocus {
+		appRow = m.detailExtrasCur - len(m.detailMembers)
+	}
+
+	memTop := shared.ClampScrollTop(maxOr0(memRow), m.detailMembersTop, innerHeight, len(memberItems))
+	appTop := shared.ClampScrollTop(maxOr0(appRow), m.detailAppsTop, innerHeight, len(appItems))
+
+	left := shared.RenderScrollBox(
+		memberTitle, memberItems, memFocus, memRow, memTop, innerHeight, leftW, tk,
+	)
+	right := shared.RenderScrollBox(
+		appTitle, appItems, appFocus, appRow, appTop, innerHeight, rightW, tk,
+	)
+	hint := tk.Muted.Render(
+		"  ]  enter / next box   [  back to top   m  Members box   j/k  scroll (wraps)   Esc  exit boxes")
+	return shared.ComposeColumns(left, right, leftW) + "\n" + hint
+}
+
+// formatMembersItems renders one line per group member —
+// `[STATUS]  login` with the status badge in Muted brackets.
+func (m ListModel) formatMembersItems(tk shared.Tokens) []string {
+	if row := shared.PlaceholderRow(m.detailMembersLoaded, m.detailMembersErr, len(m.detailMembers), "members", tk); row != "" {
+		return []string{row}
+	}
+	out := make([]string, 0, len(m.detailMembers))
+	for _, u := range m.detailMembers {
+		login := u.Profile.Login
+		if login == "" {
+			login = u.ID
+		}
+		out = append(out, tk.Muted.Render("["+string(u.Status)+"]")+"  "+login)
+	}
+	return out
+}
+
+// formatGroupAppsItems renders one line per assigned app —
+// `Label  (name)` matching the User Detail Apps box rendering.
+func (m ListModel) formatGroupAppsItems(tk shared.Tokens) []string {
+	if row := shared.PlaceholderRow(m.detailAppsLoaded, m.detailAppsErr, len(m.detailApps), "apps assigned", tk); row != "" {
+		return []string{row}
+	}
+	out := make([]string, 0, len(m.detailApps))
+	for _, a := range m.detailApps {
+		label := a.Label
+		if label == "" {
+			label = a.Name
+		}
+		row := label
+		if a.Name != "" && a.Name != label {
+			row = row + "  " + tk.Muted.Render("("+a.Name+")")
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// groupExtrasBoxHeight derives the per-box content row count from
+// the chrome's body budget after subtracting the Pretty header
+// area. Floor 5 rows so a one-member group still reads.
+func (m ListModel) groupExtrasBoxHeight() int {
+	const minRows = 5
+	available := shared.ListBodyRowBudget(m.height)
+	const overhead = 12 // detail header + Pretty body baseline + 2 borders + hint
+	rows := available - overhead
+	if rows < minRows {
+		return minRows
+	}
+	return rows
+}
+
+// groupExtrasBoxWidths splits the chrome content area exactly across
+// the two boxes; right absorbs the +1 cell when the available width
+// is odd so the right border sits flush against the chrome border.
+func (m ListModel) groupExtrasBoxWidths() (left, right int) {
+	w := m.width
+	if w <= 0 {
+		w = shared.ChromeWidth
+	}
+	if w < 80 {
+		w = 80
+	}
+	const gutter = 2
+	contentW := w - 3
+	avail := contentW - gutter
+	left = avail / 2
+	right = avail - left
+	if left < 30 {
+		left = 30
+	}
+	if right < 30 {
+		right = 30
+	}
+	return left, right
+}
+
+func maxOr0(n int) int {
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // cycleSort advances the sort state per TUI_DESIGN §3.5: same key cycles
@@ -500,14 +835,27 @@ func (m *ListModel) cycleSort(target SortKey) {
 // Shell.
 func (m ListModel) View() string {
 	if m.opened {
-		return renderGroupDetailTabbed(m.detail, m.detailTab,
+		body := renderGroupDetailTabbed(m.detail, m.detailTab,
 			m.detailMembers, m.detailMembersLoaded, m.detailMembersErr)
+		// v0.2.2 #189 — Pretty tab gets the side-by-side Members +
+		// Apps boxes beneath the body (mirrors User Detail Groups +
+		// Apps, issue #170). Only Pretty: JSON / YAML stay raw.
+		if m.detailTab == GroupDetailTabPretty {
+			body = body + "\n" + m.renderGroupExtras(activeTokens())
+		}
+		return body
 	}
 	if m.lastErr != nil {
 		return "Groups  (error)\n" + shared.ErrorPanel("groups", m.lastErr)
 	}
 
 	tk := activeTokens()
+
+	if !m.loaded {
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading groups…",
+			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
+	}
+
 	rows := m.visible()
 
 	var b strings.Builder
@@ -526,18 +874,55 @@ func (m ListModel) View() string {
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
 	budget := end - top
 	rowTarget := m.chromeContentWidth() - 2
+	now := m.now()
 	for i := top; i < end; i++ {
-		row := m.renderGroupsRow(rows[i], m.now(), tk)
+		row := m.renderGroupsRow(rows[i], now, tk)
 		prefix := "  "
 		if i == m.cursor {
 			prefix = "▸ "
 		}
 		// v0.2.0 #182 — unified cursor pipeline.
-		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, "", tk))
+		// v0.2.3 #193 — flash RowChanged for rows whose tracked
+		// fields just changed during a refresh.
+		changed := shared.IsRowChanged(m.changedAt, rows[i].ID, now)
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, "", changed, tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// groupTrackedEqual reports whether two group snapshots match on every
+// field the list View renders. Tracked fields: name, description,
+// type, member count, lastUpdated, lastMembershipUpdated.
+func groupTrackedEqual(a, b domain.Group) bool {
+	if a.Profile.Name != b.Profile.Name ||
+		a.Profile.Description != b.Profile.Description {
+		return false
+	}
+	if a.Type != b.Type {
+		return false
+	}
+	if !intPtrsEqual(a.MemberCount, b.MemberCount) {
+		return false
+	}
+	if !a.LastUpdated.Equal(b.LastUpdated) {
+		return false
+	}
+	if !shared.TimePtrsEqual(a.LastMembershipUpdated, b.LastMembershipUpdated) {
+		return false
+	}
+	return true
+}
+
+func intPtrsEqual(a, b *int) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	}
+	return *a == *b
 }
 
 // chromeContentWidth returns the body cells the chrome reserves per
@@ -1061,11 +1446,29 @@ func fetchGroupMembersCmd(port domain.GroupsPort, groupID string) tea.Cmd {
 	}
 }
 
+// fetchGroupAppsCmd loads the apps assigned to a group via
+// GroupsPort.ListApps (issue #189 v0.2.2). Mirrors
+// fetchGroupMembersCmd's per-group keying.
+func fetchGroupAppsCmd(port domain.GroupsPort, groupID string) tea.Cmd {
+	return func() tea.Msg {
+		if port == nil {
+			return groupAppsErrMsg{groupID: groupID, err: domain.ErrNotFound}
+		}
+		ctx := context.Background()
+		apps, err := port.ListApps(ctx, groupID)
+		if err != nil {
+			return groupAppsErrMsg{groupID: groupID, err: err}
+		}
+		return groupAppsLoadedMsg{groupID: groupID, apps: apps}
+	}
+}
+
 // maybeFetchMembers fires a Cmd to load the Members tab for the
-// currently-open group when (a) the operator is on the Members tab
-// and (b) the cache is empty or belongs to a different group. No-op
-// otherwise so flipping back to a previously-loaded Members view
-// doesn't burn rate-limit budget.
+// currently-open group. v0.2.2 #189 demoted Members from a tab to
+// a side-by-side box so this helper is now only used by the
+// shrunk-tab path; the box fetches fire on detail-open via
+// fetchExtrasOnOpen. Kept for backward compat with any external
+// caller.
 func (m ListModel) maybeFetchMembers() (tea.Model, tea.Cmd) {
 	if m.detailTab != GroupDetailTabMembers {
 		return m, nil

@@ -79,6 +79,32 @@ func (a *GroupsAdapter) AppCount(ctx context.Context, id string) (int, error) {
 	return len(raws), nil
 }
 
+// ListApps returns the apps assigned to the group — issue #189
+// v0.2.2 powers the Group Detail Apps box. Same endpoint as
+// AppCount but decodes through the canonical wireApp shape so the
+// labels / status / signOnMode survive into the box rendering.
+func (a *GroupsAdapter) ListApps(ctx context.Context, groupID string) ([]domain.App, error) {
+	u := a.client.buildURL("/api/v1/groups/" + url.PathEscape(groupID) + "/apps?limit=200")
+	resp, err := a.client.doGet(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	defer drainAndClose(resp)
+	var raws []json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raws); err != nil {
+		return nil, fmt.Errorf("okta: decode apps: %w", err)
+	}
+	out := make([]domain.App, 0, len(raws))
+	for _, r := range raws {
+		var w wireApp
+		if err := json.Unmarshal(r, &w); err != nil {
+			return nil, fmt.Errorf("okta: decode app: %w", err)
+		}
+		out = append(out, mapApp(&w))
+	}
+	return out, nil
+}
+
 func buildGroupsQuery(q domain.GroupsQuery) string {
 	v := url.Values{}
 	if q.Q != "" {

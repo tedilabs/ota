@@ -44,3 +44,12 @@ type RunUserActionMsg struct{ Kind string }
 // RunUserActionMsg (issue #188 v0.2.2). Kind ∈ {"activate",
 // "deactivate", "delete"}.
 type RunRuleActionMsg struct{ Kind string }
+
+// RefreshScreenMsg asks the active screen to re-fetch its data
+// without waiting for the next auto-refresh tick. Issue #192
+// v0.2.3 — surfaced after destructive actions complete (Activate /
+// Deactivate / Reset Password / etc) so the list/detail reflects
+// the new state immediately, and after network-restored events.
+// Each list / detail screen handles this by firing its main fetch
+// Cmd; the auto-refresh tick chain continues unchanged.
+type RefreshScreenMsg struct{}

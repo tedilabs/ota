@@ -97,10 +97,25 @@ type ListModel struct {
 	// #177 v0.1.16); refreshGen invalidates stale ticks.
 	lastUpdated time.Time
 	refreshGen  int
+	// changedAt — per-row "just changed" stamps for the RowChanged
+	// flash on refresh (issue #193 v0.2.3).
+	changedAt map[string]time.Time
+	// loaded flips true once the first rulesLoadedMsg / rulesErrMsg
+	// arrives; before then View renders a spinner (issue #194 v0.2.4).
+	loaded       bool
+	spinnerFrame int
 }
 
 // rulesRefreshTickMsg fires the auto-refresh tick (issue #177).
 type rulesRefreshTickMsg struct{ gen int }
+
+// rulesHighlightTickMsg keeps the View re-rendering while at least one
+// row is still inside shared.HighlightWindow (issue #193 v0.2.3).
+type rulesHighlightTickMsg struct{}
+
+// rulesSpinnerTickMsg advances the loading spinner frame (issue #194
+// v0.2.4).
+type rulesSpinnerTickMsg struct{}
 
 // RuleDetailTab indexes the Group Rule Detail tab bar. v0.1.2 collapsed
 // the placeholder tabs into Pretty / JSON / YAML; the old Profile / Raw
@@ -123,12 +138,16 @@ var ruleDetailTabCount = RuleDetailTab(len(ruleDetailTabLabels))
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
-	return ListModel{
+	m := ListModel{
 		deps:   deps,
 		rules:  deps.InitialRules,
 		width:  deps.Width,
 		height: deps.Height,
 	}
+	if len(m.rules) > 0 || deps.Port == nil {
+		m.loaded = true
+	}
+	return m
 }
 
 // Init fetches the rules list on entry and schedules the first
@@ -210,30 +229,74 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if !m.loaded {
+			return m, shared.ScheduleSpinnerTickCmd(rulesSpinnerTickMsg{})
+		}
 		return m, nil
 	case rulesLoadedMsg:
+		// v0.2.4 #202 — skip the diff on the first load so initial
+		// rows don't all flash; highlights start with refresh #2.
+		now := m.now()
+		if m.loaded {
+			m.changedAt = shared.DiffChanges(m.rules, msg.rules, m.changedAt, now,
+				func(r domain.GroupRule) string { return r.ID }, ruleTrackedEqual)
+		} else {
+			m.changedAt = nil
+		}
 		m.rules = msg.rules
 		m.lastErr = nil
-		m.lastUpdated = m.now()
+		m.lastUpdated = now
+		m.loaded = true
 		// Once rules are loaded, fire a Cmd that resolves target
 		// group IDs → names so TARGETS reads as a list of human
 		// names rather than 00g_… opaque IDs (issue #163).
+		var nameFetch tea.Cmd
 		if !m.groupNamesFetched {
 			m.groupNamesFetched = true
 			ids := collectTargetGroupIDs(m.rules)
 			if len(ids) > 0 && m.deps.Groups != nil {
-				return m, fetchGroupNamesCmd(m.deps.Groups, ids)
+				nameFetch = fetchGroupNamesCmd(m.deps.Groups, ids)
 			}
 		}
+		var highlight tea.Cmd
+		if shared.HasFreshHighlights(m.changedAt, now) {
+			highlight = shared.ScheduleHighlightTickCmd(rulesHighlightTickMsg{})
+		}
+		switch {
+		case nameFetch != nil && highlight != nil:
+			return m, tea.Batch(nameFetch, highlight)
+		case nameFetch != nil:
+			return m, nameFetch
+		case highlight != nil:
+			return m, highlight
+		}
 		return m, nil
+	case rulesHighlightTickMsg:
+		if shared.HasFreshHighlights(m.changedAt, m.now()) {
+			return m, shared.ScheduleHighlightTickCmd(rulesHighlightTickMsg{})
+		}
+		return m, nil
+	case rulesSpinnerTickMsg:
+		if m.loaded {
+			return m, nil
+		}
+		m.spinnerFrame++
+		return m, shared.ScheduleSpinnerTickCmd(rulesSpinnerTickMsg{})
 	case rulesErrMsg:
 		m.lastErr = msg.err
+		m.loaded = true
 		return m, nil
 	case rulesRefreshTickMsg:
 		if msg.gen != m.refreshGen || m.deps.Port == nil {
 			return m, nil
 		}
 		return m, tea.Batch(fetchRulesCmd(m.deps.Port), m.scheduleRefreshTickCmd())
+	case shared.RefreshScreenMsg:
+		// Issue #192 v0.2.3 — out-of-band refresh from the App Shell.
+		if m.deps.Port == nil {
+			return m, nil
+		}
+		return m, fetchRulesCmd(m.deps.Port)
 	case groupNamesLoadedMsg:
 		if m.groupNames == nil {
 			m.groupNames = map[string]string{}
@@ -420,6 +483,10 @@ func (m ListModel) View() string {
 	}
 
 	tk := activeTokens()
+	if !m.loaded {
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading group rules…",
+			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
+	}
 	rows := m.visible()
 
 	var b strings.Builder
@@ -438,15 +505,19 @@ func (m ListModel) View() string {
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
 	budget := end - top
 	rowTarget := m.chromeContentWidth() - 2
+	now := m.now()
 	for i := top; i < end; i++ {
-		row := m.renderRulesRow(rows[i], m.now(), tk)
+		row := m.renderRulesRow(rows[i], now, tk)
 		prefix := "  "
 		if i == m.cursor {
 			prefix = "▸ "
 		}
 		// v0.2.0 #182 — unified cursor pipeline (issue #155
 		// INVALID/INACTIVE row tint applies via shared.RenderRowCursor).
-		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), tk))
+		// v0.2.3 #193 — flash RowChanged for rows whose tracked
+		// fields just changed during a refresh.
+		changed := shared.IsRowChanged(m.changedAt, rows[i].ID, now)
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), changed, tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
@@ -766,6 +837,37 @@ func (m ListModel) SelectedRule() (domain.GroupRule, bool) {
 		return *r, true
 	}
 	return domain.GroupRule{}, false
+}
+
+// ruleTrackedEqual reports whether two GroupRule snapshots match on
+// every field the list View renders. Tracked fields: status, name,
+// expression, target group IDs, lastUpdated.
+func ruleTrackedEqual(a, b domain.GroupRule) bool {
+	if a.Status != b.Status {
+		return false
+	}
+	if a.Name != b.Name || a.Expression != b.Expression {
+		return false
+	}
+	if !stringSlicesEqual(a.TargetGroupIDs, b.TargetGroupIDs) {
+		return false
+	}
+	if !a.LastUpdated.Equal(b.LastUpdated) {
+		return false
+	}
+	return true
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func ruleStatusBadge(s domain.GroupRuleStatus) string {

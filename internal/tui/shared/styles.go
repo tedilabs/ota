@@ -42,6 +42,12 @@ type Tokens struct {
 	RowDanger  lipgloss.Style
 	RowWarning lipgloss.Style
 	RowMuted   lipgloss.Style
+
+	// RowChanged briefly tints rows whose data just changed in the
+	// most recent refresh (issue #193 v0.2.3). Cyan/teal bg so the
+	// flash reads as "fresh" rather than alarm. Applied for ~1s
+	// then cleared by the View when the per-row timestamp ages out.
+	RowChanged lipgloss.Style
 }
 
 // MonochromeEnabled reports whether ota should render without colour. Set by
@@ -85,6 +91,12 @@ func Dark() Tokens {
 		RowMuted: lipgloss.NewStyle().
 			Background(lipgloss.Color("#2a2f38")).
 			Foreground(lipgloss.Color("#7a8290")),
+		// Cyan/teal bg — distinct from the alarm tones (red/amber)
+		// and the cursor token (slate) so a refresh flash reads as
+		// "fresh data, not an alarm".
+		RowChanged: lipgloss.NewStyle().
+			Background(lipgloss.Color("#1f3d4c")).
+			Foreground(lipgloss.Color("#d4ecf0")),
 	}
 }
 
@@ -125,5 +137,6 @@ func Monochrome() Tokens {
 		RowDanger:  plain.Bold(true).Underline(true),
 		RowWarning: plain.Bold(true),
 		RowMuted:   plain.Faint(true),
+		RowChanged: plain.Underline(true),
 	}
 }

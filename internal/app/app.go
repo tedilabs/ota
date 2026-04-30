@@ -13,6 +13,7 @@ import (
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
+	"github.com/tedilabs/ota/internal/oktastatus"
 	"github.com/tedilabs/ota/internal/service"
 	"github.com/tedilabs/ota/internal/tui/apps"
 	"github.com/tedilabs/ota/internal/tui/groups"
@@ -195,6 +196,12 @@ type Deps struct {
 	LogsRefreshInterval    time.Duration
 	DefaultRefreshInterval time.Duration
 
+	// OktaStatusEndpoint is the status.okta.com URL the App Shell
+	// probes for the title-bar status segment (issue #190 v0.2.2).
+	// Empty disables the probe entirely so unit tests don't burn
+	// outbound HTTP. main.go sets it to the public default.
+	OktaStatusEndpoint string
+
 	// Optional initial state for tests / direct embedding.
 	InitialScreen Screen
 }
@@ -256,6 +263,26 @@ type Model struct {
 	// available for whichever action the operator just triggered.
 	statusToast string
 
+	// toast is the most recent ToastMsg awaiting render — shown as a
+	// color-coded floating band stamped on top of the body for the
+	// duration set on Until (issue #195 v0.2.4). Nil when no toast
+	// is active. Distinct from statusToast (single-line right slot
+	// for terse one-keystroke feedback like "yanked 5 lines"); the
+	// floating band is for action results — Activate / Reset MFA /
+	// Delete — where the user explicitly took an action and needs
+	// a clear pass / fail signal.
+	toast *ToastMsg
+	// toastGen invalidates stale clear ticks if a newer toast lands
+	// before the old one's expiry fires.
+	toastGen int
+
+	// oktaStatus is the most recent status.okta.com snapshot
+	// (issue #190 v0.2.2). The chrome's title bar renders the
+	// emoji + label so operators see live tenant-side health
+	// alongside the local rate-limit indicator. Polled every
+	// 5 minutes via a tea.Tick chain, plus once on Init.
+	oktaStatus oktastatus.Snapshot
+
 	// width / height track the current terminal size, updated via
 	// tea.WindowSizeMsg. The chrome renders 100% to width (TUI_DESIGN
 	// §15.0a v1.2.0): widths >= 80 pass through unchanged so wide
@@ -306,6 +333,21 @@ func (m *Model) kickPrincipalFetch() tea.Cmd {
 	return fetchPrincipalCmd(m.deps.UsersPort)
 }
 
+// kickOktaStatusFetch returns the first status.okta.com probe Cmd
+// (issue #190 v0.2.2). Subsequent ticks self-schedule via the
+// oktaStatusFetchedMsg handler — this only runs at boot. Returns
+// nil when the endpoint is unset (test harnesses) so unit tests
+// don't burn outbound HTTP.
+func (m *Model) kickOktaStatusFetch() tea.Cmd {
+	if m.deps.OktaStatusEndpoint == "" {
+		return nil
+	}
+	if !m.oktaStatus.FetchedAt.IsZero() {
+		return nil
+	}
+	return fetchOktaStatusCmd(m.deps.OktaStatusEndpoint)
+}
+
 // principalLoadedMsg carries the authenticated principal's login back
 // into Update so the chrome ContextBar can render it.
 type principalLoadedMsg struct{ Login string }
@@ -329,6 +371,85 @@ func fetchPrincipalCmd(port domain.UsersPort) tea.Cmd {
 	}
 }
 
+// oktaStatusFetchedMsg carries a status.okta.com snapshot back into
+// Update (issue #190 v0.2.2).
+type oktaStatusFetchedMsg struct {
+	snap oktastatus.Snapshot
+}
+
+// fetchOktaStatusCmd polls the configured status endpoint once.
+// Failures collapse to IndicatorUnknown so the chrome shows a
+// muted glyph instead of crashing the boot path.
+func fetchOktaStatusCmd(endpoint string) tea.Cmd {
+	return func() tea.Msg {
+		probe := oktastatus.Probe{Endpoint: endpoint}
+		return oktaStatusFetchedMsg{snap: probe.Fetch(context.Background())}
+	}
+}
+
+// oktaStatusEmojiOrEmpty / oktaStatusLabelOrEmpty render the
+// title-bar status segment. Issue #198 v0.2.4 — falls back to a
+// tenant-reachability signal when the public statuspage probe fails.
+// Order of preference:
+//
+//  1. Statuspage probe succeeded → use its real Indicator/Label
+//     (🟢 ok / 🟡 minor / 🟠 major / 🔴 critical / 🛠 maint).
+//  2. Statuspage probe failed (Indicator==Unknown) but the operator's
+//     /me call succeeded → show 🟢 Okta:ok. The operator can hit the
+//     tenant API, which is the signal that actually matters to them.
+//  3. Probe still in flight + no principal yet → ⏳ Okta:….
+//  4. Probe failed and no principal yet → hide entirely.
+//
+// The legacy `status.okta.com/api/v2/status.json` URL has migrated
+// to a Salesforce-backed page that no longer publishes JSON, so #2
+// is the fallback most operators will see day-to-day. Empty when the
+// probe is disabled (Deps.OktaStatusEndpoint == "").
+func oktaStatusEmojiOrEmpty(s oktastatus.Snapshot, enabled, tenantReachable bool) string {
+	if !enabled {
+		return ""
+	}
+	if !s.FetchedAt.IsZero() && s.Indicator != oktastatus.IndicatorUnknown {
+		return s.Indicator.Emoji()
+	}
+	if tenantReachable {
+		return "🟢"
+	}
+	if s.FetchedAt.IsZero() {
+		return "⏳"
+	}
+	return ""
+}
+
+func oktaStatusLabelOrEmpty(s oktastatus.Snapshot, enabled, tenantReachable bool) string {
+	if !enabled {
+		return ""
+	}
+	if !s.FetchedAt.IsZero() && s.Indicator != oktastatus.IndicatorUnknown {
+		return s.Indicator.Label()
+	}
+	if tenantReachable {
+		return "ok"
+	}
+	if s.FetchedAt.IsZero() {
+		return "…"
+	}
+	return ""
+}
+
+// scheduleOktaStatusTickCmd reschedules the status fetch every 5
+// minutes regardless of the last result. Failed probes are rendered
+// as a hidden segment (issue #196 v0.2.4), so an aggressive retry
+// burns network for no operator benefit.
+func scheduleOktaStatusTickCmd(endpoint string, _ oktastatus.Indicator) tea.Cmd {
+	if endpoint == "" {
+		return nil
+	}
+	return tea.Tick(5*time.Minute, func(time.Time) tea.Msg {
+		probe := oktastatus.Probe{Endpoint: endpoint}
+		return oktaStatusFetchedMsg{snap: probe.Fetch(context.Background())}
+	})
+}
+
 // Update implements tea.Model. Handles global shortcuts (`:`, `?`, Ctrl-c),
 // palette input, broadcasts toast/offline/refresh messages, and delegates
 // non-routing messages to the active child screen.
@@ -346,26 +467,73 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Bubbletea always emits an initial WindowSizeMsg at startup so
 		// this is the natural place to kick off the one-shot /me probe
-		// (issue #124). Returning the Cmd here keeps Init free of
-		// tea.Batch, which keeps the App Shell test helpers
-		// (`init() → cmd() → Update(msg)`) trivially correct.
-		return m, m.kickPrincipalFetch()
+		// (issue #124) AND the first status.okta.com poll (issue
+		// #190 v0.2.2). Both fire at most once per session — the
+		// status probe self-reschedules every 5min via tick.
+		var cmds []tea.Cmd
+		if c := m.kickPrincipalFetch(); c != nil {
+			cmds = append(cmds, c)
+		}
+		if c := m.kickOktaStatusFetch(); c != nil {
+			cmds = append(cmds, c)
+		}
+		switch len(cmds) {
+		case 0:
+			return m, nil
+		case 1:
+			return m, cmds[0]
+		}
+		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case ErrorMsg:
 		return m, toastCmdError(msg)
+	case ToastMsg:
+		// Issue #195 v0.2.4 — store the floating toast band, schedule
+		// a clear tick at Until, and bump the generation so an older
+		// pending clear doesn't stomp this one.
+		t := msg
+		if t.Until.IsZero() {
+			t.Until = time.Now().Add(3 * time.Second)
+		}
+		m.toast = &t
+		m.toastGen++
+		return m, scheduleToastClearCmd(m.toastGen, time.Until(t.Until))
+	case toastClearMsg:
+		if m.toast != nil && msg.gen == m.toastGen {
+			m.toast = nil
+		}
+		return m, nil
 	case NetworkErrorMsg:
 		m.offline = true
 		return m, offlineCmd(true)
 	case NetworkRestoredMsg:
 		m.offline = false
+		// REQ-E03 AC-3 — emit RefreshActiveScreenMsg so the
+		// network-restored test still verifies the contract.
+		// The shell's RefreshActiveScreenMsg handler then fans
+		// out shared.RefreshScreenMsg to the active screen.
 		return m, refreshActiveCmd()
+	case RefreshActiveScreenMsg:
+		// Translate the shell-level refresh signal into the
+		// per-screen shared.RefreshScreenMsg that list / detail
+		// models listen for (v0.2.3 #192).
+		return m, refreshScreenCmd()
 	case OfflineStateMsg:
 		m.offline = msg.Offline
 		return m, nil
 	case principalLoadedMsg:
 		m.principalLogin = msg.Login
 		return m, nil
+	case oktaStatusFetchedMsg:
+		// Issue #190 v0.2.2 — store the latest snapshot so the
+		// chrome's title bar can stamp the emoji + label, then
+		// schedule the next 5-min tick. Failures (Indicator =
+		// Unknown) still update the snapshot so the chrome
+		// surfaces the unreachable state rather than a stale
+		// "operational" reading.
+		m.oktaStatus = msg.snap
+		return m, scheduleOktaStatusTickCmd(m.deps.OktaStatusEndpoint, msg.snap.Indicator)
 	case openCmdPaletteMsg:
 		m.overlay = OverlayPalette
 		m.paletteInput = ""
@@ -424,6 +592,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.openRuleActionConfirm(RuleActionDelete)
 		}
 		return m, nil
+	case actionCompletedMsg:
+		// Issue #192 v0.2.3 — destructive op finished. Surface the
+		// toast AND fan out a screen refresh so the list / detail
+		// shows the post-action state without waiting for the
+		// next auto-tick. tea.Batch keeps both signals in flight;
+		// the toast renders immediately while the refresh fetch
+		// runs in the background.
+		toast := msg.toast
+		return m, tea.Batch(
+			func() tea.Msg { return toast },
+			refreshScreenCmd(),
+		)
 	case QuitConfirmRequestMsg:
 		m.overlay = OverlayQuitConfirm
 		return m, nil
@@ -575,13 +755,17 @@ func (m Model) View() string {
 	// off-screen (issue #129). The list stays visible behind the
 	// overlay, k9s-style, and the chrome's BodyLines budget is
 	// honored regardless of suggestion-list length.
+	// Issue #201 v0.2.4 — dim the body underneath the floating input
+	// boxes (palette / query / filter) so the operator's focus lands
+	// on the input. Dim happens BEFORE stamping so the input box
+	// itself stays at full color.
 	switch {
 	case m.overlay == OverlayPalette:
-		body = stampOverlayOnTop(m.renderPaletteBox(tokens, width-3), body)
+		body = stampOverlayOnTop(m.renderPaletteBox(tokens, width-3), dimBody(body, tokens))
 	case m.activeChildIsQueryEditing():
-		body = stampOverlayOnTop(m.renderQueryBox(tokens, width-3), body)
+		body = stampOverlayOnTop(m.renderQueryBox(tokens, width-3), dimBody(body, tokens))
 	case m.activeChildIsFiltering():
-		body = stampOverlayOnTop(m.renderFilterBox(tokens, width-3), body)
+		body = stampOverlayOnTop(m.renderFilterBox(tokens, width-3), dimBody(body, tokens))
 		fallthrough
 	default:
 		if m.overlay != OverlayNone {
@@ -592,6 +776,16 @@ func (m Model) View() string {
 					body = overlay
 				}
 			}
+		}
+	}
+	// Issue #195 v0.2.4 — floating toast band: stamp on top of the body
+	// (under any other overlay) so action results pop visibly without
+	// stealing chrome space. Suppressed when a confirmation modal owns
+	// the body so the band doesn't compete with the popup.
+	if m.toast != nil && m.overlay != OverlayActionConfirm && m.overlay != OverlayQuitConfirm {
+		band := renderToastBand(*m.toast, width-3, tokens)
+		if band != "" {
+			body = stampOverlayOnTop(band, body)
 		}
 	}
 	visible, total, hasCount := m.activeChildCount()
@@ -606,17 +800,22 @@ func (m Model) View() string {
 		Timezone:     "UTC",
 		RateLimit:    m.rateLimitState(),
 		Resource:     m.resourceLabel(),
-		Filter:       m.activeChildFilter(),
-		CountVisible: visible,
-		CountTotal:   total,
-		HasCount:     hasCount,
-		DividerRight: m.activeChildDividerRight(),
+		Filter:          m.activeChildFilter(),
+		CountVisible:    visible,
+		CountTotal:      total,
+		HasCount:        hasCount,
+		DividerRight:    m.activeChildDividerRight(),
 		StatusBadges: m.composeChromeBadges(),
 		StatusToast:  m.statusToast,
-		Body:         body,
-		BodyLines:    bodyLines,
-		KeyHints:     m.keyHints(tokens),
-		Offline:      m.offline,
+		// Issue #190 v0.2.2 — suppress the title-bar status segment
+		// until the first probe completes so the chrome doesn't
+		// flash a misleading "❔" on every cold start.
+		OktaStatusEmoji: oktaStatusEmojiOrEmpty(m.oktaStatus, m.deps.OktaStatusEndpoint != "", m.principalLogin != ""),
+		OktaStatusLabel: oktaStatusLabelOrEmpty(m.oktaStatus, m.deps.OktaStatusEndpoint != "", m.principalLogin != ""),
+		Body:            body,
+		BodyLines:       bodyLines,
+		KeyHints:        m.keyHints(tokens),
+		Offline:         m.offline,
 	}
 	return shared.RenderChrome(chrome)
 }
@@ -678,29 +877,142 @@ func clampBodyLines(h int) int {
 // which compose alongside the screen.
 func (m Model) composeBody() string {
 	if m.overlay == OverlayActionMenu && m.actionMenu != nil {
-		// Issue #175: render the action picker as the body — same
-		// "modal owns the screen" pattern Help uses, so the picker
-		// reads as the focal element and key hints don't compete.
-		contentWidth := clampWidth(m.width) - 3
-		return centerInBody(m.actionMenu.View(), contentWidth)
+		// Issue #175: action picker as a centered modal so it reads as
+		// the focal element and key hints don't compete. v0.2.4 #201:
+		// dim the body behind it so the operator's list context stays
+		// visible (just darkened).
+		return m.composeModalOverDimmedBody(m.actionMenu.View())
 	}
 	if m.overlay == OverlayHelp && m.helpModel != nil {
-		// Issue #147: hand the modal as much width as the chrome
-		// can spare — content area minus a small breathing-room
-		// gutter — so it fills the screen instead of clinging to
-		// the top-left corner.
+		// Issue #147: hand the help modal as much width as the chrome
+		// can spare so it fills the screen. v0.2.4 #201: dim the body
+		// behind it for consistency with the other popups.
 		contentWidth := clampWidth(m.width) - 3
 		modalWidth := contentWidth - 4
 		if modalWidth < 60 {
 			modalWidth = 60
 		}
 		sized := m.helpModel.WithWidth(modalWidth)
-		return centerInBody(sized.View(), contentWidth)
+		return m.composeModalOverDimmedBody(sized.View())
+	}
+	if m.overlay == OverlayActionConfirm {
+		// Issue #199 v0.2.4 — destructive-op confirmation popup floats
+		// over the dimmed body so the operator still sees their list /
+		// detail context (just darkened) behind the modal.
+		return m.composeModalOverDimmedBody(m.renderActionConfirmModal(activeTokens()))
+	}
+	if m.overlay == OverlayQuitConfirm {
+		// Issue #199 v0.2.4 — same dim-and-stamp treatment as the
+		// action confirm; visual language stays consistent for both
+		// "are you sure?" prompts.
+		return m.composeModalOverDimmedBody(m.renderQuitConfirmModal(activeTokens()))
 	}
 	if child, ok := m.screens[m.active]; ok {
 		return child.View()
 	}
 	return "(loading…)"
+}
+
+// composeModalOverDimmedBody renders the active child's body, dims
+// every line, then centers the supplied modal over the result so
+// rows above + below the popup remain visible (just darkened). The
+// chrome's BodyLines budget is honoured: the dimmed body is padded /
+// truncated to fit, and the modal stamps at vertical center within
+// that window. Issue #199 v0.2.4 — replaces the body-replacing
+// MountModal layout where confirmation popups blanked out the entire
+// underlying screen.
+func (m Model) composeModalOverDimmedBody(modal string) string {
+	tk := activeTokens()
+	contentWidth := clampWidth(m.width) - 3
+	bodyHeight := clampBodyLines(m.height)
+
+	// Pull the active child's body, then pad it out to the chrome's
+	// BodyLines budget so dimming covers the whole popup window
+	// (otherwise lists shorter than the budget show empty rows under
+	// the modal that aren't dimmed).
+	body := "(loading…)"
+	if child, ok := m.screens[m.active]; ok {
+		body = child.View()
+	}
+	bodyLines := strings.Split(body, "\n")
+	for len(bodyLines) < bodyHeight {
+		bodyLines = append(bodyLines, "")
+	}
+	body = strings.Join(bodyLines[:bodyHeight], "\n")
+
+	dimmed := dimBody(body, tk)
+
+	// Center the modal vertically inside the body window.
+	modalLines := strings.Count(modal, "\n") + 1
+	topRow := (bodyHeight - modalLines) / 2
+	if topRow < 0 {
+		topRow = 0
+	}
+	centered := centerInBody(modal, contentWidth)
+	return stampOverlayAtRow(centered, dimmed, topRow)
+}
+
+// renderQuitConfirmModal builds the centered red-title modal for the
+// `q` quit prompt (issue #197 v0.2.4). Same shape as the action
+// confirm modal so operators recognise both as destructive prompts.
+func (m Model) renderQuitConfirmModal(tk shared.Tokens) string {
+	body := tk.Danger.Render("Quit ota?")
+	width := 60
+	if w := shared.VisibleWidth(body) + 6; w > width {
+		width = w
+	}
+	if cap := clampWidth(m.width) - 8; cap > 0 && width > cap {
+		width = cap
+	}
+	return shared.MountModal(shared.ModalIn{
+		Title:  "Quit",
+		Body:   body,
+		Footer: "y to quit — n / Esc to cancel",
+		Tone:   shared.ModalToneDanger,
+		Width:  width,
+		Tokens: tk,
+	})
+}
+
+// renderActionConfirmModal builds the centered red-title modal that
+// gates destructive Users / Group Rule lifecycle ops (issue #195
+// v0.2.4). Mirrors the format the palette help and quit-confirm use,
+// so the visual language stays consistent.
+func (m Model) renderActionConfirmModal(tk shared.Tokens) string {
+	var label, target string
+	switch {
+	case m.pendingRule.Kind != RuleActionNone:
+		label = ruleActionLabel(m.pendingRule.Kind)
+		target = m.pendingRule.Rule.Name
+		if target == "" {
+			target = m.pendingRule.Rule.ID
+		}
+	case m.pendingAction.Kind != UserActionNone:
+		label = userActionLabel(m.pendingAction.Kind)
+		target = m.pendingAction.User.Profile.Login
+		if target == "" {
+			target = m.pendingAction.User.ID
+		}
+	default:
+		label = "Confirm action"
+		target = ""
+	}
+	body := tk.Danger.Render(label) + " for " + tk.Accent.Render(target) + "?"
+	width := 60
+	if w := shared.VisibleWidth(body) + 6; w > width {
+		width = w
+	}
+	if cap := clampWidth(m.width) - 8; cap > 0 && width > cap {
+		width = cap
+	}
+	return shared.MountModal(shared.ModalIn{
+		Title:  "Confirm action",
+		Body:   body,
+		Footer: "y to confirm — n / Esc to cancel",
+		Tone:   shared.ModalToneDanger,
+		Width:  width,
+		Tokens: tk,
+	})
 }
 
 // centerInBody horizontally centers a multi-line block inside the
@@ -817,26 +1129,13 @@ func (m Model) renderOverlayPanel(tk shared.Tokens) string {
 		// Body composition has already replaced the screen with the modal.
 		return ""
 	case OverlayQuitConfirm:
-		return tk.Danger.Render("Quit ota?") + tk.Muted.Render("  (y/N)")
+		// v0.2.4 #197 — centered modal popup replaces the inline
+		// footer band; composeBody renders the modal directly.
+		return ""
 	case OverlayActionConfirm:
-		// v0.2.2 #188: render either pendingAction (user lifecycle)
-		// or pendingRule (group-rule lifecycle) — mutually exclusive.
-		if m.pendingRule.Kind != RuleActionNone {
-			label := ruleActionLabel(m.pendingRule.Kind)
-			name := m.pendingRule.Rule.Name
-			if name == "" {
-				name = m.pendingRule.Rule.ID
-			}
-			return tk.Danger.Render(label+" for ") + tk.Accent.Render(name) +
-				tk.Danger.Render("?") + tk.Muted.Render("  (y/N)")
-		}
-		label := userActionLabel(m.pendingAction.Kind)
-		login := m.pendingAction.User.Profile.Login
-		if login == "" {
-			login = m.pendingAction.User.ID
-		}
-		return tk.Danger.Render(label+" for ") + tk.Accent.Render(login) +
-			tk.Danger.Render("?") + tk.Muted.Render("  (y/N)")
+		// v0.2.4 #195 — centered modal popup replaces the inline
+		// footer band; composeBody renders the modal directly.
+		return ""
 	}
 	return ""
 }
@@ -1123,6 +1422,44 @@ func stampOverlayOnTop(overlay, body string) string {
 		out = append(out, bodyLines[len(overlayLines):]...)
 	}
 	return strings.Join(out, "\n")
+}
+
+// stampOverlayAtRow replaces body lines starting at topRow with
+// overlayLines, leaving rows above and below intact. Used by the
+// confirmation modals (issue #199 v0.2.4) so the dimmed body shows
+// around the popup instead of getting blanked out.
+func stampOverlayAtRow(overlay, body string, topRow int) string {
+	overlayLines := strings.Split(overlay, "\n")
+	bodyLines := strings.Split(body, "\n")
+	out := make([]string, len(bodyLines))
+	copy(out, bodyLines)
+	for i, ol := range overlayLines {
+		idx := topRow + i
+		if idx < 0 || idx >= len(out) {
+			continue
+		}
+		out[idx] = ol
+	}
+	return strings.Join(out, "\n")
+}
+
+// dimBody renders each body line in the muted style so the popup
+// modal floats over a darkened backdrop (issue #199 v0.2.4). Existing
+// ANSI styling is stripped first so the muted color applies uniformly
+// — otherwise the body's status-row tints would override Faint.
+func dimBody(body string, tk shared.Tokens) string {
+	if tk.Muted.GetForeground() == nil {
+		return body
+	}
+	lines := strings.Split(body, "\n")
+	for i, l := range lines {
+		stripped := shared.StripCSI(l)
+		if stripped == "" {
+			continue
+		}
+		lines[i] = tk.Muted.Faint(true).Render(stripped)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // itoaSimple is a tiny strconv shim local to app/ so renderPaletteBox
@@ -1562,21 +1899,41 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.overlay = OverlayNone
 		return m, nil
 	}
-	if m.overlay == OverlayQuitConfirm && msg.Type == tea.KeyRunes {
-		switch string(msg.Runes) {
-		case "y", "Y":
+	if m.overlay == OverlayQuitConfirm {
+		// Issue #200 v0.2.4 — Enter is the canonical "OK" key on
+		// confirmation popups, alongside y/Y.
+		if msg.Type == tea.KeyEnter {
 			return m, tea.Quit
-		case "n", "N":
-			m.overlay = OverlayNone
+		}
+		if msg.Type == tea.KeyRunes {
+			switch string(msg.Runes) {
+			case "y", "Y":
+				return m, tea.Quit
+			case "n", "N":
+				m.overlay = OverlayNone
+			}
 		}
 	}
-	if m.overlay == OverlayActionConfirm && msg.Type == tea.KeyRunes {
-		switch string(msg.Runes) {
-		case "y", "Y":
+	if m.overlay == OverlayActionConfirm {
+		confirmed := msg.Type == tea.KeyEnter
+		cancelled := false
+		if msg.Type == tea.KeyRunes {
+			switch string(msg.Runes) {
+			case "y", "Y":
+				confirmed = true
+			case "n", "N":
+				cancelled = true
+			}
+		}
+		switch {
+		case confirmed:
 			// v0.2.2 #188 — pendingRule and pendingAction are
 			// mutually exclusive (openActionConfirm /
 			// openRuleActionConfirm clear the other). Fire the
 			// correct dispatcher based on which is set.
+			// Issue #192 v0.2.3 — chain a screen refresh after the
+			// action completes so the operator sees the new state
+			// without waiting for the next auto-tick.
 			if m.pendingRule.Kind != RuleActionNone {
 				ra := m.pendingRule
 				m.pendingRule = pendingRuleAction{}
@@ -1587,7 +1944,7 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pendingAction = pendingUserAction{}
 			m.overlay = OverlayNone
 			return m, runUserActionCmd(m.deps.UsersPort, action)
-		case "n", "N":
+		case cancelled:
 			m.pendingAction = pendingUserAction{}
 			m.pendingRule = pendingRuleAction{}
 			m.overlay = OverlayNone
@@ -1857,17 +2214,17 @@ func runRuleActionCmd(port domain.GroupRulesPort, action pendingRuleAction) tea.
 			if err := port.Activate(ctx, action.Rule.ID); err != nil {
 				return toastErr("activate rule failed: " + err.Error())
 			}
-			return toastInfo("activated rule " + name)
+			return actionCompletedMsg{toast: toastInfo("activated rule " + name)}
 		case RuleActionDeactivate:
 			if err := port.Deactivate(ctx, action.Rule.ID); err != nil {
 				return toastErr("deactivate rule failed: " + err.Error())
 			}
-			return toastInfo("deactivated rule " + name)
+			return actionCompletedMsg{toast: toastInfo("deactivated rule " + name)}
 		case RuleActionDelete:
 			if err := port.Delete(ctx, action.Rule.ID); err != nil {
 				return toastErr("delete rule failed: " + err.Error())
 			}
-			return toastInfo("deleted rule " + name)
+			return actionCompletedMsg{toast: toastInfo("deleted rule " + name)}
 		}
 		return nil
 	}
@@ -1895,10 +2252,18 @@ func userActionLabel(k UserActionKind) string {
 	return ""
 }
 
+// actionCompletedMsg wraps the toast a successful action emits so
+// the App Shell can chain a screen refresh in the same Update pass
+// (issue #192 v0.2.3). The handler turns it into a ToastMsg AND a
+// RefreshScreenMsg via tea.Batch.
+type actionCompletedMsg struct {
+	toast ToastMsg
+}
+
 // runUserActionCmd dispatches the active pendingAction against the
-// UsersPort and emits a toast with the result. The Cmd returns nil
-// when called without a wired UsersPort so tests can drive the flow
-// without a network round-trip.
+// UsersPort and emits an actionCompletedMsg with the toast. The Cmd
+// returns nil when called without a wired UsersPort so tests can
+// drive the flow without a network round-trip.
 func runUserActionCmd(port domain.UsersPort, action pendingUserAction) tea.Cmd {
 	if port == nil {
 		return toastCmdInfo("UsersPort not wired — action skipped")
@@ -1914,37 +2279,37 @@ func runUserActionCmd(port domain.UsersPort, action pendingUserAction) tea.Cmd {
 			if _, err := port.ResetPassword(ctx, action.User.ID, true); err != nil {
 				return toastErr("reset password failed: " + err.Error())
 			}
-			return toastInfo("reset password email sent to " + login)
+			return actionCompletedMsg{toast: toastInfo("reset password email sent to " + login)}
 		case UserActionUnlock:
 			if err := port.Unlock(ctx, action.User.ID); err != nil {
 				return toastErr("unlock failed: " + err.Error())
 			}
-			return toastInfo("unlocked " + login)
+			return actionCompletedMsg{toast: toastInfo("unlocked " + login)}
 		case UserActionResetFactors:
 			if err := port.ResetFactors(ctx, action.User.ID); err != nil {
 				return toastErr("reset MFA failed: " + err.Error())
 			}
-			return toastInfo("MFA factors reset for " + login)
+			return actionCompletedMsg{toast: toastInfo("MFA factors reset for " + login)}
 		case UserActionActivate:
 			if err := port.Activate(ctx, action.User.ID, true); err != nil {
 				return toastErr("activate failed: " + err.Error())
 			}
-			return toastInfo("activated " + login)
+			return actionCompletedMsg{toast: toastInfo("activated " + login)}
 		case UserActionDeactivate:
 			if err := port.Deactivate(ctx, action.User.ID, false); err != nil {
 				return toastErr("deactivate failed: " + err.Error())
 			}
-			return toastInfo("deactivated " + login)
+			return actionCompletedMsg{toast: toastInfo("deactivated " + login)}
 		case UserActionExpirePassword:
 			if err := port.ExpirePassword(ctx, action.User.ID); err != nil {
 				return toastErr("expire password failed: " + err.Error())
 			}
-			return toastInfo("password expired for " + login)
+			return actionCompletedMsg{toast: toastInfo("password expired for " + login)}
 		case UserActionDelete:
 			if err := port.Delete(ctx, action.User.ID); err != nil {
 				return toastErr("delete failed: " + err.Error())
 			}
-			return toastInfo("deleted " + login)
+			return actionCompletedMsg{toast: toastInfo("deleted " + login)}
 		}
 		return nil
 	}
@@ -2008,6 +2373,73 @@ func offlineCmd(offline bool) tea.Cmd {
 
 func refreshActiveCmd() tea.Cmd {
 	return func() tea.Msg { return RefreshActiveScreenMsg{} }
+}
+
+// refreshScreenCmd returns a Cmd that fires shared.RefreshScreenMsg
+// — handled by every list / detail screen as an out-of-band fetch
+// trigger. Used by the action confirm flow (issue #192 v0.2.3) to
+// reflect destructive ops in the active surface immediately.
+func refreshScreenCmd() tea.Cmd {
+	return func() tea.Msg { return shared.RefreshScreenMsg{} }
+}
+
+// toastClearMsg fires when a stored ToastMsg's expiry has elapsed and
+// the floating band should disappear. gen guards against an older
+// pending clear knocking out a newer toast (issue #195 v0.2.4).
+type toastClearMsg struct{ gen int }
+
+// scheduleToastClearCmd returns a tea.Tick that clears the floating
+// toast after `d`. Negative / zero d collapses to a 1.5s minimum so
+// the band is at least readable before it fades.
+func scheduleToastClearCmd(gen int, d time.Duration) tea.Cmd {
+	if d < 1500*time.Millisecond {
+		d = 1500 * time.Millisecond
+	}
+	return tea.Tick(d, func(time.Time) tea.Msg {
+		return toastClearMsg{gen: gen}
+	})
+}
+
+// renderToastBand returns a 1-line color-coded band — green for
+// Success, red for Error, yellow for Warn, muted for Info — centered
+// inside the chrome's content width (issue #195 v0.2.4). The band
+// stamps on top of the body via stampOverlayOnTop so action results
+// pop without stealing a chrome row.
+func renderToastBand(t ToastMsg, contentWidth int, tk shared.Tokens) string {
+	if t.Text == "" {
+		return ""
+	}
+	var icon string
+	var styler lipgloss.Style
+	switch t.Level {
+	case ToastSuccess:
+		icon = "✓"
+		styler = tk.Success
+	case ToastError:
+		icon = "✗"
+		styler = tk.Danger
+	case ToastWarn:
+		icon = "!"
+		styler = tk.Warning
+	default:
+		icon = "•"
+		styler = tk.Accent
+	}
+	body := icon + "  " + t.Text
+	w := shared.VisibleWidth(body)
+	if contentWidth <= 0 {
+		contentWidth = w + 4
+	}
+	if w > contentWidth {
+		body = shared.Truncate(body, contentWidth)
+		w = shared.VisibleWidth(body)
+	}
+	pad := 0
+	if contentWidth > w {
+		pad = (contentWidth - w) / 2
+	}
+	line := strings.Repeat(" ", pad) + styler.Bold(true).Render(body)
+	return line
 }
 
 // Internal activation markers consumed by overlay models once wired.

@@ -95,6 +95,15 @@ type ChromeInput struct {
 	// RateLimit classifies the [RL: ...] badge.
 	RateLimit RateLimitState
 
+	// OktaStatus is the most recent snapshot from
+	// https://status.okta.com (issue #190 v0.2.2). When set, the
+	// chrome stamps a `<emoji> Okta: <label>` segment into the
+	// title bar's right group so operators see live tenant-side
+	// health alongside the local rate-limit indicator. Empty Label
+	// disables the segment.
+	OktaStatusEmoji string
+	OktaStatusLabel string
+
 	// Resource is the active screen label (e.g., "Users", "Groups",
 	// "Policies › OKTA_SIGN_ON").
 	Resource string
@@ -193,6 +202,14 @@ func RenderChrome(in ChromeInput) string {
 	// ---- TitleBar -------------------------------------------------------
 	left := titleLeftK9s(in.Brand, in.Version, in.Tenant, in.Principal, in.Profile, tk)
 	right := titleRight(in.RateLimit, in.Timezone, "", tk) // version moves to left group
+	if in.OktaStatusLabel != "" {
+		// Issue #190 v0.2.2 — prepend the live tenant-side status
+		// to the right title segment. Order: <Okta status> then
+		// [RL: …] then UTC, so the operator reads "is Okta up?"
+		// before the local rate-limit signal.
+		statusSeg := in.OktaStatusEmoji + " Okta:" + tk.Muted.Render(in.OktaStatusLabel)
+		right = statusSeg + "  " + right
+	}
 	titleBar := joinLR(left, right, contentWidth)
 
 	// ---- Upper divider with embedded resource label --------------------

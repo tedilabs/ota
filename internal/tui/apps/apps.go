@@ -180,10 +180,25 @@ type ListModel struct {
 	// #177 v0.1.16); refreshGen invalidates stale ticks.
 	lastUpdated time.Time
 	refreshGen  int
+	// changedAt — per-row "just changed" stamps for the RowChanged
+	// flash on refresh (issue #193 v0.2.3).
+	changedAt map[string]time.Time
+	// loaded flips true once the first appsLoadedMsg / appsErrMsg
+	// arrives; before then View renders a spinner (issue #194 v0.2.4).
+	loaded       bool
+	spinnerFrame int
 }
 
 // appsRefreshTickMsg fires the auto-refresh tick (issue #177).
 type appsRefreshTickMsg struct{ gen int }
+
+// appsHighlightTickMsg keeps the View re-rendering while at least one
+// row is still inside shared.HighlightWindow (issue #193 v0.2.3).
+type appsHighlightTickMsg struct{}
+
+// appsSpinnerTickMsg advances the loading spinner frame (issue #194
+// v0.2.4).
+type appsSpinnerTickMsg struct{}
 
 // AppDetailTab indexes the detail tab bar — Pretty / JSON / YAML
 // (matches the rest of the detail surfaces in ota).
@@ -199,13 +214,17 @@ var appDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
 var appDetailTabCount = AppDetailTab(len(appDetailTabLabels))
 
 func NewListModel(deps Deps, t domain.AppType) ListModel {
-	return ListModel{
+	m := ListModel{
 		deps:    deps,
 		appType: t,
 		apps:    deps.InitialApps,
 		width:   deps.Width,
 		height:  deps.Height,
 	}
+	if len(m.apps) > 0 || deps.Port == nil {
+		m.loaded = true
+	}
+	return m
 }
 
 func (m ListModel) Init() tea.Cmd {
@@ -283,20 +302,54 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if !m.loaded {
+			return m, shared.ScheduleSpinnerTickCmd(appsSpinnerTickMsg{})
+		}
 		return m, nil
 	case appsLoadedMsg:
+		// v0.2.4 #202 — skip the diff on the first load so initial
+		// rows don't all flash; highlights start with refresh #2.
+		now := m.now()
+		if m.loaded {
+			m.changedAt = shared.DiffChanges(m.apps, msg.apps, m.changedAt, now,
+				func(a domain.App) string { return a.ID }, appTrackedEqual)
+		} else {
+			m.changedAt = nil
+		}
 		m.apps = msg.apps
 		m.lastErr = nil
-		m.lastUpdated = m.now()
+		m.lastUpdated = now
+		m.loaded = true
+		if shared.HasFreshHighlights(m.changedAt, now) {
+			return m, shared.ScheduleHighlightTickCmd(appsHighlightTickMsg{})
+		}
 		return m, nil
+	case appsHighlightTickMsg:
+		if shared.HasFreshHighlights(m.changedAt, m.now()) {
+			return m, shared.ScheduleHighlightTickCmd(appsHighlightTickMsg{})
+		}
+		return m, nil
+	case appsSpinnerTickMsg:
+		if m.loaded {
+			return m, nil
+		}
+		m.spinnerFrame++
+		return m, shared.ScheduleSpinnerTickCmd(appsSpinnerTickMsg{})
 	case appsErrMsg:
 		m.lastErr = msg.err
+		m.loaded = true
 		return m, nil
 	case appsRefreshTickMsg:
 		if msg.gen != m.refreshGen || m.deps.Port == nil {
 			return m, nil
 		}
 		return m, tea.Batch(fetchAppsCmd(m.deps.Port, m.appType), m.scheduleRefreshTickCmd())
+	case shared.RefreshScreenMsg:
+		// Issue #192 v0.2.3 — out-of-band refresh from the App Shell.
+		if m.deps.Port == nil {
+			return m, nil
+		}
+		return m, fetchAppsCmd(m.deps.Port, m.appType)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -422,6 +475,10 @@ func (m ListModel) View() string {
 		return "Apps  (error)\n" + shared.ErrorPanel("Apps", m.lastErr)
 	}
 	tk := activeTokens()
+	if !m.loaded {
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading apps…",
+			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
+	}
 	now := m.now()
 	rows := m.visible()
 	var b strings.Builder
@@ -441,11 +498,33 @@ func (m ListModel) View() string {
 			prefix = "▸ "
 		}
 		// v0.2.0 #182 — unified cursor pipeline.
-		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), tk))
+		// v0.2.3 #193 — flash RowChanged for rows whose tracked
+		// fields just changed during a refresh.
+		changed := shared.IsRowChanged(m.changedAt, rows[i].ID, now)
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), changed, tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// appTrackedEqual reports whether two app snapshots match on every
+// field the list View renders. Tracked fields: status, label, name,
+// signOnMode, lastUpdated.
+func appTrackedEqual(a, b domain.App) bool {
+	if a.Status != b.Status {
+		return false
+	}
+	if a.Label != b.Label || a.Name != b.Name {
+		return false
+	}
+	if a.SignOnMode != b.SignOnMode {
+		return false
+	}
+	if !a.LastUpdated.Equal(b.LastUpdated) {
+		return false
+	}
+	return true
 }
 
 // chromeContentWidth returns the body cells the chrome reserves per

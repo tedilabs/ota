@@ -65,6 +65,11 @@ type GroupsPort interface {
 	Get(ctx context.Context, id string) (Group, error)
 	Members(ctx context.Context, q GroupMembersQuery) (Iterator[User], error)
 	AppCount(ctx context.Context, id string) (int, error)
+	// ListApps returns the apps assigned to the group via
+	// `/api/v1/groups/{id}/apps`. Powers the Group Detail Apps
+	// box (issue #189 v0.2.2). Distinct from AppCount which
+	// only returns the cardinality for the Groups list column.
+	ListApps(ctx context.Context, groupID string) ([]App, error)
 }
 
 // GroupRulesPort is the outbound boundary for Okta Group Rules.

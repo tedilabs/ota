@@ -91,31 +91,23 @@ func ScrollbarMark(r, scrollTop, budget, total int) string {
 }
 
 // RenderRowCursor unifies the per-screen list-row decoration
-// pipeline (v0.2.0 #182). Each list used to inline:
-//
-//	composed := prefix + row
-//	composed = PadOrTruncateVisible(composed, target)
-//	if isCursor { composed = tk.Accent.Render(composed) }
-//	else if rowStyle, ok := RowStyleForStatus(status, tk); ok {
-//	    composed = rowStyle.Render(StripCSI(composed))
-//	}
-//
-// Six identical copies across users / groups / rules / apps / logs
-// / policies. Centralising the styling order — pad → status tint →
-// cursor (last so it wins over abnormal-row tint) — codifies the
-// strip-CSI ordering once so screens can't get it wrong, and makes
-// the cursor token swap a one-line change.
-//
-// Cursor uses RowCursor for chrome-style bg + fg tint (matches the
-// detail-view cursor highlight), unifying cursor cue language
-// across list rows + detail body + 2-col Pretty + Visual mode.
+// pipeline (v0.2.0 #182). Pad → status tint → changed flash →
+// cursor (last so it wins over the others). Centralising the
+// styling order codifies the strip-CSI ordering once so screens
+// can't get it wrong.
 //
 // statusKind is the value returned by domain.UserStatus / .Status;
-// callers pass "" when the row has no status semantics.
-func RenderRowCursor(line string, targetWidth int, isCursor bool, statusKind string, tk Tokens) string {
+// pass "" when the row has no status semantics. changed surfaces
+// the "this row just refreshed" highlight (issue #193 v0.2.3) —
+// applied for ~1s on diff detection, beats the status tint but
+// still loses to the cursor.
+func RenderRowCursor(line string, targetWidth int, isCursor bool, statusKind string, changed bool, tk Tokens) string {
 	line = PadOrTruncateVisible(line, targetWidth)
 	if isCursor {
 		return tk.RowCursor.Render(StripCSI(line))
+	}
+	if changed {
+		return tk.RowChanged.Render(StripCSI(line))
 	}
 	if statusKind != "" {
 		if style, ok := RowStyleForStatus(statusKind, tk); ok {

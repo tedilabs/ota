@@ -16,6 +16,7 @@ import (
 	"github.com/tedilabs/ota/internal/keys"
 	"github.com/tedilabs/ota/internal/logger"
 	"github.com/tedilabs/ota/internal/okta"
+	"github.com/tedilabs/ota/internal/oktastatus"
 	"github.com/tedilabs/ota/internal/service"
 )
 
@@ -116,6 +117,10 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 			time.Second,
 		DefaultRefreshInterval: time.Duration(cfg.Refresh.DefaultSeconds) *
 			time.Second,
+		// v0.2.2 #190 — kick the status.okta.com probe by default;
+		// override via cfg.OktaStatusEndpoint when self-hosted Okta
+		// orgs run a different statuspage (rare).
+		OktaStatusEndpoint: oktastatus.DefaultEndpoint,
 	})
 	return model, cfg, nil
 }

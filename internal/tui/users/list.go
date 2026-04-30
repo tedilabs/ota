@@ -147,7 +147,29 @@ type ListModel struct {
 	// after the operator switched screens or the model was rebuilt.
 	refreshGen int
 
+	// changedAt timestamps the most recent change observed for each
+	// row, keyed by user ID (issue #193 v0.2.3). Refresh ticks diff
+	// the incoming slice against the cached one; rows whose tracked
+	// fields differ get stamped here, View flashes a RowChanged tint
+	// for ~1s, and the highlight tick re-renders the screen until
+	// the timestamps age out.
+	changedAt map[string]time.Time
+
+	// loaded flips true once the first usersLoadedMsg or usersErrMsg
+	// arrives; before then View renders the loading spinner instead
+	// of the empty-list table (issue #194 v0.2.4).
+	loaded       bool
+	spinnerFrame int
 }
+
+// usersHighlightTickMsg fires while at least one row's RowChanged
+// flash is still active, forcing a re-render so the highlight fades
+// out after `userChangeHighlightWindow` elapses (issue #193 v0.2.3).
+type usersHighlightTickMsg struct{}
+
+// usersSpinnerTickMsg advances the loading spinner frame while the
+// first fetch is in flight (issue #194 v0.2.4).
+type usersSpinnerTickMsg struct{}
 
 // usersLoadedMsg delivers the result of the initial fetch.
 type usersLoadedMsg struct{ users []domain.User }
@@ -192,12 +214,18 @@ type userDetailAppsErrMsg struct {
 
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
-	return ListModel{
+	m := ListModel{
 		deps:   deps,
 		users:  deps.InitialUsers,
 		width:  deps.Width,
 		height: deps.Height,
 	}
+	// Seeded models skip the loading spinner — tests + callers that
+	// preload data render the table directly (issue #194 v0.2.4).
+	if len(m.users) > 0 || deps.Port == nil {
+		m.loaded = true
+	}
+	return m
 }
 
 // Init kicks off the initial List call (REQ-R01 AC-1) and schedules
@@ -319,14 +347,52 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Issue #194 v0.2.4 — kick off the loading spinner tick on
+		// the first WindowSizeMsg so the frame advances visibly while
+		// the initial fetch is in flight. WindowSizeMsg is delivered
+		// once at boot by Bubbletea; gating off m.loaded keeps later
+		// resizes from double-scheduling.
+		if !m.loaded {
+			return m, shared.ScheduleSpinnerTickCmd(usersSpinnerTickMsg{})
+		}
 		return m, nil
 	case usersLoadedMsg:
+		// Issue #193 v0.2.3 — diff incoming vs cached so rows with
+		// changed tracked fields flash RowChanged for the next ~1s.
+		// Issue #202 v0.2.4 — skip the diff on the FIRST load (every
+		// row would flash because prev was empty). Highlights kick
+		// in starting with the first auto-refresh tick.
+		now := m.now()
+		if m.loaded {
+			m.changedAt = shared.DiffChanges(m.users, msg.users, m.changedAt, now,
+				func(u domain.User) string { return u.ID }, userTrackedEqual)
+		} else {
+			m.changedAt = nil
+		}
 		m.users = msg.users
 		m.lastErr = nil
-		m.lastUpdated = m.now()
+		m.lastUpdated = now
+		m.loaded = true
+		if shared.HasFreshHighlights(m.changedAt, now) {
+			return m, shared.ScheduleHighlightTickCmd(usersHighlightTickMsg{})
+		}
 		return m, nil
+	case usersHighlightTickMsg:
+		if shared.HasFreshHighlights(m.changedAt, m.now()) {
+			return m, shared.ScheduleHighlightTickCmd(usersHighlightTickMsg{})
+		}
+		// All highlights aged out; let the model re-render once
+		// without rescheduling so the last flash clears.
+		return m, nil
+	case usersSpinnerTickMsg:
+		if m.loaded {
+			return m, nil
+		}
+		m.spinnerFrame++
+		return m, shared.ScheduleSpinnerTickCmd(usersSpinnerTickMsg{})
 	case usersErrMsg:
 		m.lastErr = msg.err
+		m.loaded = true
 		return m, nil
 	case usersRefreshTickMsg:
 		// Stale tick (model rebuilt / generation bumped) — drop.
@@ -337,6 +403,15 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// chain alive even when the fetch is in flight so a slow
 		// API doesn't pause the loop.
 		return m, tea.Batch(fetchUsersCmd(m.deps.Port), m.scheduleRefreshTickCmd())
+	case shared.RefreshScreenMsg:
+		// Issue #192 v0.2.3 — operator-triggered refresh (after a
+		// destructive action completes, after network-restored,
+		// etc). Fires the main fetch out of band; the auto-tick
+		// chain stays untouched.
+		if m.deps.Port == nil {
+			return m, nil
+		}
+		return m, fetchUsersCmd(m.deps.Port)
 	case userOpenedMsg:
 		m.detailUser = msg.user
 		m.opened = true
@@ -822,6 +897,14 @@ func (m ListModel) View() string {
 
 	tk := activeTokens()
 
+	if !m.loaded {
+		// Issue #194 v0.2.4 — first fetch in flight. Show a spinner
+		// instead of an empty table so the operator sees the boot
+		// path is alive.
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading users…",
+			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
+	}
+
 	rows := m.visible()
 
 	var b strings.Builder
@@ -842,16 +925,18 @@ func (m ListModel) View() string {
 	budget := end - top
 	contentW := m.chromeContentWidth()
 	rowTarget := contentW - 2 // leave room for " ▌" / " │"
+	now := m.now()
 	for i := top; i < end; i++ {
-		row := m.renderUsersRow(rows[i], m.now(), tk)
+		row := m.renderUsersRow(rows[i], now, tk)
 		prefix := "  "
 		if i == m.cursor {
 			prefix = "▸ "
 		}
-		// v0.2.0 #182 — single cursor pipeline (pad → status tint
-		// → cursor wins) lives in shared.RenderRowCursor so every
-		// list looks the same.
-		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), tk))
+		// v0.2.3 #193 — per-row "just changed" flash. RowChanged
+		// loses to the cursor tint but beats the abnormal-status
+		// background so an active row stays visually anchored.
+		changed := shared.IsRowChanged(m.changedAt, rows[i].ID, now)
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(rows[i].Status), changed, tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}
@@ -2083,6 +2168,35 @@ func (m ListModel) SelectedUser() (domain.User, bool) {
 		return *u, true
 	}
 	return domain.User{}, false
+}
+
+// userTrackedEqual reports whether two user snapshots match on every
+// field the list View renders — when this returns false the diff
+// pipeline marks the row as "just changed" so RowChanged flashes for
+// shared.HighlightWindow. Tracked fields: status, login,
+// profile.first/last/department/title, lastLogin, lastUpdated,
+// statusChanged.
+func userTrackedEqual(a, b domain.User) bool {
+	if a.Status != b.Status {
+		return false
+	}
+	if a.Profile.Login != b.Profile.Login ||
+		a.Profile.FirstName != b.Profile.FirstName ||
+		a.Profile.LastName != b.Profile.LastName ||
+		a.Profile.Department != b.Profile.Department ||
+		a.Profile.Title != b.Profile.Title {
+		return false
+	}
+	if !a.LastUpdated.Equal(b.LastUpdated) {
+		return false
+	}
+	if !shared.TimePtrsEqual(a.LastLogin, b.LastLogin) {
+		return false
+	}
+	if !shared.TimePtrsEqual(a.StatusChanged, b.StatusChanged) {
+		return false
+	}
+	return true
 }
 
 // fetchUsersCmd drains the Port.List iterator and emits usersLoadedMsg, or

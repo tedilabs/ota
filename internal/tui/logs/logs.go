@@ -124,7 +124,15 @@ type SearchModel struct {
 	// via LastUpdated() so the App Shell can stamp it into the
 	// chrome's upper-divider right slot (issue #177).
 	lastUpdated time.Time
+	// loaded flips true once the first logsLoadedMsg / logsErrMsg
+	// arrives; before then View renders a spinner (issue #194 v0.2.4).
+	loaded       bool
+	spinnerFrame int
 }
+
+// logsSpinnerTickMsg advances the loading spinner frame (issue #194
+// v0.2.4).
+type logsSpinnerTickMsg struct{}
 
 // NewSearchModel constructs a SearchModel with defaults (tail off, follow on,
 // poll interval 10s per issue #179 v0.1.17). When deps.RefreshInterval is set,
@@ -137,7 +145,7 @@ func NewSearchModel(deps Deps) SearchModel {
 	} else if deps.Tail != nil {
 		interval = deps.Tail.PollInterval()
 	}
-	return SearchModel{
+	m := SearchModel{
 		deps:         deps,
 		events:       deps.InitialEvents,
 		follow:       true,
@@ -146,6 +154,10 @@ func NewSearchModel(deps Deps) SearchModel {
 		height:       deps.Height,
 		timeRange:    30 * time.Minute,
 	}
+	if len(m.events) > 0 || deps.Service == nil {
+		m.loaded = true
+	}
+	return m
 }
 
 // LastUpdated implements app.LastUpdatedStater so the chrome's upper
@@ -276,10 +288,14 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if !m.loaded {
+			return m, shared.ScheduleSpinnerTickCmd(logsSpinnerTickMsg{})
+		}
 		return m, nil
 	case logsLoadedMsg:
 		m.events = msg.events
 		m.lastErr = nil
+		m.loaded = true
 		// Logs render newest-at-bottom, so the operator's mental model
 		// is: open the screen → land on the most recent entry, scroll
 		// upward (k) to view older ones. Park the cursor on the last
@@ -307,7 +323,20 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case logsErrMsg:
 		m.lastErr = msg.err
+		m.loaded = true
 		return m, nil
+	case logsSpinnerTickMsg:
+		if m.loaded {
+			return m, nil
+		}
+		m.spinnerFrame++
+		return m, shared.ScheduleSpinnerTickCmd(logsSpinnerTickMsg{})
+	case shared.RefreshScreenMsg:
+		// Issue #192 v0.2.3 — out-of-band refresh from the App Shell.
+		if m.deps.Service == nil {
+			return m, nil
+		}
+		return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
 	case followTickMsg:
 		// Stale tick — operator toggled follow off and back on, or
 		// changed the time range. Drop the tick and let the new
@@ -648,6 +677,10 @@ func (m SearchModel) View() string {
 	}
 
 	tk := activeTokens()
+	if !m.loaded {
+		return shared.LoadingPlaceholder(m.spinnerFrame, "Loading logs…",
+			m.chromeContentWidth(), shared.ListBodyRowBudget(m.height), tk)
+	}
 	now := m.now()
 
 	var b strings.Builder
@@ -672,7 +705,7 @@ func (m SearchModel) View() string {
 			prefix = "▸ "
 		}
 		// v0.2.0 #182 — unified cursor pipeline.
-		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, "", tk))
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, "", false, tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(rows), tk))
 		b.WriteByte('\n')
 	}

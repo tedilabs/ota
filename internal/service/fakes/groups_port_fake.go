@@ -15,6 +15,8 @@ type GroupsPortFake struct {
 	GetFunc      func(ctx context.Context, id string) (domain.Group, error)
 	MembersFunc  func(ctx context.Context, q domain.GroupMembersQuery) (domain.Iterator[domain.User], error)
 	AppCountFunc func(ctx context.Context, id string) (int, error)
+	// v0.2.2 #189 — ListApps powers the Group Detail Apps box.
+	ListAppsFunc func(ctx context.Context, groupID string) ([]domain.App, error)
 }
 
 func NewGroupsPort(t *testing.T) *GroupsPortFake {
@@ -52,4 +54,12 @@ func (f *GroupsPortFake) AppCount(ctx context.Context, id string) (int, error) {
 		f.t.Fatalf("GroupsPortFake.AppCount called but AppCountFunc is not set")
 	}
 	return f.AppCountFunc(ctx, id)
+}
+
+func (f *GroupsPortFake) ListApps(ctx context.Context, groupID string) ([]domain.App, error) {
+	f.t.Helper()
+	if f.ListAppsFunc == nil {
+		return nil, nil
+	}
+	return f.ListAppsFunc(ctx, groupID)
 }

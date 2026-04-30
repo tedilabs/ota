@@ -130,6 +130,7 @@ func typePalette(t *testing.T, m app.Model, command string) app.Model {
 	return step(m, tea.KeyMsg{Type: tea.KeyEnter})
 }
 
+
 // Test_AppShell_ResetPassword_HappyPath_FiresPort — confirms y on the
 // confirmation modal calls UsersPort.ResetPassword with the selected
 // user ID + sendEmail=true.

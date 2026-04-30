@@ -368,7 +368,7 @@ func (m ListModel) View() string {
 			prefix = "▸ "
 		}
 		// v0.2.0 #182 — unified cursor pipeline.
-		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(m.policies[i].Status), tk))
+		b.WriteString(shared.RenderRowCursor(prefix+row, rowTarget, i == m.cursor, string(m.policies[i].Status), false, tk))
 		b.WriteString(shared.AppendScrollbarSuffix(i-top, top, budget, len(m.policies), tk))
 		b.WriteByte('\n')
 	}
