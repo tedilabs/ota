@@ -525,6 +525,14 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyShiftTab:
 			m.detailTab = (m.detailTab + logDetailTabCount - 1) % logDetailTabCount
 			return m, nil
+		case tea.KeyEnter:
+			// #G5 / U7 v0.2.4 — drill into the actor's User Detail.
+			// AlternateID is typically the login (alice@acme.com)
+			// which UsersPort.Get accepts; ID is the userID otherwise.
+			if id := logActorDrillID(m.detail); id != "" {
+				return m, openUserDetailCmd(id)
+			}
+			return m, nil
 		case tea.KeyRunes:
 			if string(km.Runes) == "r" {
 				if m.detailTab == LogDetailTabJSON {
@@ -1042,6 +1050,11 @@ func renderLogDetailTabbed(e domain.LogEvent, active LogDetailTab) string {
 	default:
 		b.WriteString(renderLogDetail(e))
 	}
+	// #G5 / U7 v0.2.4 — surface the actor drill-down affordance.
+	if logActorDrillID(e) != "" {
+		b.WriteByte('\n')
+		b.WriteString("Enter to open the actor's user detail")
+	}
 	return b.String()
 }
 
@@ -1345,6 +1358,28 @@ func fetchHistoryWindowQueryCmd(svc *service.LogsService, window time.Duration, 
 		}
 		return logsLoadedMsg{events: out}
 	}
+}
+
+// logActorDrillID returns the best identifier to feed
+// shared.OpenUserDetailMsg with. Prefers AlternateID (the login,
+// most useful for human inspection) and falls back to the actor ID
+// when the alternate is unset. Empty when the event has no actor or
+// the actor isn't a User type. Issue #G5 / U7 v0.2.4.
+func logActorDrillID(e domain.LogEvent) string {
+	if e.Actor.Type != domain.ActorTypeUser {
+		return ""
+	}
+	if id := e.Actor.AlternateID; id != "" {
+		return id
+	}
+	return e.Actor.ID
+}
+
+// openUserDetailCmd is the cross-screen drill-down emitter for the
+// Log Detail actor row (#G5 / U7 v0.2.4). The App Shell forwards to
+// the Users list, which opens detail by ID.
+func openUserDetailCmd(id string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenUserDetailMsg{ID: id} }
 }
 
 var (
