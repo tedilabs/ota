@@ -352,10 +352,10 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailRawReturn = RuleDetailTabProfile
 			return m, nil
 		case tea.KeyTab:
-			m.detailTab = (m.detailTab + 1) % ruleDetailTabCount
+			m.detailTab = shared.NextTab(m.detailTab)
 			return m, nil
 		case tea.KeyShiftTab:
-			m.detailTab = (m.detailTab + ruleDetailTabCount - 1) % ruleDetailTabCount
+			m.detailTab = shared.PrevTab(m.detailTab)
 			return m, nil
 		case tea.KeyEnter:
 			// #G4 / U7 v0.2.4 — drill into the focused target's
@@ -408,12 +408,7 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			case "r":
-				if m.detailTab == RuleDetailTabRaw {
-					m.detailTab = m.detailRawReturn
-				} else {
-					m.detailRawReturn = m.detailTab
-					m.detailTab = RuleDetailTabRaw
-				}
+				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 			}
 			return m, nil
 		}

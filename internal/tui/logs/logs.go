@@ -520,10 +520,10 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailRawReturn = LogDetailTabPretty
 			return m, nil
 		case tea.KeyTab:
-			m.detailTab = (m.detailTab + 1) % logDetailTabCount
+			m.detailTab = shared.NextTab(m.detailTab)
 			return m, nil
 		case tea.KeyShiftTab:
-			m.detailTab = (m.detailTab + logDetailTabCount - 1) % logDetailTabCount
+			m.detailTab = shared.PrevTab(m.detailTab)
 			return m, nil
 		case tea.KeyEnter:
 			// #G5 / U7 v0.2.4 — drill into the actor's User Detail.
@@ -535,12 +535,7 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyRunes:
 			if string(km.Runes) == "r" {
-				if m.detailTab == LogDetailTabJSON {
-					m.detailTab = m.detailRawReturn
-				} else {
-					m.detailRawReturn = m.detailTab
-					m.detailTab = LogDetailTabJSON
-				}
+				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 				return m, nil
 			}
 		}

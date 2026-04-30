@@ -484,10 +484,10 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailExtrasCur = 0
 			return m, nil
 		case tea.KeyTab:
-			m.detailTab = (m.detailTab + 1) % groupDetailTabCount
+			m.detailTab = GroupDetailTab(shared.NextTab(shared.DetailTab(m.detailTab)))
 			return m, nil
 		case tea.KeyShiftTab:
-			m.detailTab = (m.detailTab + groupDetailTabCount - 1) % groupDetailTabCount
+			m.detailTab = GroupDetailTab(shared.PrevTab(shared.DetailTab(m.detailTab)))
 			return m, nil
 		case tea.KeyRunes:
 			runes := string(msg.Runes)
@@ -531,12 +531,11 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if runes == "r" {
-				if m.detailTab == GroupDetailTabRaw {
-					m.detailTab = m.detailRawReturn
-				} else {
-					m.detailRawReturn = m.detailTab
-					m.detailTab = GroupDetailTabRaw
-				}
+				newActive, newReturn := shared.ToggleRawTab(
+					shared.DetailTab(m.detailTab),
+					shared.DetailTab(m.detailRawReturn))
+				m.detailTab = GroupDetailTab(newActive)
+				m.detailRawReturn = GroupDetailTab(newReturn)
 			}
 			return m, nil
 		}

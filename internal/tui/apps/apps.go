@@ -170,8 +170,9 @@ type ListModel struct {
 	filtering   bool
 	opened      bool
 	detail      domain.App
-	detailTab   AppDetailTab
-	lastErr     error
+	detailTab       AppDetailTab
+	detailRawReturn AppDetailTab // remember non-JSON tab so `r` toggles back (#U6 v0.2.5)
+	lastErr         error
 	width       int
 	height      int
 	viewportTop int
@@ -394,18 +395,14 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailTab = AppDetailTabPretty
 			return m, nil
 		case tea.KeyTab:
-			m.detailTab = (m.detailTab + 1) % appDetailTabCount
+			m.detailTab = shared.NextTab(m.detailTab)
 			return m, nil
 		case tea.KeyShiftTab:
-			m.detailTab = (m.detailTab + appDetailTabCount - 1) % appDetailTabCount
+			m.detailTab = shared.PrevTab(m.detailTab)
 			return m, nil
 		case tea.KeyRunes:
 			if string(km.Runes) == "r" {
-				if m.detailTab == AppDetailTabJSON {
-					m.detailTab = AppDetailTabPretty
-				} else {
-					m.detailTab = AppDetailTabJSON
-				}
+				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 				return m, nil
 			}
 		}

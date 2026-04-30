@@ -561,12 +561,12 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailAppsTop = 0
 			return m, nil
 		case tea.KeyTab:
-			m.detailTab = (m.detailTab + 1) % detailTabCount
+			m.detailTab = shared.NextTab(m.detailTab)
 			m.detailLine = 0
 			m.detailVisual = false
 			return m, nil
 		case tea.KeyShiftTab:
-			m.detailTab = (m.detailTab + detailTabCount - 1) % detailTabCount
+			m.detailTab = shared.PrevTab(m.detailTab)
 			m.detailLine = 0
 			m.detailVisual = false
 			return m, nil
@@ -594,12 +594,7 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyRunes:
 			switch string(msg.Runes) {
 			case "r":
-				if m.detailTab == DetailTabRaw {
-					m.detailTab = m.detailRawReturn
-				} else {
-					m.detailRawReturn = m.detailTab
-					m.detailTab = DetailTabRaw
-				}
+				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 				m.detailLine = 0
 				m.detailVisual = false
 			case "j":
