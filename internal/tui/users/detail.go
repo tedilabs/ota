@@ -41,9 +41,6 @@ const (
 	DetailTabRaw     = DetailTabJSON
 )
 
-var detailTabLabels = shared.DetailTabLabels
-var detailTabCount = shared.DetailTabCount
-
 // DetailModel is SCR-011 User detail with tabs (Profile/Credentials/
 // Timestamps/Groups/Factors/Recent/Raw — TUI_DESIGN §15.7 v1.2.0). The
 // active tab is held by the model; ListModel.opened mode owns the
@@ -93,11 +90,10 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // renderer to splice highlights onto the body without re-parsing
 // the composed string (issue #181 v0.1.17).
 func (m DetailModel) headerStrip() string {
+	tk := activeTokens()
 	var b strings.Builder
 	b.WriteString("User Detail\n")
-	b.WriteString(renderTabBar(m.activeTab))
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat("─", 78))
+	b.WriteString(shared.RenderDetailTabBar(m.activeTab, 78, tk))
 	return b.String()
 }
 
@@ -105,11 +101,10 @@ func (m DetailModel) headerStrip() string {
 // rendered; the body switches on m.activeTab. Profile is the curated v0.1.0
 // view; Raw is the new v0.1.1 full-attribute JSON dump (§15.7 v1.2.0).
 func (m DetailModel) View() string {
+	tk := activeTokens()
 	var b strings.Builder
 	b.WriteString("User Detail\n")
-	b.WriteString(renderTabBar(m.activeTab))
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat("─", 78))
+	b.WriteString(shared.RenderDetailTabBar(m.activeTab, 78, tk))
 	b.WriteByte('\n')
 
 	switch m.activeTab {
@@ -144,19 +139,6 @@ func (m DetailModel) renderYAMLTab() string {
 	return shared.HighlightYAML(annotateMaskedLines(body), activeTokens()) + "\n"
 }
 
-// renderTabBar lays out the §15.7 v1.2.0 tab labels with the active one
-// surrounded by `[…]` and the rest by `[ … ]`.
-func renderTabBar(active DetailTab) string {
-	var parts []string
-	for i, label := range detailTabLabels {
-		if DetailTab(i) == active {
-			parts = append(parts, "["+label+"]")
-		} else {
-			parts = append(parts, "[ "+label+" ]")
-		}
-	}
-	return strings.Join(parts, " ")
-}
 
 // renderProfileTab groups the user's profile attributes into semantic
 // sections — Status / Identity / Contact / Address / Organization /

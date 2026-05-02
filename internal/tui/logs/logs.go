@@ -83,9 +83,6 @@ const (
 	LogDetailTabYAML   = shared.DetailTabYAML
 )
 
-var logDetailTabLabels = shared.DetailTabLabels
-var logDetailTabCount = shared.DetailTabCount
-
 type SearchModel struct {
 	deps         Deps
 	events       []domain.LogEvent
@@ -1370,11 +1367,14 @@ func logDetailLines(e domain.LogEvent, active LogDetailTab) []string {
 // the marker (#F5 v0.2.5). height clips the body slice so the chrome
 // doesn't truncate cursor rows that scrolled off-screen.
 func renderLogDetailTabbedWithCursor(e domain.LogEvent, active LogDetailTab, cursor shared.BodyCursor, width, height int) string {
+	tk := activeTokens()
 	var b strings.Builder
 	b.WriteString("Log Event\n")
-	b.WriteString(renderLogTabBar(active))
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat("─", 78))
+	barWidth := width
+	if barWidth <= 0 {
+		barWidth = 78
+	}
+	b.WriteString(shared.RenderDetailTabBar(active, barWidth, tk))
 	b.WriteByte('\n')
 	if width <= 0 {
 		// Fall back to plain rendering when called without a width
@@ -1389,7 +1389,6 @@ func renderLogDetailTabbedWithCursor(e domain.LogEvent, active LogDetailTab, cur
 		}
 	} else {
 		lines := logDetailLines(e, active)
-		tk := activeTokens()
 		rendered := cursor.RenderViewport(lines, width, height, tk)
 		b.WriteString(shared.JoinLines(rendered))
 	}
@@ -1399,21 +1398,6 @@ func renderLogDetailTabbedWithCursor(e domain.LogEvent, active LogDetailTab, cur
 		b.WriteString("Enter to open the actor's user detail")
 	}
 	return b.String()
-}
-
-// renderLogTabBar mirrors the tab-bar style used by users / groups /
-// rules detail views. Active tab gets the bracketed-tight form, the
-// rest read as breathing-room labels.
-func renderLogTabBar(active LogDetailTab) string {
-	parts := make([]string, 0, len(logDetailTabLabels))
-	for i, label := range logDetailTabLabels {
-		if LogDetailTab(i) == active {
-			parts = append(parts, "["+label+"]")
-		} else {
-			parts = append(parts, "[ "+label+" ]")
-		}
-	}
-	return strings.Join(parts, " ")
 }
 
 // renderLogJSONTab emits the full event payload (LogEvent.Raw — what

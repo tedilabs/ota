@@ -499,11 +499,14 @@ func renderAuthDetailTabbed(a domain.Authenticator, active AuthDetailTab) string
 // visual selection (#F5 v0.2.5). height clips the body slice so the
 // chrome doesn't truncate cursor rows that scrolled off-screen.
 func renderAuthDetailTabbedWithCursor(a domain.Authenticator, active AuthDetailTab, cursor shared.BodyCursor, width, height int) string {
+	tk := activeTokens()
 	var b strings.Builder
 	b.WriteString("Authenticator Detail\n")
-	b.WriteString(renderAuthTabBar(active))
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat("─", 78))
+	barWidth := width
+	if barWidth <= 0 {
+		barWidth = 78
+	}
+	b.WriteString(shared.RenderDetailTabBar(active, barWidth, tk))
 	b.WriteByte('\n')
 	if width <= 0 {
 		switch active {
@@ -516,22 +519,9 @@ func renderAuthDetailTabbedWithCursor(a domain.Authenticator, active AuthDetailT
 		}
 		return b.String()
 	}
-	tk := activeTokens()
 	rendered := cursor.RenderViewport(authDetailLines(a, active), width, height, tk)
 	b.WriteString(shared.JoinLines(rendered))
 	return b.String()
-}
-
-func renderAuthTabBar(active AuthDetailTab) string {
-	var b strings.Builder
-	for i, label := range shared.DetailTabLabels {
-		if AuthDetailTab(i) == active {
-			b.WriteString("[" + label + "] ")
-		} else {
-			b.WriteString(" " + label + "  ")
-		}
-	}
-	return strings.TrimRight(b.String(), " ")
 }
 
 func renderAuthPretty(a domain.Authenticator) string {

@@ -169,11 +169,6 @@ const (
 	GroupDetailTabRaw     = GroupDetailTabJSON
 )
 
-// v0.2.2 #189 — Members dropped from the tab bar into a side-by-side
-// box; tab list shrinks back to the Pretty / JSON / YAML triplet
-// every other detail surface uses.
-var groupDetailTabLabels = []string{"Pretty", "JSON", "YAML"}
-var groupDetailTabCount = GroupDetailTab(len(groupDetailTabLabels))
 
 // groupsErrMsg surfaces a fetch failure to View() (TUI_DESIGN §17).
 type groupsErrMsg struct{ err error }
@@ -1353,11 +1348,17 @@ func groupDetailLines(g domain.Group, active GroupDetailTab, members []domain.Us
 // the marker (#F5 v0.2.5). height clips the body slice so the chrome
 // doesn't truncate cursor rows that scrolled off-screen.
 func renderGroupDetailTabbedWithCursor(g domain.Group, active GroupDetailTab, members []domain.User, loaded bool, memberErr error, cursor shared.BodyCursor, width, height int) string {
+	tk := activeTokens()
 	var b strings.Builder
 	b.WriteString("Group Detail\n")
-	b.WriteString(renderGroupTabBar(active))
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat("─", 78))
+	barWidth := width
+	if barWidth <= 0 {
+		barWidth = 78
+	}
+	// GroupDetailTabMembers (3) is out of range for the canonical
+	// triad — the shared helper renders it as "no active" so the
+	// divider stays uniform when the operator is in Members focus.
+	b.WriteString(shared.RenderDetailTabBar(shared.DetailTab(active), barWidth, tk))
 	b.WriteByte('\n')
 	if width <= 0 {
 		switch active {
@@ -1373,7 +1374,6 @@ func renderGroupDetailTabbedWithCursor(g domain.Group, active GroupDetailTab, me
 		return b.String()
 	}
 	lines := groupDetailLines(g, active, members, loaded, memberErr)
-	tk := activeTokens()
 	rendered := cursor.RenderViewport(lines, width, height, tk)
 	b.WriteString(shared.JoinLines(rendered))
 	return b.String()
@@ -1455,17 +1455,6 @@ func renderGroupYAMLTab(g domain.Group) string {
 	return shared.HighlightYAML(body, activeTokens()) + "\n"
 }
 
-func renderGroupTabBar(active GroupDetailTab) string {
-	var parts []string
-	for i, label := range groupDetailTabLabels {
-		if GroupDetailTab(i) == active {
-			parts = append(parts, "["+label+"]")
-		} else {
-			parts = append(parts, "[ "+label+" ]")
-		}
-	}
-	return strings.Join(parts, " ")
-}
 
 // renderGroupRawTab returns the §15.7 v1.2.0 Raw JSON tab content.
 // Groups carry no PII so no mask wrapping is needed; the marshal is

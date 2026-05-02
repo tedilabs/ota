@@ -219,9 +219,6 @@ const (
 	AppDetailTabYAML   = shared.DetailTabYAML
 )
 
-var appDetailTabLabels = shared.DetailTabLabels
-var appDetailTabCount = shared.DetailTabCount
-
 func NewListModel(deps Deps, t domain.AppType) ListModel {
 	m := ListModel{
 		deps:    deps,
@@ -745,11 +742,14 @@ func renderAppDetailTabbed(a domain.App, active AppDetailTab) string {
 // the marker (#F5 v0.2.5). height clips the body slice so the chrome
 // doesn't truncate cursor rows that scrolled off-screen.
 func renderAppDetailTabbedWithCursor(a domain.App, active AppDetailTab, cursor shared.BodyCursor, width, height int) string {
+	tk := activeTokens()
 	var b strings.Builder
 	b.WriteString("App Detail\n")
-	b.WriteString(renderAppTabBar(active))
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat("─", 78))
+	barWidth := width
+	if barWidth <= 0 {
+		barWidth = 78
+	}
+	b.WriteString(shared.RenderDetailTabBar(active, barWidth, tk))
 	b.WriteByte('\n')
 	lines := appDetailLines(a, active)
 	if width <= 0 {
@@ -765,22 +765,9 @@ func renderAppDetailTabbedWithCursor(a domain.App, active AppDetailTab, cursor s
 		}
 		return b.String()
 	}
-	tk := activeTokens()
 	rendered := cursor.RenderViewport(lines, width, height, tk)
 	b.WriteString(shared.JoinLines(rendered))
 	return b.String()
-}
-
-func renderAppTabBar(active AppDetailTab) string {
-	parts := make([]string, 0, len(appDetailTabLabels))
-	for i, label := range appDetailTabLabels {
-		if AppDetailTab(i) == active {
-			parts = append(parts, "["+label+"]")
-		} else {
-			parts = append(parts, "[ "+label+" ]")
-		}
-	}
-	return strings.Join(parts, " ")
 }
 
 func renderAppPretty(a domain.App) string {

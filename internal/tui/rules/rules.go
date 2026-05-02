@@ -148,9 +148,6 @@ const (
 	RuleDetailTabRaw     = RuleDetailTabJSON
 )
 
-var ruleDetailTabLabels = shared.DetailTabLabels
-var ruleDetailTabCount = shared.DetailTabCount
-
 // NewListModel constructs a ListModel.
 func NewListModel(deps Deps) ListModel {
 	m := ListModel{
@@ -1118,11 +1115,14 @@ func ruleDetailLines(r domain.GroupRule, active RuleDetailTab, groupNames map[st
 // body slice so the chrome doesn't truncate cursor rows that
 // scrolled off-screen.
 func renderRuleDetailTabbedWithFocusCursor(r domain.GroupRule, active RuleDetailTab, focusIdx int, groupNames map[string]string, cursor shared.BodyCursor, width, height int) string {
+	tk := activeTokens()
 	var b strings.Builder
 	b.WriteString("Group Rule Detail\n")
-	b.WriteString(renderRuleTabBar(active))
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat("─", 78))
+	barWidth := width
+	if barWidth <= 0 {
+		barWidth = 78
+	}
+	b.WriteString(shared.RenderDetailTabBar(active, barWidth, tk))
 	b.WriteByte('\n')
 	if focusIdx >= 0 || width <= 0 {
 		switch active {
@@ -1135,7 +1135,6 @@ func renderRuleDetailTabbedWithFocusCursor(r domain.GroupRule, active RuleDetail
 		}
 	} else {
 		lines := ruleDetailLines(r, active, groupNames)
-		tk := activeTokens()
 		rendered := cursor.RenderViewport(lines, width, height, tk)
 		b.WriteString(shared.JoinLines(rendered))
 	}
@@ -1165,18 +1164,6 @@ func renderRuleYAMLTab(r domain.GroupRule) string {
 	}
 	body := strings.TrimRight(buf.String(), "\n")
 	return shared.HighlightYAML(body, activeTokens()) + "\n"
-}
-
-func renderRuleTabBar(active RuleDetailTab) string {
-	var parts []string
-	for i, label := range ruleDetailTabLabels {
-		if RuleDetailTab(i) == active {
-			parts = append(parts, "["+label+"]")
-		} else {
-			parts = append(parts, "[ "+label+" ]")
-		}
-	}
-	return strings.Join(parts, " ")
 }
 
 // renderRuleRawTab returns the §15.7 v1.2.0 Raw JSON tab content with

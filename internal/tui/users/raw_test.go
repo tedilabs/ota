@@ -37,8 +37,8 @@ func Test_DetailModel_RawTab_RendersMaskedJSON(t *testing.T) {
 	m := users.NewDetailModel(users.Deps{}, u).WithActiveTab(users.DetailTabRaw)
 	got := m.View()
 
-	require.Contains(t, got, "[JSON]",
-		"Raw tab label must be active")
+	require.Contains(t, got, "▎JSON",
+		"Raw tab label must be active (marked with the ▎ accent glyph)")
 	require.Contains(t, got, "\"id\": \"00u_alice\"",
 		"id field must serialise verbatim")
 	require.Contains(t, got, "\"status\": \"ACTIVE\"",
@@ -72,12 +72,12 @@ func Test_DetailModel_TabBar_ListsThreeStructuralTabs(t *testing.T) {
 		assert.Contains(t, bar, label,
 			"tab bar must include the %q tab (TUI_DESIGN §15.7 v1.2.0+d)", label)
 	}
-	assert.Contains(t, bar, "[Pretty]",
-		"active Pretty tab must render with no inner padding")
-	assert.Contains(t, bar, "[ JSON ]",
-		"inactive JSON tab must render with inner padding")
-	assert.Contains(t, bar, "[ YAML ]",
-		"inactive YAML tab must render with inner padding")
+	assert.Contains(t, bar, "▎Pretty",
+		"active Pretty tab must carry the ▎ active marker")
+	assert.NotContains(t, bar, "▎JSON",
+		"inactive JSON tab must not carry the ▎ active marker")
+	assert.NotContains(t, bar, "▎YAML",
+		"inactive YAML tab must not carry the ▎ active marker")
 }
 
 // Test_DetailModel_YAMLTab_RendersValidYAML — the YAML tab must produce
@@ -131,15 +131,15 @@ func Test_UsersList_RKey_TogglesRawTab(t *testing.T) {
 	require.NotNil(t, cmd, "`d` must emit fetch Cmd")
 	updated, _ = m.Update(cmd())
 	m = updated.(users.ListModel)
-	require.Contains(t, m.View(), "[Pretty]",
-		"detail mode must start on Profile tab")
+	require.Contains(t, m.View(), "▎Pretty",
+		"detail mode must start on Profile tab (active marker on Pretty)")
 
 	// `r` jumps to Raw.
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m = updated.(users.ListModel)
 	view1 := m.View()
-	assert.Contains(t, view1, "[JSON]",
-		"after `r`, Raw tab must be active")
+	assert.Contains(t, view1, "▎JSON",
+		"after `r`, Raw tab must carry the ▎ active marker")
 	assert.Contains(t, view1, "\"login\": \"alice@acme.com\"",
 		"Raw tab must show JSON of the fetched user")
 
@@ -147,8 +147,8 @@ func Test_UsersList_RKey_TogglesRawTab(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m = updated.(users.ListModel)
 	view2 := m.View()
-	assert.Contains(t, view2, "[Pretty]",
-		"second `r` must return to the previously-active tab")
+	assert.Contains(t, view2, "▎Pretty",
+		"second `r` must return to the previously-active tab (Pretty marker)")
 	assert.NotContains(t, view2, "\"login\": \"alice@acme.com\"",
 		"after returning, the JSON body must be gone")
 }
