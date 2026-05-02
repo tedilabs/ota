@@ -112,7 +112,8 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 		GroupRulesPort: oktaClient.GroupRules(),
 		PoliciesPort:   oktaClient.Policies(),
 		LogsPort:       oktaClient.Logs(),
-		AppsPort:       oktaClient.Apps(),
+		AppsPort:           oktaClient.Apps(),
+		AuthenticatorsPort: oktaClient.Authenticators(),
 		LogsRefreshInterval: time.Duration(cfg.Refresh.LogsSeconds) *
 			time.Second,
 		DefaultRefreshInterval: time.Duration(cfg.Refresh.DefaultSeconds) *

@@ -432,6 +432,7 @@ func paletteHelpEntries() []helpEntry {
 		{":group-rules", "Group Rules list"},
 		{":policies", "Policies (with type picker)"},
 		{":apps", "Apps (with type picker)"},
+		{":authenticator", "Authenticators (factor methods)"},
 		{":logs", "System Log"},
 		{":saml-app", "SAML apps"},
 		{":oidc-app", "OIDC apps"},

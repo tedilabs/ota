@@ -16,6 +16,7 @@ import (
 	"github.com/tedilabs/ota/internal/oktastatus"
 	"github.com/tedilabs/ota/internal/service"
 	"github.com/tedilabs/ota/internal/tui/apps"
+	"github.com/tedilabs/ota/internal/tui/authenticators"
 	"github.com/tedilabs/ota/internal/tui/groups"
 	"github.com/tedilabs/ota/internal/tui/logs"
 	"github.com/tedilabs/ota/internal/tui/overlay"
@@ -36,6 +37,7 @@ const (
 	ScreenPolicies
 	ScreenLogs
 	ScreenApps
+	ScreenAuthenticators
 	ScreenUserDetail
 	ScreenGroupDetail
 	ScreenRuleDetail
@@ -58,6 +60,8 @@ func (s Screen) String() string {
 		return "logs"
 	case ScreenApps:
 		return "apps"
+	case ScreenAuthenticators:
+		return "authenticators"
 	case ScreenUserDetail:
 		return "user-detail"
 	case ScreenGroupDetail:
@@ -183,12 +187,13 @@ type Deps struct {
 
 	// Ports are injected raw so child Screen Models can be constructed by
 	// the App Shell without exporting fields from the service Bundle.
-	UsersPort      domain.UsersPort
-	GroupsPort     domain.GroupsPort
-	GroupRulesPort domain.GroupRulesPort
-	PoliciesPort   domain.PoliciesPort
-	LogsPort       domain.LogsPort
-	AppsPort       domain.AppsPort
+	UsersPort          domain.UsersPort
+	GroupsPort         domain.GroupsPort
+	GroupRulesPort     domain.GroupRulesPort
+	PoliciesPort       domain.PoliciesPort
+	LogsPort           domain.LogsPort
+	AppsPort           domain.AppsPort
+	AuthenticatorsPort domain.AuthenticatorsPort
 
 	// LogsRefreshInterval / DefaultRefreshInterval drive the auto-refresh
 	// tickers (issue #177 v0.1.16). Logs default 5s, every other list
@@ -607,6 +612,10 @@ func screenFromName(name string) (Screen, bool) {
 		return ScreenLogs, true
 	case "app", "apps", "a":
 		return ScreenApps, true
+	case "authenticator", "authenticators",
+		"auth", "auths",
+		"factor", "factors":
+		return ScreenAuthenticators, true
 	}
 	return 0, false
 }
@@ -984,6 +993,10 @@ func (m Model) resourceLabel() string {
 		return "Policies"
 	case ScreenLogs:
 		return "Logs"
+	case ScreenApps:
+		return "Apps"
+	case ScreenAuthenticators:
+		return "Authenticators"
 	case ScreenUserDetail:
 		return "Users › detail"
 	case ScreenGroupDetail:
@@ -1626,6 +1639,17 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			RefreshInterval: m.deps.DefaultRefreshInterval,
 		})
 		return mdl, mdl.Init()
+	case ScreenAuthenticators:
+		mdl := authenticators.NewListModel(authenticators.Deps{
+			Port:            m.deps.AuthenticatorsPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
+		})
+		return mdl, mdl.Init()
 	}
 	// Detail views are populated by drill-down handlers; not auto-built.
 	return nil, nil
@@ -1851,6 +1875,7 @@ func paletteCommandPool() []string {
 		"bookmark-app",
 		"swa-app",
 		"scim-app",
+		"authenticator",
 		"unmask", "mask",
 		"reset-password", "unlock", "reset-mfa",
 		"help", "quit",

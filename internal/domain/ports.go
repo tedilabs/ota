@@ -102,6 +102,15 @@ type AppsPort interface {
 	Get(ctx context.Context, id string) (App, error)
 }
 
+// AuthenticatorsPort is the outbound boundary for Okta Authenticators
+// — the org-wide set of factors (password / email / phone /
+// security_question / okta_verify / webauthn / etc.) operators can
+// enable for end-user enrollment. Issue #F1 v0.2.5.
+type AuthenticatorsPort interface {
+	List(ctx context.Context) ([]Authenticator, error)
+	Get(ctx context.Context, id string) (Authenticator, error)
+}
+
 // LogsPort is the outbound boundary for Okta System Logs.
 // Search is the single entrypoint for both history and tail modes — tail is
 // implemented at the service layer by repeatedly calling Search with an

@@ -569,9 +569,10 @@ func splitLinesPadded(body string, inner int) []string {
 	return out
 }
 
-// padTo pads s with trailing spaces so its visible width hits exactly width.
-// Truncates if longer (rare — caller should pre-fit but we don't want to blow
-// the box layout).
+// padTo pads s with trailing spaces so its visible width hits exactly
+// width. Truncates if longer using visible-cell semantics (#U17 v0.2.5
+// — was a naive byte slice, which corrupted modal lines containing
+// wide-char runes like "→" and shifted the right border off-column).
 func padTo(s string, width int) string {
 	w := visibleWidth(s)
 	if w == width {
@@ -580,9 +581,11 @@ func padTo(s string, width int) string {
 	if w < width {
 		return s + strings.Repeat(" ", width-w)
 	}
-	// Truncate — naive byte slice; visible-width truncation across ANSI is a
-	// later optimization. Plain text bodies (no escapes) are exact.
-	return s[:width]
+	cut := truncateVisible(s, width)
+	if visibleWidth(cut) < width {
+		cut += strings.Repeat(" ", width-visibleWidth(cut))
+	}
+	return cut
 }
 
 // padToVisible is padTo but accepts pre-styled strings; identical behavior in

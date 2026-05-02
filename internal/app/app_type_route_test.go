@@ -118,8 +118,8 @@ func Test_AppShell_AppsRoute_PickerRenders(t *testing.T) {
 		"`:app<Enter>` must surface the type-select picker")
 	assert.Contains(t, view, "SAML 2.0",
 		"picker must list the SAML option")
-	assert.Contains(t, view, "─ apps ",
-		"chrome divider must read 'apps'")
+	assert.Contains(t, view, "─ Apps ",
+		"chrome divider must read 'Apps' (capitalized to match other resource labels — #F1 v0.2.5)")
 }
 
 // Test_AppShell_AppsRoute_DirectTypeSkipsPicker:
