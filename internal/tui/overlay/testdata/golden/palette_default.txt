@@ -19,6 +19,7 @@
 │   :ratelimit                                             │
 │   :errors                                                │
 │   :healthcheck                                           │
+│   :apilog                                                │
 │   :debug                                                 │
 │   :help                                                  │
 │   :quit                                                  │

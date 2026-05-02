@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tedilabs/ota/internal/apilog"
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
@@ -96,6 +97,10 @@ const (
 	// Reads the active screen's Actions() and dispatches the
 	// selected ID back into Update on Enter.
 	OverlayActionMenu
+	// OverlayAPIRecorder — global "Okta API timeline" overlay bound
+	// to `~`. Reads from the apilog.Recorder snapshot the App Shell
+	// holds in m.deps.APIRecorder.
+	OverlayAPIRecorder
 )
 
 // Actioner is implemented by screens that publish a list of
@@ -195,6 +200,11 @@ type Deps struct {
 	AppsPort           domain.AppsPort
 	AuthenticatorsPort domain.AuthenticatorsPort
 
+	// APIRecorder is the cross-session NDJSON capture of every Okta
+	// HTTP round-trip; the `~` overlay reads its in-memory snapshot
+	// to render the timeline. Nil disables the overlay.
+	APIRecorder *apilog.Recorder
+
 	// LogsRefreshInterval / DefaultRefreshInterval drive the auto-refresh
 	// tickers (issue #177 v0.1.16). Logs default 5s, every other list
 	// default 10s. Zero on either disables auto-refresh on that surface.
@@ -240,6 +250,11 @@ type Model struct {
 	// actionMenu is the resource-specific action picker (issue #175).
 	// Non-nil only while overlay == OverlayActionMenu.
 	actionMenu *overlay.ActionMenuModel
+
+	// apiRecorderModel renders the global Okta API timeline overlay
+	// when overlay == OverlayAPIRecorder. Bound to the `~` keybinding;
+	// nil when m.deps.APIRecorder is nil (recorder unavailable).
+	apiRecorderModel *overlay.APIRecorderModel
 
 	// principalLogin is the authenticated Okta user (issue #124). Empty
 	// until the /api/v1/users/me probe completes; once populated it
@@ -407,6 +422,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.overlay = OverlayHelp
 		h := overlay.NewHelpModelFor(m.active.String())
 		m.helpModel = &h
+		return m, nil
+	case openAPIRecorderMsg:
+		// Open / refresh the global Okta API timeline overlay (`~`).
+		if m.deps.APIRecorder == nil {
+			return m, nil
+		}
+		ar := overlay.NewAPIRecorderModel(m.deps.APIRecorder)
+		m.apiRecorderModel = &ar
+		m.overlay = OverlayAPIRecorder
 		return m, nil
 	case openActionMenuMsg:
 		// Issue #175: build the action picker from the active
@@ -806,6 +830,14 @@ func (m Model) composeBody() string {
 			modalWidth = 60
 		}
 		sized := m.helpModel.WithWidth(modalWidth)
+		return m.composeModalOverDimmedBody(sized.View())
+	}
+	if m.overlay == OverlayAPIRecorder && m.apiRecorderModel != nil {
+		// Global Okta API timeline overlay. Sized to the chrome's
+		// content rectangle so the 2-pane layout has room to breathe.
+		contentWidth := clampWidth(m.width) - 3
+		bodyHeight := clampBodyLines(m.height)
+		sized := m.apiRecorderModel.WithSize(contentWidth, bodyHeight+2)
 		return m.composeModalOverDimmedBody(sized.View())
 	}
 	if m.overlay == OverlayActionConfirm {
@@ -1739,6 +1771,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay == OverlayActionMenu {
 		return m.handleActionMenuKey(msg)
 	}
+	if m.overlay == OverlayAPIRecorder {
+		return m.handleAPIRecorderKey(msg)
+	}
 
 	// v0.2.0: Esc on a list with no overlay / filter / Visual / detail
 	// open used to be silent — operators repeatedly reported pressing
@@ -1773,6 +1808,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, openHelpCmd()
 		case "q":
 			return m, quitConfirmCmd()
+		case "~":
+			// Global Okta API timeline overlay. Disabled when no
+			// recorder was wired (e.g. tests).
+			if m.deps.APIRecorder != nil {
+				return m, openAPIRecorderCmd()
+			}
 		case "a":
 			// Issue #175: open the resource action menu when the
 			// active screen exposes one. Falls through to the
@@ -1846,6 +1887,13 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// path the `?` shortcut takes; lets operators discover
 			// the help surface via palette autocomplete.
 			return m, openHelpCmd()
+		case paletteCmdAPILog:
+			// `:apilog` opens the API timeline overlay; same path
+			// `~` takes. Disabled when no recorder was wired.
+			if m.deps.APIRecorder == nil {
+				return m, toastCmdInfo("API recorder unavailable")
+			}
+			return m, openAPIRecorderCmd()
 		case paletteCmdUnmask:
 			if child, ok := m.screens[m.active]; ok {
 				updated, c := child.Update(UnmaskFieldMsg{Field: arg})
@@ -2084,6 +2132,33 @@ func (m Model) handleActionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleAPIRecorderKey routes keys for the global Okta API timeline
+// overlay. Esc and `~` close it (toggle); everything else flows
+// through the model's own Update so j/k/Tab/g/G/R behaviors live in
+// one place.
+func (m Model) handleAPIRecorderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.overlay = OverlayNone
+		m.apiRecorderModel = nil
+		return m, nil
+	case tea.KeyRunes:
+		if string(msg.Runes) == "~" {
+			m.overlay = OverlayNone
+			m.apiRecorderModel = nil
+			return m, nil
+		}
+	}
+	if m.apiRecorderModel != nil {
+		updated, cmd := m.apiRecorderModel.Update(msg)
+		if ar, ok := updated.(overlay.APIRecorderModel); ok {
+			m.apiRecorderModel = &ar
+		}
+		return m, cmd
+	}
+	return m, nil
+}
+
 // --- Palette resolver ----------------------------------------------------
 
 type paletteCmdKind int
@@ -2110,6 +2185,9 @@ const (
 	// the `?` shortcut fires; exposed as a palette command so the
 	// route is discoverable via Tab-autocomplete.
 	paletteCmdHelp
+	// paletteCmdAPILog opens the global Okta API timeline overlay —
+	// same Cmd the `~` shortcut fires.
+	paletteCmdAPILog
 )
 
 // UnmaskFieldMsg / MaskAllMsg are re-exported from the shared msgs
@@ -2153,6 +2231,8 @@ func resolvePaletteCommand(raw string) (kind paletteCmdKind, screen Screen, arg 
 		return paletteCmdUnlock, 0, "", true
 	case "reset-mfa", "reset-factors", "reset_mfa", "reset_factors", "resetfactors":
 		return paletteCmdResetFactors, 0, "", true
+	case "apilog", "api-log", "api_log", "apitimeline":
+		return paletteCmdAPILog, 0, "", true
 	}
 	// Direct policy-type routes (issue #165). The verb arg field
 	// carries the canonical PolicyType so the App Shell can build a
@@ -2280,6 +2360,11 @@ func refreshScreenCmd() tea.Cmd {
 type openCmdPaletteMsg struct{}
 type openHelpMsg struct{}
 type openActionMenuMsg struct{}
+type openAPIRecorderMsg struct{}
+
+func openAPIRecorderCmd() tea.Cmd {
+	return func() tea.Msg { return openAPIRecorderMsg{} }
+}
 
 // openActionMenuCmd opens the resource-specific action picker
 // (issue #175). Routed through a Cmd so `a` flows the same way as

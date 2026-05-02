@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/tedilabs/ota/internal/apilog"
 	"github.com/tedilabs/ota/internal/app"
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/config"
@@ -74,9 +76,13 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 
 	// 5. Construct the Okta client.
 	clk := clock.Real()
+	apiLogDir, _ := defaultAPILogDir()
+	apiRecorder, _ := apilog.New(apiLogDir, apilog.DefaultRingSize)
+	httpCli := &http.Client{Transport: apiRecorder.Transport(http.DefaultTransport)}
 	oktaClient, err := okta.NewClient(ctx, okta.Config{
-		OrgURL:   profile.OrgURL,
-		APIToken: token,
+		OrgURL:     profile.OrgURL,
+		APIToken:   token,
+		HTTPClient: httpCli,
 	}, okta.WithClock(clk), okta.WithLogger(lg))
 	if err != nil {
 		return app.Model{}, cfg, err
@@ -115,6 +121,7 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 		LogsPort:       oktaClient.Logs(),
 		AppsPort:           oktaClient.Apps(),
 		AuthenticatorsPort: oktaClient.Authenticators(),
+		APIRecorder:        apiRecorder,
 		LogsRefreshInterval: time.Duration(cfg.Refresh.LogsSeconds) *
 			time.Second,
 		DefaultRefreshInterval: time.Duration(cfg.Refresh.DefaultSeconds) *
@@ -125,6 +132,25 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 		OktaStatusEndpoint: oktastatus.DefaultEndpoint,
 	})
 	return model, cfg, nil
+}
+
+// defaultAPILogDir returns the per-user cache directory the API
+// recorder writes NDJSON logs into. Honors os.UserCacheDir which
+// resolves to:
+//
+//   - macOS:   ~/Library/Caches/ota/api
+//   - Linux:   $XDG_CACHE_HOME/ota/api  (or ~/.cache/ota/api)
+//   - Windows: %LocalAppData%\ota\api
+//
+// Returns an empty string + error when the user cache dir cannot be
+// resolved — the recorder treats that path as "disabled" and runs
+// in memory only.
+func defaultAPILogDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "ota", "api"), nil
 }
 
 func pickProfile(cfg config.Config, override string) (string, config.Profile, error) {

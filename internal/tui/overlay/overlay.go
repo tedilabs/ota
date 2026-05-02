@@ -20,7 +20,7 @@ var paletteHints = []string{
 	":users", ":groups", ":grouprules", ":policies", ":logs",
 	":profile", ":search", ":filter", ":unmask", ":mask", ":raw",
 	":refresh", ":about", ":ratelimit", ":errors", ":healthcheck",
-	":debug", ":help", ":quit",
+	":apilog", ":debug", ":help", ":quit",
 }
 
 // CmdPaletteModel renders the `:` prompt with in-progress input and command
@@ -410,6 +410,7 @@ func generalHelpEntries() []helpEntry {
 		{":", "open command palette"},
 		{"/", "incremental search (lists)"},
 		{"?", "this help"},
+		{"~", "Okta API call timeline overlay"},
 		{"a", "resource action menu (issue #175)"},
 		{"l", "open Logs scoped to current resource (#F2)"},
 		{"Esc", "cancel mode / close overlay"},
