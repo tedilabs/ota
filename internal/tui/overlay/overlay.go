@@ -500,6 +500,8 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"/", "filter apps by label / name / mode"},
 			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
 			{"r", "toggle to / from JSON tab"},
+			{"j / k · g / G", "(detail) move body cursor / top / bottom"},
+			{"v / V · y", "(detail) visual select · yank to clipboard"},
 			{":saml-app", "jump straight to SAML 2.0 list"},
 			{":oidc-app", "jump straight to OpenID Connect list"},
 			{":bookmark-app", "jump straight to Bookmark list"},
@@ -516,11 +518,21 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"s", "toggle tail mode (on/off)"},
 			{"f", "toggle auto-follow (live ↔ paused)"},
 			{"r", "refresh — refetch the current window"},
+			{"j / k · g / G", "(detail) move body cursor / top / bottom"},
+			{"v / V · y", "(detail) visual select · yank to clipboard"},
 			{"0", "range: last 30m (default)"},
 			{"1", "range: last 1h"},
 			{"3", "range: last 3h"},
 			{"c", "range: last 12h"},
 			{"e", "range: last 24h"},
+		}
+	case "authenticators":
+		return []helpEntry{
+			{"Enter / d", "open authenticator detail"},
+			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
+			{"r", "toggle to / from JSON tab"},
+			{"j / k · g / G", "(detail) move body cursor / top / bottom"},
+			{"v / V · y", "(detail) visual select · yank to clipboard"},
 		}
 	case "user-detail":
 		return []helpEntry{
@@ -528,33 +540,49 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"r", "jump to / from [Raw] tab"},
 			{"]", "enter Groups+Apps boxes (then j/k flows across both)"},
 			{"[", "(in boxes) jump to first row"},
-			{"j / k", "move cursor — wraps from Apps end → Groups start"},
+			{"j / k · g / G", "move body cursor / top / bottom (out of boxes)"},
+			{"v / V", "toggle visual line selection"},
+			{"y", "yank cursor line / visual range"},
 			{"Enter", "open Group / App detail (cursor in boxes)"},
-			{"Esc", "exit boxes back to info grid · second Esc closes detail"},
+			{"Esc", "cancel visual · exit boxes · close detail"},
 		}
 	case "rule-detail":
 		return []helpEntry{
 			{"Tab / Shift-Tab", "cycle detail tabs"},
 			{"r", "jump to / from [Raw] tab"},
-			{"Esc", "back to list"},
+			{"j / k · g / G", "move body cursor / top / bottom"},
+			{"v / V", "toggle visual line selection"},
+			{"y", "yank cursor line / visual range"},
+			{"]", "focus TARGETS for drill-down"},
+			{"Esc", "cancel visual · then back to list"},
 		}
 	case "group-detail":
 		return []helpEntry{
 			{"Tab / Shift-Tab", "cycle detail tabs"},
 			{"r", "jump to / from [Raw] tab"},
 			{"m", "Members tab (lazy load)"},
-			{"Esc", "back to list"},
+			{"j / k · g / G", "move body cursor / top / bottom"},
+			{"v / V", "toggle visual line selection"},
+			{"y", "yank cursor line / visual range"},
+			{"]", "focus Members+Apps boxes"},
+			{"Esc", "cancel visual · then back to list"},
 		}
 	case "policy-detail":
 		return []helpEntry{
 			{"r", "toggle rich ↔ raw JSON"},
-			{"Esc", "back to list"},
+			{"j / k · g / G", "move body cursor / top / bottom"},
+			{"v / V", "toggle visual line selection"},
+			{"y", "yank cursor line / visual range"},
+			{"Esc", "cancel visual · then back to list"},
 		}
 	case "log-detail":
 		return []helpEntry{
 			{"Tab / Shift-Tab", "cycle detail tabs"},
 			{"r", "jump to / from JSON tab"},
-			{"Esc", "back to list"},
+			{"j / k · g / G", "move body cursor / top / bottom"},
+			{"v / V", "toggle visual line selection"},
+			{"y", "yank cursor line / visual range"},
+			{"Esc", "cancel visual · then back to list"},
 		}
 	default:
 		return nil

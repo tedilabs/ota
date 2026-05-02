@@ -113,6 +113,9 @@ type ListModel struct {
 	// drills into the focused target's Group Detail; Esc / `[` exits.
 	detailTargetsFocused bool
 	detailTargetCur      int
+	// detailCursor drives the body line cursor + visual mode on the
+	// Rule Detail body when targets are not focused (#F5 v0.2.5).
+	detailCursor shared.BodyCursor
 }
 
 // Fetching implements app.FetchingStater (#U10 v0.2.4).
@@ -354,6 +357,11 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.opened {
 		switch msg.Type {
 		case tea.KeyEsc:
+			// #F5 v0.2.5 — Esc cancels visual mode first.
+			if m.detailCursor.Visual {
+				m.detailCursor.CancelVisual()
+				return m, nil
+			}
 			// #G4 v0.2.4 — Esc backs out of TARGETS focus first,
 			// then closes detail (mirrors User/Group Detail extras
 			// semantics).
@@ -366,12 +374,15 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detail = domain.GroupRule{}
 			m.detailTab = RuleDetailTabProfile
 			m.detailRawReturn = RuleDetailTabProfile
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = shared.NextTab(m.detailTab)
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyShiftTab:
 			m.detailTab = shared.PrevTab(m.detailTab)
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyEnter:
 			// #G4 / U7 v0.2.4 — drill into the focused target's
@@ -416,6 +427,9 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					return m, nil
 				}
+				// #F5 v0.2.5 — body cursor when targets unfocused.
+				m.detailCursor.Down(len(ruleDetailLines(m.detail, m.detailTab, m.groupNames)))
+				return m, nil
 			case "k":
 				if m.detailTargetsFocused {
 					if n := len(m.detail.TargetGroupIDs); n > 0 {
@@ -423,8 +437,36 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					return m, nil
 				}
+				m.detailCursor.Up()
+				return m, nil
+			case "g":
+				if !m.detailTargetsFocused {
+					m.detailCursor.Top()
+					return m, nil
+				}
+			case "G":
+				if !m.detailTargetsFocused {
+					m.detailCursor.Bottom(len(ruleDetailLines(m.detail, m.detailTab, m.groupNames)))
+					return m, nil
+				}
+			case "v", "V":
+				if !m.detailTargetsFocused {
+					if m.detailCursor.Visual {
+						m.detailCursor.CancelVisual()
+					} else {
+						m.detailCursor.StartVisual()
+					}
+					return m, nil
+				}
+			case "y":
+				if !m.detailTargetsFocused {
+					return m, shared.YankCmd(m.detailCursor,
+						ruleDetailLines(m.detail, m.detailTab, m.groupNames),
+						"Rule Detail")
+				}
 			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
+				m.detailCursor = shared.BodyCursor{}
 			}
 			return m, nil
 		}
@@ -566,7 +608,8 @@ func (m ListModel) View() string {
 		if m.detailTargetsFocused {
 			focusIdx = m.detailTargetCur
 		}
-		return renderRuleDetailTabbedWithFocus(m.detail, m.detailTab, focusIdx, m.groupNames)
+		return renderRuleDetailTabbedWithFocusCursor(m.detail, m.detailTab, focusIdx, m.groupNames,
+			m.detailCursor, m.chromeContentWidth()-2)
 	}
 	if m.lastErr != nil {
 		return "Group Rules  (error)\n" + shared.ErrorPanel("group rules", m.lastErr)
@@ -1013,19 +1056,52 @@ func renderRuleDetailTabbed(r domain.GroupRule, active RuleDetailTab) string {
 // drill-down affordance (#G4 / U7 v0.2.4). groupNames resolves IDs
 // to human names when populated.
 func renderRuleDetailTabbedWithFocus(r domain.GroupRule, active RuleDetailTab, focusIdx int, groupNames map[string]string) string {
+	return renderRuleDetailTabbedWithFocusCursor(r, active, focusIdx, groupNames, shared.BodyCursor{}, 0)
+}
+
+// ruleDetailLines returns the active tab's body as a flat line slice
+// — the unit BodyCursor navigates and yanks against (#F5 v0.2.5).
+// groupNames resolves target IDs in the Pretty tab.
+func ruleDetailLines(r domain.GroupRule, active RuleDetailTab, groupNames map[string]string) []string {
+	var raw string
+	switch active {
+	case RuleDetailTabJSON:
+		raw = renderRuleRawTab(r)
+	case RuleDetailTabYAML:
+		raw = renderRuleYAMLTab(r)
+	default:
+		raw = renderRuleDetailWithFocus(r, -1, groupNames)
+	}
+	return strings.Split(strings.TrimRight(raw, "\n"), "\n")
+}
+
+// renderRuleDetailTabbedWithFocusCursor is the cursor-aware variant
+// used by the live View. cursor.Line marks the focused row with
+// `▸ ` + the RowCursor tint; visual range gets an accent tint
+// (#F5 v0.2.5). The cursor render only kicks in when targets are not
+// focused (focusIdx < 0); the targets focus path keeps its native
+// `▸` row marker untouched.
+func renderRuleDetailTabbedWithFocusCursor(r domain.GroupRule, active RuleDetailTab, focusIdx int, groupNames map[string]string, cursor shared.BodyCursor, width int) string {
 	var b strings.Builder
 	b.WriteString("Group Rule Detail\n")
 	b.WriteString(renderRuleTabBar(active))
 	b.WriteByte('\n')
 	b.WriteString(strings.Repeat("─", 78))
 	b.WriteByte('\n')
-	switch active {
-	case RuleDetailTabJSON:
-		b.WriteString(renderRuleRawTab(r))
-	case RuleDetailTabYAML:
-		b.WriteString(renderRuleYAMLTab(r))
-	default:
-		b.WriteString(renderRuleDetailWithFocus(r, focusIdx, groupNames))
+	if focusIdx >= 0 || width <= 0 {
+		switch active {
+		case RuleDetailTabJSON:
+			b.WriteString(renderRuleRawTab(r))
+		case RuleDetailTabYAML:
+			b.WriteString(renderRuleYAMLTab(r))
+		default:
+			b.WriteString(renderRuleDetailWithFocus(r, focusIdx, groupNames))
+		}
+	} else {
+		lines := ruleDetailLines(r, active, groupNames)
+		tk := activeTokens()
+		rendered := cursor.RenderLines(lines, width, tk)
+		b.WriteString(shared.JoinLines(rendered))
 	}
 	if active == RuleDetailTabPretty && len(r.TargetGroupIDs) > 0 {
 		b.WriteByte('\n')

@@ -109,6 +109,9 @@ type ListModel struct {
 	detailExtrasCur     int
 	detailMembersTop    int
 	detailAppsTop       int
+	// detailCursor drives the body line cursor + visual mode for the
+	// Group Detail body when extras are not focused (#F5 v0.2.5).
+	detailCursor shared.BodyCursor
 
 	// lastUpdated stamps the most recent successful list fetch (issue
 	// #177 v0.1.16). Surfaced via LastUpdated() for the chrome.
@@ -477,6 +480,11 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// re-fire the same fetch.
 			return m, nil
 		case tea.KeyEsc:
+			// #F5 v0.2.5 — Esc cancels visual mode first.
+			if m.detailCursor.Visual {
+				m.detailCursor.CancelVisual()
+				return m, nil
+			}
 			// v0.2.2 #189: Esc backs out of the boxes first, then
 			// closes detail (mirrors User Detail's extras semantics).
 			if m.detailExtrasFocused {
@@ -497,12 +505,15 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailAppsLoaded = false
 			m.detailExtrasFocused = false
 			m.detailExtrasCur = 0
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = GroupDetailTab(shared.NextTab(shared.DetailTab(m.detailTab)))
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyShiftTab:
 			m.detailTab = GroupDetailTab(shared.PrevTab(shared.DetailTab(m.detailTab)))
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyRunes:
 			runes := string(msg.Runes)
@@ -537,12 +548,45 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					return m, nil
 				}
+				// #F5 v0.2.5 — body cursor when extras unfocused.
+				m.detailCursor.Down(len(groupDetailLines(m.detail, m.detailTab,
+					m.detailMembers, m.detailMembersLoaded, m.detailMembersErr)))
+				return m, nil
 			case "k":
 				if m.detailExtrasFocused {
 					if total := m.detailExtrasTotal(); total > 0 {
 						m.detailExtrasCur = (m.detailExtrasCur - 1 + total) % total
 					}
 					return m, nil
+				}
+				m.detailCursor.Up()
+				return m, nil
+			case "g":
+				if !m.detailExtrasFocused {
+					m.detailCursor.Top()
+					return m, nil
+				}
+			case "G":
+				if !m.detailExtrasFocused {
+					m.detailCursor.Bottom(len(groupDetailLines(m.detail, m.detailTab,
+						m.detailMembers, m.detailMembersLoaded, m.detailMembersErr)))
+					return m, nil
+				}
+			case "v", "V":
+				if !m.detailExtrasFocused {
+					if m.detailCursor.Visual {
+						m.detailCursor.CancelVisual()
+					} else {
+						m.detailCursor.StartVisual()
+					}
+					return m, nil
+				}
+			case "y":
+				if !m.detailExtrasFocused {
+					return m, shared.YankCmd(m.detailCursor,
+						groupDetailLines(m.detail, m.detailTab,
+							m.detailMembers, m.detailMembersLoaded, m.detailMembersErr),
+						"Group Detail")
 				}
 			}
 			if runes == "r" {
@@ -551,6 +595,7 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					shared.DetailTab(m.detailRawReturn))
 				m.detailTab = GroupDetailTab(newActive)
 				m.detailRawReturn = GroupDetailTab(newReturn)
+				m.detailCursor = shared.BodyCursor{}
 			}
 			return m, nil
 		}
@@ -887,8 +932,9 @@ func (m *ListModel) cycleSort(target SortKey) {
 // Shell.
 func (m ListModel) View() string {
 	if m.opened {
-		body := renderGroupDetailTabbed(m.detail, m.detailTab,
-			m.detailMembers, m.detailMembersLoaded, m.detailMembersErr)
+		body := renderGroupDetailTabbedWithCursor(m.detail, m.detailTab,
+			m.detailMembers, m.detailMembersLoaded, m.detailMembersErr,
+			m.detailCursor, m.chromeContentWidth()-2)
 		// v0.2.2 #189 — Pretty tab gets the side-by-side Members +
 		// Apps boxes beneath the body (mirrors User Detail Groups +
 		// Apps, issue #170). Only Pretty: JSON / YAML stay raw.
@@ -1246,22 +1292,53 @@ func (m DetailModel) View() string {
 // passed group; the Members tab renders the (lazily fetched) member
 // list passed in via members + loaded.
 func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab, members []domain.User, loaded bool, memberErr error) string {
+	return renderGroupDetailTabbedWithCursor(g, active, members, loaded, memberErr, shared.BodyCursor{}, 0)
+}
+
+// groupDetailLines returns the active tab's body as a flat line slice
+// — the unit BodyCursor navigates and yanks against (#F5 v0.2.5).
+func groupDetailLines(g domain.Group, active GroupDetailTab, members []domain.User, loaded bool, memberErr error) []string {
+	var raw string
+	switch active {
+	case GroupDetailTabJSON:
+		raw = renderGroupRawTab(g)
+	case GroupDetailTabYAML:
+		raw = renderGroupYAMLTab(g)
+	case GroupDetailTabMembers:
+		raw = renderGroupMembersTab(members, loaded, memberErr)
+	default:
+		raw = renderGroupDetail(g)
+	}
+	return strings.Split(strings.TrimRight(raw, "\n"), "\n")
+}
+
+// renderGroupDetailTabbedWithCursor is the cursor-aware variant used by
+// the live View. cursor.Line marks the focused row with `▸ ` + the
+// RowCursor tint; visual range gets an accent tint (#F5 v0.2.5).
+func renderGroupDetailTabbedWithCursor(g domain.Group, active GroupDetailTab, members []domain.User, loaded bool, memberErr error, cursor shared.BodyCursor, width int) string {
 	var b strings.Builder
 	b.WriteString("Group Detail\n")
 	b.WriteString(renderGroupTabBar(active))
 	b.WriteByte('\n')
 	b.WriteString(strings.Repeat("─", 78))
 	b.WriteByte('\n')
-	switch active {
-	case GroupDetailTabJSON:
-		b.WriteString(renderGroupRawTab(g))
-	case GroupDetailTabYAML:
-		b.WriteString(renderGroupYAMLTab(g))
-	case GroupDetailTabMembers:
-		b.WriteString(renderGroupMembersTab(members, loaded, memberErr))
-	default:
-		b.WriteString(renderGroupDetail(g))
+	if width <= 0 {
+		switch active {
+		case GroupDetailTabJSON:
+			b.WriteString(renderGroupRawTab(g))
+		case GroupDetailTabYAML:
+			b.WriteString(renderGroupYAMLTab(g))
+		case GroupDetailTabMembers:
+			b.WriteString(renderGroupMembersTab(members, loaded, memberErr))
+		default:
+			b.WriteString(renderGroupDetail(g))
+		}
+		return b.String()
 	}
+	lines := groupDetailLines(g, active, members, loaded, memberErr)
+	tk := activeTokens()
+	rendered := cursor.RenderLines(lines, width, tk)
+	b.WriteString(shared.JoinLines(rendered))
 	return b.String()
 }
 

@@ -163,6 +163,9 @@ type ListModel struct {
 	detailRulesLoaded  bool
 	detailRulesErr     error
 	detailShowRaw      bool
+	// detailCursor drives the body line cursor + visual mode for the
+	// Policy Detail body (#F5 v0.2.5).
+	detailCursor shared.BodyCursor
 }
 
 // NewListModel constructs a ListModel for the given type.
@@ -231,6 +234,11 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Esc inside detail takes precedence over other keys so operators
 	// always have a way back to the list (TUI_DESIGN §3.6 / §3.6a Note).
 	if m.opened && km.Type == tea.KeyEsc {
+		// #F5 v0.2.5 — Esc cancels visual mode first.
+		if m.detailCursor.Visual {
+			m.detailCursor.CancelVisual()
+			return m, nil
+		}
 		m.opened = false
 		m.detail = domain.Policy{}
 		m.detailRules = nil
@@ -238,12 +246,51 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.detailRulesLoaded = false
 		m.detailRulesErr = nil
 		m.detailShowRaw = false
+		m.detailCursor = shared.BodyCursor{}
 		return m, nil
 	}
 	// `r` toggles between the rich detail view (with rule list) and
 	// the raw JSON view of the underlying policy.
 	if m.opened && km.Type == tea.KeyRunes && string(km.Runes) == "r" {
 		m.detailShowRaw = !m.detailShowRaw
+		m.detailCursor = shared.BodyCursor{}
+		return m, nil
+	}
+	// #F5 v0.2.5 — body cursor + visual mode while the detail is open.
+	if m.opened && km.Type == tea.KeyRunes {
+		switch string(km.Runes) {
+		case "j":
+			m.detailCursor.Down(len(policyDetailLines(m.detail, !m.detailShowRaw,
+				m.detailRules, m.detailRulesLoaded, m.detailRulesErr)))
+			return m, nil
+		case "k":
+			m.detailCursor.Up()
+			return m, nil
+		case "g":
+			m.detailCursor.Top()
+			return m, nil
+		case "G":
+			m.detailCursor.Bottom(len(policyDetailLines(m.detail, !m.detailShowRaw,
+				m.detailRules, m.detailRulesLoaded, m.detailRulesErr)))
+			return m, nil
+		case "v", "V":
+			if m.detailCursor.Visual {
+				m.detailCursor.CancelVisual()
+			} else {
+				m.detailCursor.StartVisual()
+			}
+			return m, nil
+		case "y":
+			return m, shared.YankCmd(m.detailCursor,
+				policyDetailLines(m.detail, !m.detailShowRaw,
+					m.detailRules, m.detailRulesLoaded, m.detailRulesErr),
+				"Policy Detail")
+		}
+	}
+	// Eat any remaining keys while detail is open so list-mode
+	// handlers (Ctrl+F/B/D/U, j/k, etc.) don't silently shuffle the
+	// list cursor underneath the open detail.
+	if m.opened {
 		return m, nil
 	}
 	switch km.Type {
@@ -331,14 +378,24 @@ func openPolicyRulesCmd(port domain.PoliciesPort, policyID string) tea.Cmd {
 // ErrorPanel (TUI_DESIGN §17.1, QA-022).
 func (m ListModel) View() string {
 	if m.opened {
-		var b strings.Builder
-		b.WriteString(renderPolicyDetail(m.detail, !m.detailShowRaw))
-		// Issue #154 — append the per-policy rule list once the
-		// lazy fetch completes. Spinner / error states surface
-		// inline so the operator can see why the list is empty.
-		b.WriteString("\n")
-		b.WriteString(renderPolicyRulesSection(m.detailRules, m.detailRulesLoaded, m.detailRulesErr))
-		return b.String()
+		// #F5 v0.2.5 — render the detail body through the body
+		// cursor so j/k/g/G/v/V/y all work consistently.
+		lines := policyDetailLines(m.detail, !m.detailShowRaw,
+			m.detailRules, m.detailRulesLoaded, m.detailRulesErr)
+		width := m.chromeContentWidth() - 2
+		if width <= 0 {
+			var b strings.Builder
+			for i, line := range lines {
+				if i > 0 {
+					b.WriteByte('\n')
+				}
+				b.WriteString(line)
+			}
+			return b.String()
+		}
+		tk := activeTokens()
+		rendered := m.detailCursor.RenderLines(lines, width, tk)
+		return shared.JoinLines(rendered)
 	}
 	if m.lastErr != nil {
 		return "Policies › " + string(m.policyType) + "  (error)\n" +
@@ -615,6 +672,14 @@ func (m DetailModel) View() string {
 	usesRich := isRichType(m.policy.Type)
 	showRaw := !usesRich || m.raw
 	return renderPolicyDetail(m.policy, !showRaw)
+}
+
+// policyDetailLines flattens the policy header, action summary / raw
+// JSON, and per-policy rules section into a single line slice the
+// BodyCursor navigates and yanks against (#F5 v0.2.5).
+func policyDetailLines(p domain.Policy, rich bool, rules []domain.PolicyRule, loaded bool, err error) []string {
+	body := renderPolicyDetail(p, rich) + "\n" + renderPolicyRulesSection(rules, loaded, err)
+	return strings.Split(strings.TrimRight(body, "\n"), "\n")
 }
 
 func renderPolicyDetail(p domain.Policy, rich bool) string {

@@ -66,6 +66,7 @@ type ListModel struct {
 	detail      domain.Authenticator
 	detailTab   AuthDetailTab
 	detailRawReturn AuthDetailTab
+	detailCursor    shared.BodyCursor // #F5 v0.2.5
 	lastErr     error
 	width       int
 	height      int
@@ -224,21 +225,46 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.opened {
 		switch msg.Type {
 		case tea.KeyEsc:
+			// #F5 v0.2.5 — Esc cancels visual mode first.
+			if m.detailCursor.Visual {
+				m.detailCursor.CancelVisual()
+				return m, nil
+			}
 			m.opened = false
 			m.detail = domain.Authenticator{}
 			m.detailTab = AuthDetailTabPretty
 			m.detailRawReturn = AuthDetailTabPretty
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = shared.NextTab(m.detailTab)
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyShiftTab:
 			m.detailTab = shared.PrevTab(m.detailTab)
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyRunes:
 			switch string(msg.Runes) {
 			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
+				m.detailCursor = shared.BodyCursor{}
+			case "j":
+				m.detailCursor.Down(len(authDetailLines(m.detail, m.detailTab)))
+			case "k":
+				m.detailCursor.Up()
+			case "g":
+				m.detailCursor.Top()
+			case "G":
+				m.detailCursor.Bottom(len(authDetailLines(m.detail, m.detailTab)))
+			case "v", "V":
+				if m.detailCursor.Visual {
+					m.detailCursor.CancelVisual()
+				} else {
+					m.detailCursor.StartVisual()
+				}
+			case "y":
+				return m, shared.YankCmd(m.detailCursor, authDetailLines(m.detail, m.detailTab), "Authenticator Detail")
 			case "l":
 				// #F2 / #F4 v0.2.5 — open Logs scoped to events
 				// targeting this authenticator's ID.
@@ -350,7 +376,7 @@ func (m ListModel) visible() []domain.Authenticator {
 
 func (m ListModel) View() string {
 	if m.opened {
-		return renderAuthDetailTabbed(m.detail, m.detailTab)
+		return renderAuthDetailTabbedWithCursor(m.detail, m.detailTab, m.detailCursor, m.chromeContentWidth()-2)
 	}
 	if m.lastErr != nil {
 		return "Authenticators  (error)\n" + shared.ErrorPanel("authenticators", m.lastErr)
@@ -425,22 +451,51 @@ func authTrackedEqual(a, b domain.Authenticator) bool {
 	return true
 }
 
-// renderAuthDetailTabbed renders the Pretty / JSON / YAML triad.
+// authDetailLines returns the active tab's body as a flat line
+// slice — the unit shared.BodyCursor navigates and yanks against
+// (#F5 v0.2.5).
+func authDetailLines(a domain.Authenticator, active AuthDetailTab) []string {
+	var raw string
+	switch active {
+	case AuthDetailTabJSON:
+		raw = renderAuthJSON(a)
+	case AuthDetailTabYAML:
+		raw = renderAuthYAML(a)
+	default:
+		raw = renderAuthPretty(a)
+	}
+	return strings.Split(strings.TrimRight(raw, "\n"), "\n")
+}
+
+// renderAuthDetailTabbed renders the Pretty / JSON / YAML triad
+// (legacy / no-cursor entrypoint).
 func renderAuthDetailTabbed(a domain.Authenticator, active AuthDetailTab) string {
+	return renderAuthDetailTabbedWithCursor(a, active, shared.BodyCursor{}, 0)
+}
+
+// renderAuthDetailTabbedWithCursor highlights the focused row + any
+// visual selection (#F5 v0.2.5).
+func renderAuthDetailTabbedWithCursor(a domain.Authenticator, active AuthDetailTab, cursor shared.BodyCursor, width int) string {
 	var b strings.Builder
 	b.WriteString("Authenticator Detail\n")
 	b.WriteString(renderAuthTabBar(active))
 	b.WriteByte('\n')
 	b.WriteString(strings.Repeat("─", 78))
 	b.WriteByte('\n')
-	switch active {
-	case AuthDetailTabJSON:
-		b.WriteString(renderAuthJSON(a))
-	case AuthDetailTabYAML:
-		b.WriteString(renderAuthYAML(a))
-	default:
-		b.WriteString(renderAuthPretty(a))
+	if width <= 0 {
+		switch active {
+		case AuthDetailTabJSON:
+			b.WriteString(renderAuthJSON(a))
+		case AuthDetailTabYAML:
+			b.WriteString(renderAuthYAML(a))
+		default:
+			b.WriteString(renderAuthPretty(a))
+		}
+		return b.String()
 	}
+	tk := activeTokens()
+	rendered := cursor.RenderLines(authDetailLines(a, active), width, tk)
+	b.WriteString(shared.JoinLines(rendered))
 	return b.String()
 }
 

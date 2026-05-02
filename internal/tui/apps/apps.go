@@ -172,7 +172,11 @@ type ListModel struct {
 	detail      domain.App
 	detailTab       AppDetailTab
 	detailRawReturn AppDetailTab // remember non-JSON tab so `r` toggles back (#U6 v0.2.5)
-	lastErr         error
+	// detailCursor is the line cursor + visual mode state for the
+	// detail body (#F5 v0.2.5). j/k moves the cursor, v/V toggles
+	// visual, y yanks the selected range.
+	detailCursor shared.BodyCursor
+	lastErr      error
 	width       int
 	height      int
 	viewportTop int
@@ -390,21 +394,52 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.opened {
 		switch km.Type {
 		case tea.KeyEsc:
+			// #F5 v0.2.5 — Esc cancels visual mode first, then
+			// closes detail.
+			if m.detailCursor.Visual {
+				m.detailCursor.CancelVisual()
+				return m, nil
+			}
 			m.opened = false
 			m.detail = domain.App{}
 			m.detailTab = AppDetailTabPretty
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = shared.NextTab(m.detailTab)
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyShiftTab:
 			m.detailTab = shared.PrevTab(m.detailTab)
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyRunes:
 			switch string(km.Runes) {
 			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
+				m.detailCursor = shared.BodyCursor{}
 				return m, nil
+			case "j":
+				m.detailCursor.Down(len(appDetailLines(m.detail, m.detailTab)))
+				return m, nil
+			case "k":
+				m.detailCursor.Up()
+				return m, nil
+			case "g":
+				m.detailCursor.Top()
+				return m, nil
+			case "G":
+				m.detailCursor.Bottom(len(appDetailLines(m.detail, m.detailTab)))
+				return m, nil
+			case "v", "V":
+				if m.detailCursor.Visual {
+					m.detailCursor.CancelVisual()
+				} else {
+					m.detailCursor.StartVisual()
+				}
+				return m, nil
+			case "y":
+				return m, yankDetailLines(m.detailCursor, appDetailLines(m.detail, m.detailTab))
 			case "l":
 				// #F2 / #F4 v0.2.5 — `l` from App Detail jumps to
 				// Logs scoped to events targeting this app's ID.
@@ -485,7 +520,7 @@ func (m ListModel) now() time.Time {
 // View renders the list (or the detail when opened).
 func (m ListModel) View() string {
 	if m.opened {
-		return renderAppDetailTabbed(m.detail, m.detailTab)
+		return renderAppDetailTabbedWithCursor(m.detail, m.detailTab, m.detailCursor, m.chromeContentWidth()-2)
 	}
 	if m.lastErr != nil {
 		return "Apps  (error)\n" + shared.ErrorPanel("Apps", m.lastErr)
@@ -657,21 +692,58 @@ func activeTokens() shared.Tokens {
 
 // --- Detail ------------------------------------------------------------------
 
+// appDetailLines returns the active tab's body as a flat line slice
+// — the unit BodyCursor navigates and yanks against (#F5 v0.2.5).
+func appDetailLines(a domain.App, active AppDetailTab) []string {
+	var raw string
+	switch active {
+	case AppDetailTabJSON:
+		raw = renderAppJSONTab(a)
+	case AppDetailTabYAML:
+		raw = renderAppYAMLTab(a)
+	default:
+		raw = renderAppPretty(a)
+	}
+	return strings.Split(strings.TrimRight(raw, "\n"), "\n")
+}
+
+// yankDetailLines is the per-screen wrapper around shared.YankCmd —
+// keeps the call site short.
+func yankDetailLines(c shared.BodyCursor, lines []string) tea.Cmd {
+	return shared.YankCmd(c, lines, "App Detail")
+}
+
 func renderAppDetailTabbed(a domain.App, active AppDetailTab) string {
+	return renderAppDetailTabbedWithCursor(a, active, shared.BodyCursor{}, 0)
+}
+
+// renderAppDetailTabbedWithCursor is the cursor-aware variant used by
+// the live View. cursor.Line marks the focused row with `▸ ` + the
+// RowCursor tint; visual range gets an accent tint (#F5 v0.2.5).
+func renderAppDetailTabbedWithCursor(a domain.App, active AppDetailTab, cursor shared.BodyCursor, width int) string {
 	var b strings.Builder
 	b.WriteString("App Detail\n")
 	b.WriteString(renderAppTabBar(active))
 	b.WriteByte('\n')
 	b.WriteString(strings.Repeat("─", 78))
 	b.WriteByte('\n')
-	switch active {
-	case AppDetailTabJSON:
-		b.WriteString(renderAppJSONTab(a))
-	case AppDetailTabYAML:
-		b.WriteString(renderAppYAMLTab(a))
-	default:
-		b.WriteString(renderAppPretty(a))
+	lines := appDetailLines(a, active)
+	if width <= 0 {
+		// Fall back to plain rendering when called without a width
+		// (e.g., legacy callers / DetailModel.View()).
+		switch active {
+		case AppDetailTabJSON:
+			b.WriteString(renderAppJSONTab(a))
+		case AppDetailTabYAML:
+			b.WriteString(renderAppYAMLTab(a))
+		default:
+			b.WriteString(renderAppPretty(a))
+		}
+		return b.String()
 	}
+	tk := activeTokens()
+	rendered := cursor.RenderLines(lines, width, tk)
+	b.WriteString(shared.JoinLines(rendered))
 	return b.String()
 }
 

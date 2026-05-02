@@ -100,6 +100,7 @@ type SearchModel struct {
 	// JSON and back to the previous non-JSON tab.
 	detailTab       LogDetailTab
 	detailRawReturn LogDetailTab
+	detailCursor    shared.BodyCursor // #F5 v0.2.5
 	lastErr      error
 	width        int
 	height       int
@@ -692,29 +693,58 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.opened {
 		switch km.Type {
 		case tea.KeyEsc:
+			// #F5 v0.2.5 — Esc cancels visual mode first.
+			if m.detailCursor.Visual {
+				m.detailCursor.CancelVisual()
+				return m, nil
+			}
 			m.opened = false
 			m.detail = domain.LogEvent{}
 			m.detailTab = LogDetailTabPretty
 			m.detailRawReturn = LogDetailTabPretty
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyTab:
 			m.detailTab = shared.NextTab(m.detailTab)
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyShiftTab:
 			m.detailTab = shared.PrevTab(m.detailTab)
+			m.detailCursor = shared.BodyCursor{}
 			return m, nil
 		case tea.KeyEnter:
 			// #G5 / U7 v0.2.4 — drill into the actor's User Detail.
-			// AlternateID is typically the login (alice@acme.com)
-			// which UsersPort.Get accepts; ID is the userID otherwise.
 			if id := logActorDrillID(m.detail); id != "" {
 				return m, openUserDetailCmd(id)
 			}
 			return m, nil
 		case tea.KeyRunes:
-			if string(km.Runes) == "r" {
+			switch string(km.Runes) {
+			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
+				m.detailCursor = shared.BodyCursor{}
 				return m, nil
+			case "j":
+				m.detailCursor.Down(len(logDetailLines(m.detail, m.detailTab)))
+				return m, nil
+			case "k":
+				m.detailCursor.Up()
+				return m, nil
+			case "g":
+				m.detailCursor.Top()
+				return m, nil
+			case "G":
+				m.detailCursor.Bottom(len(logDetailLines(m.detail, m.detailTab)))
+				return m, nil
+			case "v", "V":
+				if m.detailCursor.Visual {
+					m.detailCursor.CancelVisual()
+				} else {
+					m.detailCursor.StartVisual()
+				}
+				return m, nil
+			case "y":
+				return m, shared.YankCmd(m.detailCursor, logDetailLines(m.detail, m.detailTab), "Log Detail")
 			}
 		}
 		return m, nil
@@ -887,7 +917,7 @@ func (m SearchModel) setRange(window time.Duration) (tea.Model, tea.Cmd) {
 // AC-3).
 func (m SearchModel) View() string {
 	if m.opened {
-		return renderLogDetailTabbed(m.detail, m.detailTab)
+		return renderLogDetailTabbedWithCursor(m.detail, m.detailTab, m.detailCursor, m.chromeContentWidth()-2)
 	}
 	if m.lastErr != nil {
 		return "Logs  (error)\n" + shared.ErrorPanel("events", m.lastErr)
@@ -1289,19 +1319,50 @@ func (m DetailModel) View() string { return renderLogDetailTabbed(m.event, LogDe
 // Okta with shared syntax highlighting; YAML reformats the same
 // payload at 2-space indent.
 func renderLogDetailTabbed(e domain.LogEvent, active LogDetailTab) string {
+	return renderLogDetailTabbedWithCursor(e, active, shared.BodyCursor{}, 0)
+}
+
+// logDetailLines returns the active tab's body as a flat line slice
+// — the unit BodyCursor navigates and yanks against (#F5 v0.2.5).
+func logDetailLines(e domain.LogEvent, active LogDetailTab) []string {
+	var raw string
+	switch active {
+	case LogDetailTabJSON:
+		raw = renderLogJSONTab(e)
+	case LogDetailTabYAML:
+		raw = renderLogYAMLTab(e)
+	default:
+		raw = renderLogDetail(e)
+	}
+	return strings.Split(strings.TrimRight(raw, "\n"), "\n")
+}
+
+// renderLogDetailTabbedWithCursor is the cursor-aware variant used by
+// the live View. cursor.Line marks the focused row with `▸ ` + the
+// RowCursor tint; visual range gets an accent tint (#F5 v0.2.5).
+func renderLogDetailTabbedWithCursor(e domain.LogEvent, active LogDetailTab, cursor shared.BodyCursor, width int) string {
 	var b strings.Builder
 	b.WriteString("Log Event\n")
 	b.WriteString(renderLogTabBar(active))
 	b.WriteByte('\n')
 	b.WriteString(strings.Repeat("─", 78))
 	b.WriteByte('\n')
-	switch active {
-	case LogDetailTabJSON:
-		b.WriteString(renderLogJSONTab(e))
-	case LogDetailTabYAML:
-		b.WriteString(renderLogYAMLTab(e))
-	default:
-		b.WriteString(renderLogDetail(e))
+	if width <= 0 {
+		// Fall back to plain rendering when called without a width
+		// (e.g., legacy callers / DetailModel.View()).
+		switch active {
+		case LogDetailTabJSON:
+			b.WriteString(renderLogJSONTab(e))
+		case LogDetailTabYAML:
+			b.WriteString(renderLogYAMLTab(e))
+		default:
+			b.WriteString(renderLogDetail(e))
+		}
+	} else {
+		lines := logDetailLines(e, active)
+		tk := activeTokens()
+		rendered := cursor.RenderLines(lines, width, tk)
+		b.WriteString(shared.JoinLines(rendered))
 	}
 	// #G5 / U7 v0.2.4 — surface the actor drill-down affordance.
 	if logActorDrillID(e) != "" {
