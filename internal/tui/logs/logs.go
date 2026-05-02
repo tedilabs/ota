@@ -124,6 +124,15 @@ type SearchModel struct {
 	query        string
 	queryInput   string
 	queryEditing bool
+	// serverFilter / serverFilterInput drive the server-side filter
+	// state — Okta's `filter=` parameter (#F4 v0.2.5). Distinct
+	// from `query` (q=, free-text search) and `filter` (the local
+	// substring narrow). `F` opens the prompt; the cross-resource
+	// `l` shortcut writes serverFilter directly with an ID-keyed
+	// expression like `target.id eq "00uABC"`.
+	serverFilter        string
+	serverFilterInput   string
+	serverFilterEditing bool
 	// followSince is the cursor used by the auto-refresh tick when
 	// follow mode is on (issue #177 v0.1.16). Each tick fetches the
 	// slice of events `published > followSince` and advances the
@@ -164,11 +173,12 @@ func (m SearchModel) Fetching() bool { return m.fetching }
 // v0.2.4).
 type logsSpinnerTickMsg struct{}
 
-// OpenForQueryMsg routes a cross-screen `l`-shortcut request from the
-// App Shell into the Logs list (#F2 v0.2.5). The model overwrites
-// m.query with the supplied text and re-fetches the history window
-// scoped to that query. Empty Query just re-fetches without scope.
-type OpenForQueryMsg struct{ Query string }
+// OpenForFilterMsg routes a cross-screen `l`-shortcut request from
+// the App Shell into the Logs list (#F2 / #F4 v0.2.5). The model
+// overwrites m.serverFilter with the supplied Okta filter
+// expression and re-fetches the history window. Empty Filter just
+// re-fetches without scope.
+type OpenForFilterMsg struct{ Filter string }
 
 // NewSearchModel constructs a SearchModel with defaults (tail off, follow on,
 // poll interval 10s per issue #179 v0.1.17). When deps.RefreshInterval is set,
@@ -232,8 +242,13 @@ func (m SearchModel) StatusBadges() []shared.ChromeBadge {
 	if m.query != "" {
 		out = append(out, shared.ChromeBadge{Key: "Q", Value: m.query})
 	}
+	if m.serverFilter != "" {
+		// #F4 v0.2.5 — surface the active server-side filter
+		// expression so operators see what's scoping the stream.
+		out = append(out, shared.ChromeBadge{Key: "F", Value: m.serverFilter})
+	}
 	if m.filter != "" {
-		out = append(out, shared.ChromeBadge{Key: "FILTER", Value: m.filter})
+		out = append(out, shared.ChromeBadge{Key: "/", Value: m.filter})
 	}
 	// #F3 v0.2.5 — surface the load-older state so operators know
 	// whether the API has more pages waiting (sentinel reachable via
@@ -254,7 +269,8 @@ func (m SearchModel) StatusBadges() []shared.ChromeBadge {
 // Shell surfaces the unified `nothing to close` toast instead of
 // forwarding a silent Esc.
 func (m SearchModel) EscapeWillAct() bool {
-	return m.filtering || m.queryEditing || m.opened || m.filter != "" || m.query != ""
+	return m.filtering || m.queryEditing || m.serverFilterEditing || m.opened ||
+		m.filter != "" || m.query != "" || m.serverFilter != ""
 }
 
 // TimeRange reports the active history window — exposed for tests and
@@ -278,6 +294,12 @@ func (m SearchModel) Filter() string  { return m.filter }
 // Shell renders the floating `Q` server-search input (issue #185).
 func (m SearchModel) QueryEditing() bool { return m.queryEditing }
 func (m SearchModel) QueryInput() string { return m.queryInput }
+
+// ServerFilterEditing / ServerFilterInput implement
+// app.ServerFilterStater so the App Shell can render the floating
+// `F`-prefixed input box (#F4 v0.2.5).
+func (m SearchModel) ServerFilterEditing() bool { return m.serverFilterEditing }
+func (m SearchModel) ServerFilterInput() string { return m.serverFilterInput }
 
 // visible returns the event slice filtered by the active `/` query.
 // Substring match (case-insensitive) against eventType / displayMsg
@@ -313,7 +335,7 @@ func (m SearchModel) visible() []domain.LogEvent {
 func (m SearchModel) Init() tea.Cmd {
 	var fetch tea.Cmd
 	if len(m.events) == 0 && m.deps.Service != nil {
-		fetch = fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
+		fetch = fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query, m.serverFilter)
 	}
 	tick := m.scheduleFollowTickCmd()
 	switch {
@@ -428,12 +450,15 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.fetching = true
-		return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
-	case OpenForQueryMsg:
-		// #F2 v0.2.5 — `l` shortcut from another resource. Overwrite
-		// the active query, reset cursor, and re-fetch the history
-		// window scoped to the new query.
-		m.query = strings.TrimSpace(msg.Query)
+		return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query, m.serverFilter)
+	case OpenForFilterMsg:
+		// #F2 / #F4 v0.2.5 — `l` shortcut from another resource.
+		// Overwrite the server-side filter, clear any prior q so the
+		// resource scope is what's visible, reset cursor, re-fetch.
+		m.serverFilter = strings.TrimSpace(msg.Filter)
+		m.serverFilterInput = ""
+		m.serverFilterEditing = false
+		m.query = ""
 		m.queryInput = ""
 		m.queryEditing = false
 		m.cursor = 0
@@ -444,7 +469,7 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.fetching = true
 		return m, tea.Batch(
-			fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query),
+			fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query, m.serverFilter),
 			m.scheduleFollowTickCmd(),
 		)
 	case followTickMsg:
@@ -543,6 +568,41 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	// #F4 v0.2.5 — server-side filter input mode. Operator typed
+	// `F`; subsequent keys edit serverFilterInput. Enter commits +
+	// fires the history fetch with the new filter; Esc cancels.
+	if m.serverFilterEditing {
+		switch km.Type {
+		case tea.KeyEnter:
+			m.serverFilterEditing = false
+			m.serverFilter = strings.TrimSpace(m.serverFilterInput)
+			m.serverFilterInput = ""
+			m.cursor = 0
+			m.viewportTop = 0
+			m.followGen++
+			if m.deps.Service != nil {
+				return m, tea.Batch(
+					fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query, m.serverFilter),
+					m.scheduleFollowTickCmd(),
+				)
+			}
+			return m, nil
+		case tea.KeyEsc:
+			m.serverFilterEditing = false
+			m.serverFilterInput = ""
+			return m, nil
+		case tea.KeyBackspace:
+			if n := len(m.serverFilterInput); n > 0 {
+				m.serverFilterInput = m.serverFilterInput[:n-1]
+			}
+			return m, nil
+		case tea.KeyRunes:
+			m.serverFilterInput += string(km.Runes)
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// v0.2.1 #185 — server-side query input mode. Operator typed
 	// `Q`; subsequent keys edit queryInput. Enter commits + fires
 	// fetchHistoryWindowQueryCmd; Esc cancels and reverts.
@@ -562,7 +622,7 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.followGen++
 			if m.deps.Service != nil {
 				return m, tea.Batch(
-					fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query),
+					fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query, m.serverFilter),
 					m.scheduleFollowTickCmd(),
 				)
 			}
@@ -604,7 +664,22 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.followGen++
 		if m.deps.Service != nil {
 			return m, tea.Batch(
-				fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, ""),
+				fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, "", m.serverFilter),
+				m.scheduleFollowTickCmd(),
+			)
+		}
+		return m, nil
+	}
+	// #F4 v0.2.5 — Esc on the list with an active server filter clears
+	// it and re-fetches without scope, mirroring the Q clear path.
+	if !m.opened && km.Type == tea.KeyEsc && m.serverFilter != "" {
+		m.serverFilter = ""
+		m.cursor = 0
+		m.viewportTop = 0
+		m.followGen++
+		if m.deps.Service != nil {
+			return m, tea.Batch(
+				fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query, ""),
 				m.scheduleFollowTickCmd(),
 			)
 		}
@@ -678,7 +753,7 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor == sentinelRow && m.canLoadOlder() && !m.loadingOlder {
 			m.loadingOlder = true
 			m.fetching = true
-			return m, fetchOlderPageCmd(m.deps.Service, m.timeRange, m.query, m.nextPageAfter)
+			return m, fetchOlderPageCmd(m.deps.Service, m.timeRange, m.query, m.serverFilter, m.nextPageAfter)
 		}
 		if m.cursor >= 0 && m.cursor < len(rows) {
 			m.detail = rows[m.cursor]
@@ -721,7 +796,7 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// re-fetched (e.g., after firing a write op elsewhere).
 			m.ggChord.Reset()
 			if m.deps.Service != nil {
-				return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
+				return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query, m.serverFilter)
 			}
 		case "Q":
 			// v0.2.1 #185 — server-side full-text search prompt.
@@ -732,6 +807,14 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ggChord.Reset()
 			m.queryEditing = true
 			m.queryInput = m.query
+		case "F":
+			// #F4 v0.2.5 — server-side filter expression prompt.
+			// Pre-populates with the current serverFilter so operators
+			// can extend / edit a filter set by `l` from another
+			// resource (e.g., add `and eventType eq "user.session.start"`).
+			m.ggChord.Reset()
+			m.serverFilterEditing = true
+			m.serverFilterInput = m.serverFilter
 		case "j":
 			m.ggChord.Reset()
 			// #F3 v0.2.5 — `j` from the sentinel row falls back to row 0.
@@ -795,7 +878,7 @@ func (m SearchModel) setRange(window time.Duration) (tea.Model, tea.Cmd) {
 		// leave the seeded events alone.
 		return m, nil
 	}
-	return m, fetchHistoryWindowQueryCmd(m.deps.Service, window, m.query)
+	return m, fetchHistoryWindowQueryCmd(m.deps.Service, window, m.query, m.serverFilter)
 }
 
 // View renders SCR-050 (TUI_DESIGN §15.6 / §16.8). Columns:
@@ -1496,19 +1579,22 @@ func fetchHistoryCmd(svc *service.LogsService) tea.Cmd {
 }
 
 func fetchHistoryWindowCmd(svc *service.LogsService, window time.Duration) tea.Cmd {
-	return fetchHistoryWindowQueryCmd(svc, window, "")
+	return fetchHistoryWindowQueryCmd(svc, window, "", "")
 }
 
 // fetchHistoryWindowQueryCmd is the v0.2.1 (#185) variant that pushes
-// a server-side `q=` term into the history fetch. #F3 v0.2.5 — now
-// uses LogsService.SearchPage so the API returns ONE page of newest
-// events (sortOrder=DESCENDING + limit). The operator advances older
-// pages explicitly via Enter on the load-older sentinel.
-func fetchHistoryWindowQueryCmd(svc *service.LogsService, window time.Duration, q string) tea.Cmd {
+// server-side scoping into the history fetch. #F3 v0.2.5 — uses
+// LogsService.SearchPage so one page returns; the operator drives
+// older pages via Enter on the sentinel. #F4 v0.2.5 — accepts both
+// q (free-text search) and filter (Okta filter expression). They
+// compose: filter scopes to specific actor/target IDs, q narrows
+// further by substring.
+func fetchHistoryWindowQueryCmd(svc *service.LogsService, window time.Duration, q, filter string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		query := svc.HistoryQueryWindow(window)
 		query.Q = q
+		query.Filter = filter
 		page, err := svc.SearchPage(ctx, query)
 		if err != nil {
 			return logsErrMsg{err: err}
@@ -1520,11 +1606,12 @@ func fetchHistoryWindowQueryCmd(svc *service.LogsService, window time.Duration, 
 // fetchOlderPageCmd issues a "load older" request using the cached
 // next-page cursor. Called when the operator presses Enter on the
 // load-older sentinel at the top of the buffer (#F3 v0.2.5).
-func fetchOlderPageCmd(svc *service.LogsService, window time.Duration, q, after string) tea.Cmd {
+func fetchOlderPageCmd(svc *service.LogsService, window time.Duration, q, filter, after string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		query := svc.HistoryQueryWindow(window)
 		query.Q = q
+		query.Filter = filter
 		query.After = after
 		page, err := svc.SearchPage(ctx, query)
 		if err != nil {

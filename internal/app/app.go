@@ -547,15 +547,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screens[ScreenUsers] = updated
 		return m, tea.Batch(cmd, fwd)
 	case shared.OpenLogsMsg:
-		// #F2 v0.2.5 — `l` shortcut from any resource. Switch to
-		// Logs and forward an OpenForQueryMsg so the screen pre-fills
-		// the server-side query with the resource's identifier.
+		// #F2 / #F4 v0.2.5 — `l` shortcut from any resource. Switch
+		// to Logs and forward an OpenForFilterMsg so the screen
+		// pre-fills the server-side `filter=` expression keyed by
+		// the resource's ID.
 		m.active = ScreenLogs
 		m.overlay = OverlayNone
 		var cmd tea.Cmd
 		m, cmd = m.ensureScreen(ScreenLogs)
 		child := m.screens[ScreenLogs]
-		updated, fwd := child.Update(logs.OpenForQueryMsg{Query: msg.Query})
+		updated, fwd := child.Update(logs.OpenForFilterMsg{Filter: msg.Filter})
 		m.screens[ScreenLogs] = updated
 		return m, tea.Batch(cmd, fwd)
 	case OpenPolicyTypeMsg:
@@ -673,6 +674,8 @@ func (m Model) View() string {
 		body = stampOverlayOnTop(m.renderPaletteBox(tokens, width-3), dimBody(body, tokens))
 	case m.activeChildIsQueryEditing():
 		body = stampOverlayOnTop(m.renderQueryBox(tokens, width-3), dimBody(body, tokens))
+	case m.activeChildIsServerFilterEditing():
+		body = stampOverlayOnTop(m.renderServerFilterBox(tokens, width-3), dimBody(body, tokens))
 	case m.activeChildIsFiltering():
 		body = stampOverlayOnTop(m.renderFilterBox(tokens, width-3), dimBody(body, tokens))
 		fallthrough
@@ -1106,6 +1109,16 @@ type QueryStater interface {
 	QueryInput() string
 }
 
+// ServerFilterStater is implemented by screens that own a `F`
+// server-filter prompt (today: Logs, mirroring Okta's filter= API
+// param). Distinct from QueryStater so the chrome can render an
+// `F`-prefixed floating box separate from the `Q`-prefixed query
+// box. (#F4 v0.2.5)
+type ServerFilterStater interface {
+	ServerFilterEditing() bool
+	ServerFilterInput() string
+}
+
 // FilterStater is implemented by list screens that own a `/` incremental
 // filter so the App Shell can render the same floating input box used
 // for the palette (issue #123).
@@ -1220,6 +1233,30 @@ func (m Model) activeChildIsQueryEditing() bool {
 	return ok && qs.QueryEditing()
 }
 
+// activeChildIsServerFilterEditing reports whether the active screen
+// has its `F` server-filter prompt open (#F4 v0.2.5).
+func (m Model) activeChildIsServerFilterEditing() bool {
+	child, ok := m.screens[m.active]
+	if !ok {
+		return false
+	}
+	fs, ok := child.(ServerFilterStater)
+	return ok && fs.ServerFilterEditing()
+}
+
+// activeChildServerFilterInput returns the in-progress filter buffer.
+func (m Model) activeChildServerFilterInput() string {
+	child, ok := m.screens[m.active]
+	if !ok {
+		return ""
+	}
+	fs, ok := child.(ServerFilterStater)
+	if !ok {
+		return ""
+	}
+	return fs.ServerFilterInput()
+}
+
 // activeChildQueryInput returns the active screen's in-progress
 // server-query buffer (empty when no QueryStater or not editing).
 func (m Model) activeChildQueryInput() string {
@@ -1326,6 +1363,19 @@ func (m Model) renderFilterBox(tk shared.Tokens, innerWidth int) string {
 	}
 	cursor := tk.RowCursor.Render(" ")
 	hint := "\n" + tk.Muted.Render("client filter · narrows loaded rows · Esc cancels")
+	return modalBox(prompt+input+cursor+hint, innerWidth, tk)
+}
+
+// renderServerFilterBox builds the floating input box for the `F`
+// server-side filter prompt (#F4 v0.2.5). Yellow tone matches the
+// Q box (server-side, hits the API) but the prefix glyph + hint
+// distinguish them.
+func (m Model) renderServerFilterBox(tk shared.Tokens, innerWidth int) string {
+	prompt := tk.Warning.Render("F ")
+	input := m.activeChildServerFilterInput()
+	cursor := tk.RowCursor.Render(" ")
+	hint := "\n" + tk.Warning.Render("server filter") +
+		tk.Muted.Render(" · Okta filter expression · Enter applies · Esc cancels")
 	return modalBox(prompt+input+cursor+hint, innerWidth, tk)
 }
 

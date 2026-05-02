@@ -30,11 +30,13 @@ type OpenAppDetailMsg struct{ ID string }
 type OpenUserDetailMsg struct{ ID string }
 
 // OpenLogsMsg switches the active screen to Logs and pre-fills the
-// server-side query with `Query` so the operator lands on log events
-// mentioning that resource (#F2 v0.2.5). Emitted by every list /
-// detail screen on the `l` keypress; the resource passes its
-// human-readable identifier (login / name / label).
-type OpenLogsMsg struct{ Query string }
+// server-side `filter=` parameter with `Filter` (an Okta System Log
+// filter expression, e.g., `target.id eq "00uABC"`) so the operator
+// lands on log events involving that resource (#F2 v0.2.5; #F4
+// v0.2.5 — switched from q= to filter= for precise ID-based
+// matching). Emitted by every list / detail screen on the `l`
+// keypress; the resource composes the expression around its ID.
+type OpenLogsMsg struct{ Filter string }
 
 // ActionItem is a single row in the resource action menu (issue
 // #175 v0.1.15). Each screen exposes Actions() []ActionItem; the

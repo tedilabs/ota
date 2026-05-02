@@ -406,13 +406,10 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 				return m, nil
 			case "l":
-				// #F2 v0.2.5 — `l` from App Detail jumps to Logs.
-				q := m.detail.Label
-				if q == "" {
-					q = m.detail.Name
-				}
-				if q != "" {
-					return m, openLogsForAppCmd(q)
+				// #F2 / #F4 v0.2.5 — `l` from App Detail jumps to
+				// Logs scoped to events targeting this app's ID.
+				if id := m.detail.ID; id != "" {
+					return m, openLogsForAppCmd(`target.id eq "` + id + `"`)
 				}
 				return m, nil
 			}
@@ -459,17 +456,12 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.opened = true
 			}
 		case "l":
-			// #F2 v0.2.5 — open Logs scoped to the cursor app's
-			// label (or name) so operators can investigate related
-			// events without retyping.
+			// #F2 / #F4 v0.2.5 — open Logs scoped to events
+			// targeting this app's ID.
 			m.ggChord.Reset()
 			if m.cursor >= 0 && m.cursor < len(rows) {
-				q := rows[m.cursor].Label
-				if q == "" {
-					q = rows[m.cursor].Name
-				}
-				if q != "" {
-					return m, openLogsForAppCmd(q)
+				if id := rows[m.cursor].ID; id != "" {
+					return m, openLogsForAppCmd(`target.id eq "` + id + `"`)
 				}
 			}
 		}
@@ -478,9 +470,9 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // openLogsForAppCmd asks the App Shell to open Logs scoped to a
-// query (#F2 v0.2.5).
-func openLogsForAppCmd(q string) tea.Cmd {
-	return func() tea.Msg { return shared.OpenLogsMsg{Query: q} }
+// server filter expression (#F2 / #F4 v0.2.5).
+func openLogsForAppCmd(filter string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenLogsMsg{Filter: filter} }
 }
 
 func (m ListModel) now() time.Time {

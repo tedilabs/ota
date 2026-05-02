@@ -644,16 +644,13 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "l":
-			// #F2 v0.2.5 — `l` jumps to Logs scoped to the cursor row's
-			// human-readable name. hScroll-right migrated to the Right
-			// arrow key (Vim-style symmetry with `h` for left preserved).
+			// #F2 / #F4 v0.2.5 — `l` jumps to Logs scoped to events
+			// targeting this group via Okta's filter= param. hScroll-
+			// right migrated to the Right arrow key (Vim-style
+			// symmetry with `h` for left preserved).
 			m.ggChord.Reset()
-			if g := m.selected(); g != nil {
-				q := g.Profile.Name
-				if q == "" {
-					q = g.ID
-				}
-				return m, openLogsForCmd(q)
+			if g := m.selected(); g != nil && g.ID != "" {
+				return m, openLogsForCmd(targetFilterExpr(g.ID))
 			}
 			return m, nil
 		case "N":
@@ -1559,10 +1556,18 @@ func openAppDetailCmd(id string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenAppDetailMsg{ID: id} }
 }
 
-// openLogsForCmd asks the App Shell to open Logs scoped to a query
-// (#F2 v0.2.5).
-func openLogsForCmd(q string) tea.Cmd {
-	return func() tea.Msg { return shared.OpenLogsMsg{Query: q} }
+// openLogsForCmd asks the App Shell to open Logs scoped to a server
+// filter expression (#F2 / #F4 v0.2.5).
+func openLogsForCmd(filter string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenLogsMsg{Filter: filter} }
+}
+
+// targetFilterExpr builds an Okta System Log filter expression that
+// matches every event whose target is the given resource ID — used
+// by Group / Group Rule / App / Authenticator `l` shortcuts where
+// the resource is rarely an actor.
+func targetFilterExpr(id string) string {
+	return `target.id eq "` + id + `"`
 }
 
 var (

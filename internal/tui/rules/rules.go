@@ -517,15 +517,11 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "l":
-			// #F2 v0.2.5 — `l` jumps to Logs scoped to the rule's
-			// human-readable name. hScroll-right uses Right arrow.
+			// #F2 / #F4 v0.2.5 — `l` jumps to Logs scoped to events
+			// targeting this rule's ID via Okta's filter= param.
 			m.ggChord.Reset()
-			if r := m.selected(); r != nil {
-				q := r.Name
-				if q == "" {
-					q = r.ID
-				}
-				return m, openLogsForCmd(q)
+			if r := m.selected(); r != nil && r.ID != "" {
+				return m, openLogsForCmd(`target.id eq "` + r.ID + `"`)
 			}
 			return m, nil
 		case "S":
@@ -1262,10 +1258,10 @@ func openGroupDetailCmd(id string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenGroupDetailMsg{ID: id} }
 }
 
-// openLogsForCmd asks the App Shell to open Logs scoped to a query
-// (#F2 v0.2.5).
-func openLogsForCmd(q string) tea.Cmd {
-	return func() tea.Msg { return shared.OpenLogsMsg{Query: q} }
+// openLogsForCmd asks the App Shell to open Logs scoped to a server
+// filter expression (#F2 / #F4 v0.2.5).
+func openLogsForCmd(filter string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenLogsMsg{Filter: filter} }
 }
 
 var (

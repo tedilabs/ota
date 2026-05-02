@@ -594,14 +594,11 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyRunes:
 			switch string(msg.Runes) {
 			case "l":
-				// #F2 v0.2.5 — `l` from User Detail jumps to Logs
-				// scoped to this user's login.
-				q := m.detailUser.Profile.Login
-				if q == "" {
-					q = m.detailUser.ID
-				}
-				if q != "" {
-					return m, openLogsForCmd(q)
+				// #F2 / #F4 v0.2.5 — `l` from User Detail jumps to
+				// Logs scoped to events where this user is the actor
+				// OR the target via Okta's filter= param.
+				if id := m.detailUser.ID; id != "" {
+					return m, openLogsForCmd(userFilterExpr(id))
 				}
 				return m, nil
 			case "r":
@@ -810,14 +807,10 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// #F2 v0.2.5 — `l` jumps to Logs scoped to the cursor row's
-	// human-readable identifier (login).
+	// resource ID via Okta's filter= param (#F4 v0.2.5).
 	if msg.Type == tea.KeyRunes && string(msg.Runes) == "l" {
-		if u := m.cursorUser(); u != nil {
-			q := u.Profile.Login
-			if q == "" {
-				q = u.ID
-			}
-			return m, openLogsForCmd(q)
+		if u := m.cursorUser(); u != nil && u.ID != "" {
+			return m, openLogsForCmd(userFilterExpr(u.ID))
 		}
 		return m, nil
 	}
@@ -2345,9 +2338,18 @@ func (m ListModel) cursorUser() *domain.User {
 }
 
 // openLogsForCmd asks the App Shell to switch to Logs and pre-fill
-// the server-side query. (#F2 v0.2.5)
-func openLogsForCmd(q string) tea.Cmd {
-	return func() tea.Msg { return shared.OpenLogsMsg{Query: q} }
+// the server-side filter (#F2 / #F4 v0.2.5).
+func openLogsForCmd(filter string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenLogsMsg{Filter: filter} }
+}
+
+// userFilterExpr builds an Okta System Log filter expression that
+// matches every event involving the given userID — either as the
+// actor (the user did something) or as the target (something was
+// done to the user). Quoting follows Okta's filter syntax (PRD
+// §7.4 ref, Okta docs).
+func userFilterExpr(id string) string {
+	return `actor.id eq "` + id + `" or target.id eq "` + id + `"`
 }
 
 func openGroupDetailCmd(id string) tea.Cmd {
