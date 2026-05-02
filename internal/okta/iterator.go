@@ -81,7 +81,11 @@ func (it *pagedIterator[T]) fetch(ctx context.Context) error {
 		it.buffer = append(it.buffer, v)
 	}
 
-	linkHdr := resp.Header.Get("Link")
+	// Okta sometimes splits Link into multiple headers (one per
+	// rel value) rather than one comma-joined value. http.Header.Get
+	// returns only the first, which may miss rel="next" entirely.
+	// Join all Link values before parsing.
+	linkHdr := joinHeaderValues(resp.Header.Values("Link"))
 	cursor, hasNext := pagination.NextCursor(linkHdr)
 	if !hasNext {
 		it.nextURL = ""

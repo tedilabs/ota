@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tedilabs/ota/internal/domain"
@@ -53,8 +54,27 @@ func (a *LogsAdapter) SearchPage(ctx context.Context, q domain.LogsQuery) (domai
 		}
 		out = append(out, mapLogEvent(&we, r))
 	}
-	cursor, _ := pagination.NextCursor(resp.Header.Get("Link"))
+	// Okta can split the Link header into multiple lines (rel=self
+	// and rel=next as separate `Link:` entries) instead of one
+	// comma-joined header. http.Header.Get returns only the first,
+	// which may be "self" — missing the "next" cursor entirely.
+	// Join all Link values so NextCursor sees both rels.
+	cursor, _ := pagination.NextCursor(joinHeaderValues(resp.Header.Values("Link")))
 	return domain.LogPage{Events: out, After: cursor}, nil
+}
+
+// joinHeaderValues concatenates every value of a multi-valued HTTP
+// header into the comma-separated form RFC 7230 allows so a parser
+// expecting one combined string sees every entry. Returns "" when
+// the header is absent.
+func joinHeaderValues(vs []string) string {
+	if len(vs) == 0 {
+		return ""
+	}
+	if len(vs) == 1 {
+		return vs[0]
+	}
+	return strings.Join(vs, ", ")
 }
 
 func buildLogsQuery(q domain.LogsQuery) string {
