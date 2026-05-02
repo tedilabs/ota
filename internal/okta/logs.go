@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tedilabs/ota/internal/domain"
+	"github.com/tedilabs/ota/internal/okta/pagination"
 )
 
 // LogsAdapter implements domain.LogsPort.
@@ -26,6 +27,34 @@ func (a *LogsAdapter) Search(ctx context.Context, q domain.LogsQuery) (domain.It
 		return mapLogEvent(&we, raw), nil
 	}
 	return newPagedIterator(a.client, initial, decode), nil
+}
+
+// SearchPage issues one /api/v1/logs query and returns the parsed
+// events plus the next-page cursor extracted from the Link: rel="next"
+// header (#F3 v0.2.5). Used by History mode so operators advance
+// pagination explicitly via Enter on the "load older" sentinel
+// instead of the iterator silently fanning out every page.
+func (a *LogsAdapter) SearchPage(ctx context.Context, q domain.LogsQuery) (domain.LogPage, error) {
+	u := a.client.buildURL("/api/v1/logs" + buildLogsQuery(q))
+	resp, err := a.client.doGet(ctx, u)
+	if err != nil {
+		return domain.LogPage{}, err
+	}
+	defer drainAndClose(resp)
+	var raws []json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raws); err != nil {
+		return domain.LogPage{}, err
+	}
+	out := make([]domain.LogEvent, 0, len(raws))
+	for _, r := range raws {
+		var we wireLogEvent
+		if err := json.Unmarshal(r, &we); err != nil {
+			return domain.LogPage{}, err
+		}
+		out = append(out, mapLogEvent(&we, r))
+	}
+	cursor, _ := pagination.NextCursor(resp.Header.Get("Link"))
+	return domain.LogPage{Events: out, After: cursor}, nil
 }
 
 func buildLogsQuery(q domain.LogsQuery) string {

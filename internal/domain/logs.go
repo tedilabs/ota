@@ -53,6 +53,17 @@ type LogEvent struct {
 	Raw json.RawMessage
 }
 
+// LogPage is a single paginated batch of log events. After is the
+// cursor (Okta's `after` query param) the caller feeds back into the
+// next LogsQuery to retrieve older events; empty when the page
+// covered everything within the requested window. Issue #F3 v0.2.5
+// — replaces the auto-paginating iterator for History fetches so the
+// operator drives "load more" explicitly.
+type LogPage struct {
+	Events []LogEvent
+	After  string
+}
+
 // Actor of an event (REQ-R05 AC-1).
 type Actor struct {
 	ID            string

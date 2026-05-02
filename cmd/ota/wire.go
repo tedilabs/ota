@@ -88,7 +88,8 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 		Groups:   service.NewGroupsService(oktaClient.Groups(), oktaClient.GroupRules(), service.WithClock(clk), service.WithLogger(lg)),
 		Rules:    service.NewGroupRulesService(oktaClient.GroupRules(), oktaClient.Groups(), service.WithClock(clk), service.WithLogger(lg)),
 		Policies: service.NewPoliciesService(oktaClient.Policies(), service.WithClock(clk), service.WithLogger(lg)),
-		Logs:     service.NewLogsService(oktaClient.Logs(), service.WithClock(clk), service.WithLogger(lg)),
+		Logs: service.NewLogsService(oktaClient.Logs(), service.WithClock(clk), service.WithLogger(lg)).
+			WithLimitPerFetch(cfg.Logs.LimitPerFetch),
 		LogsTail: service.NewLogsTail(oktaClient.Logs()),
 	}
 

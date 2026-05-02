@@ -86,15 +86,16 @@ func Test_LogsService_TailPauseResume_PreservesSince(t *testing.T) {
 		"Pause/Resume 사이에 Since 계산이 변하지 않아야 한다 (REQ-R05 AC-3)")
 }
 
-// REQ-R05 AC-4 + issue #116 — v0.1.4 flips the default sort order to
-// ASCENDING so the newest log lands at the bottom of the table (terminal
-// log-tail style) and bounds the default fetch to the last 30 minutes.
-func Test_LogsService_HistoryQuery_DefaultIs30mAscending(t *testing.T) {
+// REQ-R05 AC-4 — bounds the default fetch to the last 30 minutes.
+// #F3 v0.2.5 flipped sortOrder to DESCENDING so when the result set
+// exceeds LimitPerFetch the API returns the newest events; the TUI
+// re-sorts ASCENDING for display so terminal-tail layout is preserved.
+func Test_LogsService_HistoryQuery_DefaultIs30mDescending(t *testing.T) {
 	t.Parallel()
 	svc := service.NewLogsService(fakes.NewLogsPort(t))
 	q := svc.HistoryQuery()
-	assert.Equal(t, domain.SortAscending, q.SortOrder,
-		"히스토리 모드는 ASCENDING (newest-at-bottom — issue #116)")
+	assert.Equal(t, domain.SortDescending, q.SortOrder,
+		"히스토리 모드는 DESCENDING (#F3 v0.2.5)")
 	if assert.NotNil(t, q.Since, "30m default must populate Since") {
 		assert.LessOrEqual(t, time.Since(*q.Since), 31*time.Minute,
 			"기본 Since는 최근 30분 이내")

@@ -44,6 +44,13 @@ type PIIMasking struct {
 // LogsConfig carries Logs tail tuning.
 type LogsConfig struct {
 	PollIntervalSeconds int `koanf:"poll_interval_seconds"`
+	// LimitPerFetch caps how many events ota requests per /api/v1/logs
+	// call. Default 100 — small enough to keep the screen readable,
+	// big enough to cover most active orgs' last-30-min volume.
+	// Operators investigating a specific actor / time range can raise
+	// this; ota always uses Okta's `since`/`until` to scope the
+	// window so the cap doesn't truncate context. (#F3 v0.2.5)
+	LimitPerFetch int `koanf:"limit_per_fetch"`
 }
 
 // Default returns the in-memory default Config used when no file is present.
@@ -57,7 +64,7 @@ func Default() Config {
 			},
 		},
 		Keybindings: map[string]string{},
-		Logs:        LogsConfig{PollIntervalSeconds: 7},
+		Logs:        LogsConfig{PollIntervalSeconds: 7, LimitPerFetch: 100},
 		Refresh:     RefreshConfig{LogsSeconds: 10, DefaultSeconds: 10},
 		Debug:       false,
 	}

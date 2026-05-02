@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,7 +42,22 @@ type Deps struct {
 
 // --- List / Search (SCR-050) -------------------------------------------------
 
-type logsLoadedMsg struct{ events []domain.LogEvent }
+// logsLoadedMsg delivers the first page of a History fetch. `after`
+// is the next-page cursor (empty when the page already covered the
+// window) the operator advances via the load-older sentinel.
+// (#F3 v0.2.5)
+type logsLoadedMsg struct {
+	events []domain.LogEvent
+	after  string
+}
+
+// logsOlderLoadedMsg delivers a follow-up "load older" page. The
+// model prepends these events to the buffer and updates the cursor
+// to the new oldest visible row. (#F3 v0.2.5)
+type logsOlderLoadedMsg struct {
+	events []domain.LogEvent
+	after  string
+}
 
 // LoadedForTest synthesises the (unexported) logsLoadedMsg so black-box
 // tests can deliver a deterministic event slice through Update without
@@ -130,6 +146,15 @@ type SearchModel struct {
 	loaded       bool
 	spinnerFrame int
 	fetching     bool // #U10 v0.2.4 — fetch in flight (history window or follow tick)
+
+	// nextPageAfter is the cursor (Okta's `after` param) returned by
+	// the most recent History fetch. Non-empty when the API window
+	// has more events older than what's currently in m.events. Drives
+	// the load-older sentinel + Enter handler. (#F3 v0.2.5)
+	nextPageAfter string
+	// loadingOlder is set while a load-older fetch is in flight so the
+	// sentinel renders "Loading…" instead of accepting another Enter.
+	loadingOlder bool
 }
 
 // Fetching implements app.FetchingStater (#U10 v0.2.4).
@@ -304,7 +329,13 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case logsLoadedMsg:
-		m.events = msg.events
+		// #F3 v0.2.5 — API returns DESCENDING (newest first); re-sort
+		// ASC for terminal-tail display (oldest top, newest bottom).
+		// `after` carries the next-page cursor for the load-older
+		// sentinel.
+		m.events = sortLogsAscending(msg.events)
+		m.nextPageAfter = msg.after
+		m.loadingOlder = false
 		m.lastErr = nil
 		m.loaded = true
 		m.fetching = false
@@ -333,10 +364,40 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastUpdated = time.Now()
 		return m, nil
+	case logsOlderLoadedMsg:
+		// #F3 v0.2.5 — older page fetched on demand. Prepend (after
+		// re-sorting both halves) and adjust the cursor + viewport
+		// down by the number of new rows so the operator's "current
+		// row" stays visually anchored.
+		newer := m.events
+		older := sortLogsAscending(msg.events)
+		// Dedupe by ID in case the page boundary overlaps.
+		seen := make(map[string]struct{}, len(newer))
+		for _, e := range newer {
+			seen[e.UUID] = struct{}{}
+		}
+		fresh := older[:0]
+		for _, e := range older {
+			if _, dup := seen[e.UUID]; !dup {
+				fresh = append(fresh, e)
+			}
+		}
+		shift := len(fresh)
+		m.events = append(fresh, newer...)
+		m.nextPageAfter = msg.after
+		m.loadingOlder = false
+		m.fetching = false
+		if shift > 0 {
+			m.cursor += shift
+			m.viewportTop += shift
+		}
+		m.lastUpdated = time.Now()
+		return m, nil
 	case logsErrMsg:
 		m.lastErr = msg.err
 		m.loaded = true
 		m.fetching = false
+		m.loadingOlder = false
 		return m, nil
 	case logsSpinnerTickMsg:
 		if !shared.BumpSpinner(m.loaded, &m.spinnerFrame) {
@@ -594,6 +655,15 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.cursor = clampLogIdx(m.cursor-page, len(rows))
 	case tea.KeyEnter:
+		// #F3 v0.2.5 — Enter on the oldest visible row (when the
+		// load-older sentinel is showing) fetches the next older page
+		// instead of opening detail. Cursor at index 0 + canLoadOlder
+		// is the gate; any other position opens detail as before.
+		if m.cursor == 0 && m.canLoadOlder() && !m.loadingOlder {
+			m.loadingOlder = true
+			m.fetching = true
+			return m, fetchOlderPageCmd(m.deps.Service, m.timeRange, m.query, m.nextPageAfter)
+		}
 		if m.cursor >= 0 && m.cursor < len(rows) {
 			m.detail = rows[m.cursor]
 			m.opened = true
@@ -734,6 +804,20 @@ func (m SearchModel) View() string {
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
 	budget := end - top
 	rowTarget := m.chromeContentWidth() - 2
+	// #F3 v0.2.5 — when the cursor sits on the OLDEST row in the
+	// buffer AND the next-page cursor is set, render a "press Enter
+	// to load older logs" sentinel ABOVE the data rows. Operators
+	// see the affordance once they scroll up far enough; pressing
+	// Enter from row 0 fires fetchOlderPageCmd.
+	showSentinel := m.canLoadOlder() && top == 0
+	if showSentinel {
+		hint := "  ↑  Press Enter to load older logs"
+		if m.loadingOlder {
+			hint = "  ⠋  Loading older logs…"
+		}
+		b.WriteString(tk.Muted.Render(hint))
+		b.WriteByte('\n')
+	}
 	for i := top; i < end; i++ {
 		row := m.renderLogsRow(rows[i], now, tk)
 		prefix := "  "
@@ -746,6 +830,13 @@ func (m SearchModel) View() string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// canLoadOlder reports whether the load-older sentinel + Enter
+// handler are active — gated by the next-page cursor and the
+// service being wired (#F3 v0.2.5).
+func (m SearchModel) canLoadOlder() bool {
+	return m.nextPageAfter != "" && m.deps.Service != nil
 }
 
 // chromeContentWidth returns the body cells the chrome reserves per
@@ -1348,34 +1439,38 @@ func fetchHistoryWindowCmd(svc *service.LogsService, window time.Duration) tea.C
 	return fetchHistoryWindowQueryCmd(svc, window, "")
 }
 
-// fetchHistoryWindowQueryCmd is the v0.2.1 (#185) variant that
-// pushes a server-side `q=` term into the history fetch — mirrors
-// the Okta dashboard's Search box and lets operators narrow the
-// stream to specific event types / actors / IPs without scrolling
-// through unrelated rows. Empty q falls back to the existing window
-// query (issue #116 ASCENDING + 30m default).
+// fetchHistoryWindowQueryCmd is the v0.2.1 (#185) variant that pushes
+// a server-side `q=` term into the history fetch. #F3 v0.2.5 — now
+// uses LogsService.SearchPage so the API returns ONE page of newest
+// events (sortOrder=DESCENDING + limit). The operator advances older
+// pages explicitly via Enter on the load-older sentinel.
 func fetchHistoryWindowQueryCmd(svc *service.LogsService, window time.Duration, q string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		query := svc.HistoryQueryWindow(window)
 		query.Q = q
-		iter, err := svc.Search(ctx, query)
+		page, err := svc.SearchPage(ctx, query)
 		if err != nil {
 			return logsErrMsg{err: err}
 		}
-		defer iter.Close()
-		var out []domain.LogEvent
-		for {
-			e, hasMore, err := iter.Next(ctx)
-			if err != nil {
-				return logsErrMsg{err: err}
-			}
-			if !hasMore {
-				break
-			}
-			out = append(out, e)
+		return logsLoadedMsg{events: page.Events, after: page.After}
+	}
+}
+
+// fetchOlderPageCmd issues a "load older" request using the cached
+// next-page cursor. Called when the operator presses Enter on the
+// load-older sentinel at the top of the buffer (#F3 v0.2.5).
+func fetchOlderPageCmd(svc *service.LogsService, window time.Duration, q, after string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		query := svc.HistoryQueryWindow(window)
+		query.Q = q
+		query.After = after
+		page, err := svc.SearchPage(ctx, query)
+		if err != nil {
+			return logsErrMsg{err: err}
 		}
-		return logsLoadedMsg{events: out}
+		return logsOlderLoadedMsg{events: page.Events, after: page.After}
 	}
 }
 
@@ -1399,6 +1494,18 @@ func logActorDrillID(e domain.LogEvent) string {
 // the Users list, which opens detail by ID.
 func openUserDetailCmd(id string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenUserDetailMsg{ID: id} }
+}
+
+// sortLogsAscending returns a new slice sorted by Published ASC so
+// the renderer can lay it out oldest-top / newest-bottom regardless
+// of what sortOrder the API used for the fetch (#F3 v0.2.5).
+func sortLogsAscending(events []domain.LogEvent) []domain.LogEvent {
+	out := make([]domain.LogEvent, len(events))
+	copy(out, events)
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Published.Before(out[j].Published)
+	})
+	return out
 }
 
 var (

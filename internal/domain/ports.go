@@ -112,11 +112,14 @@ type AuthenticatorsPort interface {
 }
 
 // LogsPort is the outbound boundary for Okta System Logs.
-// Search is the single entrypoint for both history and tail modes — tail is
-// implemented at the service layer by repeatedly calling Search with an
-// advancing `since` cursor (REQ-R05 AC-2).
+// Search is the iterator-style entrypoint used by tail mode (auto-
+// follows Link: rel="next" until exhausted). SearchPage is the
+// one-page entrypoint used by History mode (#F3 v0.2.5) so the
+// operator drives "load older" pagination explicitly via the `after`
+// cursor returned in LogPage.After.
 type LogsPort interface {
 	Search(ctx context.Context, q LogsQuery) (Iterator[LogEvent], error)
+	SearchPage(ctx context.Context, q LogsQuery) (LogPage, error)
 }
 
 // RateLimitSnapshot is a last-observed reading for a single API category
