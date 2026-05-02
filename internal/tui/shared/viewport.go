@@ -1,5 +1,22 @@
 package shared
 
+// DetailBodyRowBudget returns the rows available to a detail screen's
+// scrollable body section after subtracting the in-body header
+// (resource title + tab bar + divider, ~3 rows) and a 1-row safety
+// margin. Mirrors ListBodyRowBudget but with the detail-surface
+// reservation applied (#F5 v0.2.5).
+func DetailBodyRowBudget(height, headerRows int) int {
+	budget := ListBodyRowBudget(height)
+	if budget <= 0 {
+		return 0
+	}
+	rows := budget - headerRows - 1
+	if rows < 3 {
+		rows = 3
+	}
+	return rows
+}
+
 // ListBodyRowBudget converts a terminal height (from tea.WindowSizeMsg)
 // into the number of data rows a list ListModel can render without pushing
 // the chrome's top border off-screen.

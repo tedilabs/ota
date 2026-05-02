@@ -515,6 +515,28 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailTab = GroupDetailTab(shared.PrevTab(shared.DetailTab(m.detailTab)))
 			m.detailCursor = shared.BodyCursor{}
 			return m, nil
+		case tea.KeyCtrlF:
+			if !m.detailExtrasFocused {
+				m.detailCursor.PageDown(m.detailViewportRows(),
+					len(groupDetailLines(m.detail, m.detailTab, m.detailMembers, m.detailMembersLoaded, m.detailMembersErr)))
+			}
+			return m, nil
+		case tea.KeyCtrlB:
+			if !m.detailExtrasFocused {
+				m.detailCursor.PageUp(m.detailViewportRows())
+			}
+			return m, nil
+		case tea.KeyCtrlD:
+			if !m.detailExtrasFocused {
+				m.detailCursor.HalfPageDown(m.detailViewportRows(),
+					len(groupDetailLines(m.detail, m.detailTab, m.detailMembers, m.detailMembersLoaded, m.detailMembersErr)))
+			}
+			return m, nil
+		case tea.KeyCtrlU:
+			if !m.detailExtrasFocused {
+				m.detailCursor.HalfPageUp(m.detailViewportRows())
+			}
+			return m, nil
 		case tea.KeyRunes:
 			runes := string(msg.Runes)
 			// v0.2.2 #189: `m` jumps focus to the Members box (was
@@ -563,12 +585,12 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "g":
 				if !m.detailExtrasFocused {
-					m.detailCursor.Top()
+					m.detailCursor.GoTop()
 					return m, nil
 				}
 			case "G":
 				if !m.detailExtrasFocused {
-					m.detailCursor.Bottom(len(groupDetailLines(m.detail, m.detailTab,
+					m.detailCursor.GoBottom(len(groupDetailLines(m.detail, m.detailTab,
 						m.detailMembers, m.detailMembersLoaded, m.detailMembersErr)))
 					return m, nil
 				}
@@ -930,11 +952,24 @@ func (m *ListModel) cycleSort(target SortKey) {
 // TAGS column carries [RULE] (DynamicTargeted), [SYS] (BUILT_IN), [LARGE]
 // (Everyone-style). The chrome (HeaderBar / StatusBar) is composed by the App
 // Shell.
+// detailViewportRows returns the row budget the body cursor scrolls
+// inside on the Group Detail surface (#F5 v0.2.5). Header reservation
+// (3) covers title + tab bar + divider; on the Pretty tab the
+// Members+Apps boxes eat additional rows the body cursor must avoid.
+func (m ListModel) detailViewportRows() int {
+	header := 3
+	if m.detailTab == GroupDetailTabPretty {
+		// Members+Apps boxes are ~10 rows including their own header.
+		header += 10
+	}
+	return shared.DetailBodyRowBudget(m.height, header)
+}
+
 func (m ListModel) View() string {
 	if m.opened {
 		body := renderGroupDetailTabbedWithCursor(m.detail, m.detailTab,
 			m.detailMembers, m.detailMembersLoaded, m.detailMembersErr,
-			m.detailCursor, m.chromeContentWidth()-2)
+			m.detailCursor, m.chromeContentWidth()-2, m.detailViewportRows())
 		// v0.2.2 #189 — Pretty tab gets the side-by-side Members +
 		// Apps boxes beneath the body (mirrors User Detail Groups +
 		// Apps, issue #170). Only Pretty: JSON / YAML stay raw.
@@ -1292,7 +1327,7 @@ func (m DetailModel) View() string {
 // passed group; the Members tab renders the (lazily fetched) member
 // list passed in via members + loaded.
 func renderGroupDetailTabbed(g domain.Group, active GroupDetailTab, members []domain.User, loaded bool, memberErr error) string {
-	return renderGroupDetailTabbedWithCursor(g, active, members, loaded, memberErr, shared.BodyCursor{}, 0)
+	return renderGroupDetailTabbedWithCursor(g, active, members, loaded, memberErr, shared.BodyCursor{}, 0, 0)
 }
 
 // groupDetailLines returns the active tab's body as a flat line slice
@@ -1314,8 +1349,10 @@ func groupDetailLines(g domain.Group, active GroupDetailTab, members []domain.Us
 
 // renderGroupDetailTabbedWithCursor is the cursor-aware variant used by
 // the live View. cursor.Line marks the focused row with `▸ ` + the
-// RowCursor tint; visual range gets an accent tint (#F5 v0.2.5).
-func renderGroupDetailTabbedWithCursor(g domain.Group, active GroupDetailTab, members []domain.User, loaded bool, memberErr error, cursor shared.BodyCursor, width int) string {
+// RowCursor tint; visual range shares the same RowCursor tint without
+// the marker (#F5 v0.2.5). height clips the body slice so the chrome
+// doesn't truncate cursor rows that scrolled off-screen.
+func renderGroupDetailTabbedWithCursor(g domain.Group, active GroupDetailTab, members []domain.User, loaded bool, memberErr error, cursor shared.BodyCursor, width, height int) string {
 	var b strings.Builder
 	b.WriteString("Group Detail\n")
 	b.WriteString(renderGroupTabBar(active))
@@ -1337,7 +1374,7 @@ func renderGroupDetailTabbedWithCursor(g domain.Group, active GroupDetailTab, me
 	}
 	lines := groupDetailLines(g, active, members, loaded, memberErr)
 	tk := activeTokens()
-	rendered := cursor.RenderLines(lines, width, tk)
+	rendered := cursor.RenderViewport(lines, width, height, tk)
 	b.WriteString(shared.JoinLines(rendered))
 	return b.String()
 }

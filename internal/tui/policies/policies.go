@@ -257,40 +257,54 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// #F5 v0.2.5 — body cursor + visual mode while the detail is open.
-	if m.opened && km.Type == tea.KeyRunes {
-		switch string(km.Runes) {
-		case "j":
-			m.detailCursor.Down(len(policyDetailLines(m.detail, !m.detailShowRaw,
-				m.detailRules, m.detailRulesLoaded, m.detailRulesErr)))
-			return m, nil
-		case "k":
-			m.detailCursor.Up()
-			return m, nil
-		case "g":
-			m.detailCursor.Top()
-			return m, nil
-		case "G":
-			m.detailCursor.Bottom(len(policyDetailLines(m.detail, !m.detailShowRaw,
-				m.detailRules, m.detailRulesLoaded, m.detailRulesErr)))
-			return m, nil
-		case "v", "V":
-			if m.detailCursor.Visual {
-				m.detailCursor.CancelVisual()
-			} else {
-				m.detailCursor.StartVisual()
-			}
-			return m, nil
-		case "y":
-			return m, shared.YankCmd(m.detailCursor,
-				policyDetailLines(m.detail, !m.detailShowRaw,
-					m.detailRules, m.detailRulesLoaded, m.detailRulesErr),
-				"Policy Detail")
-		}
-	}
-	// Eat any remaining keys while detail is open so list-mode
-	// handlers (Ctrl+F/B/D/U, j/k, etc.) don't silently shuffle the
-	// list cursor underneath the open detail.
 	if m.opened {
+		viewport := m.detailViewportRows()
+		total := len(policyDetailLines(m.detail, !m.detailShowRaw,
+			m.detailRules, m.detailRulesLoaded, m.detailRulesErr))
+		switch km.Type {
+		case tea.KeyCtrlF:
+			m.detailCursor.PageDown(viewport, total)
+			return m, nil
+		case tea.KeyCtrlB:
+			m.detailCursor.PageUp(viewport)
+			return m, nil
+		case tea.KeyCtrlD:
+			m.detailCursor.HalfPageDown(viewport, total)
+			return m, nil
+		case tea.KeyCtrlU:
+			m.detailCursor.HalfPageUp(viewport)
+			return m, nil
+		case tea.KeyRunes:
+			switch string(km.Runes) {
+			case "j":
+				m.detailCursor.Down(total)
+				return m, nil
+			case "k":
+				m.detailCursor.Up()
+				return m, nil
+			case "g":
+				m.detailCursor.GoTop()
+				return m, nil
+			case "G":
+				m.detailCursor.GoBottom(total)
+				return m, nil
+			case "v", "V":
+				if m.detailCursor.Visual {
+					m.detailCursor.CancelVisual()
+				} else {
+					m.detailCursor.StartVisual()
+				}
+				return m, nil
+			case "y":
+				return m, shared.YankCmd(m.detailCursor,
+					policyDetailLines(m.detail, !m.detailShowRaw,
+						m.detailRules, m.detailRulesLoaded, m.detailRulesErr),
+					"Policy Detail")
+			}
+		}
+		// Eat any remaining keys while detail is open so list-mode
+		// handlers (Ctrl+C, Enter, etc.) don't silently shuffle the
+		// list cursor underneath the open detail.
 		return m, nil
 	}
 	switch km.Type {
@@ -376,6 +390,13 @@ func openPolicyRulesCmd(port domain.PoliciesPort, policyID string) tea.Cmd {
 // View renders SCR-041 (TUI_DESIGN §15.5 / §16.7) with responsive column drop
 // matching the other 4 list screens. Surfaces lastErr via the shared
 // ErrorPanel (TUI_DESIGN §17.1, QA-022).
+// detailViewportRows returns the row budget the body cursor scrolls
+// inside on the Policy Detail surface (#F5 v0.2.5). Policies render
+// no in-body header so 0 reserved.
+func (m ListModel) detailViewportRows() int {
+	return shared.DetailBodyRowBudget(m.height, 0)
+}
+
 func (m ListModel) View() string {
 	if m.opened {
 		// #F5 v0.2.5 — render the detail body through the body
@@ -394,7 +415,8 @@ func (m ListModel) View() string {
 			return b.String()
 		}
 		tk := activeTokens()
-		rendered := m.detailCursor.RenderLines(lines, width, tk)
+		cur := m.detailCursor
+		rendered := cur.RenderViewport(lines, width, m.detailViewportRows(), tk)
 		return shared.JoinLines(rendered)
 	}
 	if m.lastErr != nil {

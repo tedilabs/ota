@@ -691,6 +691,8 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// cycle through Pretty / JSON / YAML, `r` jumps to / from JSON
 	// against the previously-visited non-JSON tab.
 	if m.opened {
+		viewport := m.detailViewportRows()
+		total := len(logDetailLines(m.detail, m.detailTab))
 		switch km.Type {
 		case tea.KeyEsc:
 			// #F5 v0.2.5 — Esc cancels visual mode first.
@@ -712,6 +714,18 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailTab = shared.PrevTab(m.detailTab)
 			m.detailCursor = shared.BodyCursor{}
 			return m, nil
+		case tea.KeyCtrlF:
+			m.detailCursor.PageDown(viewport, total)
+			return m, nil
+		case tea.KeyCtrlB:
+			m.detailCursor.PageUp(viewport)
+			return m, nil
+		case tea.KeyCtrlD:
+			m.detailCursor.HalfPageDown(viewport, total)
+			return m, nil
+		case tea.KeyCtrlU:
+			m.detailCursor.HalfPageUp(viewport)
+			return m, nil
 		case tea.KeyEnter:
 			// #G5 / U7 v0.2.4 — drill into the actor's User Detail.
 			if id := logActorDrillID(m.detail); id != "" {
@@ -725,16 +739,16 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detailCursor = shared.BodyCursor{}
 				return m, nil
 			case "j":
-				m.detailCursor.Down(len(logDetailLines(m.detail, m.detailTab)))
+				m.detailCursor.Down(total)
 				return m, nil
 			case "k":
 				m.detailCursor.Up()
 				return m, nil
 			case "g":
-				m.detailCursor.Top()
+				m.detailCursor.GoTop()
 				return m, nil
 			case "G":
-				m.detailCursor.Bottom(len(logDetailLines(m.detail, m.detailTab)))
+				m.detailCursor.GoBottom(total)
 				return m, nil
 			case "v", "V":
 				if m.detailCursor.Visual {
@@ -915,9 +929,22 @@ func (m SearchModel) setRange(window time.Duration) (tea.Model, tea.Cmd) {
 // WHEN / SEV / EVENTTYPE / ACTOR / OUTCOME / IP. Tail indicator is contributed
 // to the first line so operators see the tail state at a glance (REQ-R05
 // AC-3).
+// detailViewportRows returns the row budget the body cursor scrolls
+// inside on the Log Event Detail surface (#F5 v0.2.5). 4 rows
+// reserved for the title + tab bar + divider + footer hint when the
+// actor drill-down is shown.
+func (m SearchModel) detailViewportRows() int {
+	header := 3
+	if logActorDrillID(m.detail) != "" {
+		header++
+	}
+	return shared.DetailBodyRowBudget(m.height, header)
+}
+
 func (m SearchModel) View() string {
 	if m.opened {
-		return renderLogDetailTabbedWithCursor(m.detail, m.detailTab, m.detailCursor, m.chromeContentWidth()-2)
+		return renderLogDetailTabbedWithCursor(m.detail, m.detailTab, m.detailCursor,
+			m.chromeContentWidth()-2, m.detailViewportRows())
 	}
 	if m.lastErr != nil {
 		return "Logs  (error)\n" + shared.ErrorPanel("events", m.lastErr)
@@ -1319,7 +1346,7 @@ func (m DetailModel) View() string { return renderLogDetailTabbed(m.event, LogDe
 // Okta with shared syntax highlighting; YAML reformats the same
 // payload at 2-space indent.
 func renderLogDetailTabbed(e domain.LogEvent, active LogDetailTab) string {
-	return renderLogDetailTabbedWithCursor(e, active, shared.BodyCursor{}, 0)
+	return renderLogDetailTabbedWithCursor(e, active, shared.BodyCursor{}, 0, 0)
 }
 
 // logDetailLines returns the active tab's body as a flat line slice
@@ -1339,8 +1366,10 @@ func logDetailLines(e domain.LogEvent, active LogDetailTab) []string {
 
 // renderLogDetailTabbedWithCursor is the cursor-aware variant used by
 // the live View. cursor.Line marks the focused row with `▸ ` + the
-// RowCursor tint; visual range gets an accent tint (#F5 v0.2.5).
-func renderLogDetailTabbedWithCursor(e domain.LogEvent, active LogDetailTab, cursor shared.BodyCursor, width int) string {
+// RowCursor tint; visual range shares the same RowCursor tint without
+// the marker (#F5 v0.2.5). height clips the body slice so the chrome
+// doesn't truncate cursor rows that scrolled off-screen.
+func renderLogDetailTabbedWithCursor(e domain.LogEvent, active LogDetailTab, cursor shared.BodyCursor, width, height int) string {
 	var b strings.Builder
 	b.WriteString("Log Event\n")
 	b.WriteString(renderLogTabBar(active))
@@ -1361,7 +1390,7 @@ func renderLogDetailTabbedWithCursor(e domain.LogEvent, active LogDetailTab, cur
 	} else {
 		lines := logDetailLines(e, active)
 		tk := activeTokens()
-		rendered := cursor.RenderLines(lines, width, tk)
+		rendered := cursor.RenderViewport(lines, width, height, tk)
 		b.WriteString(shared.JoinLines(rendered))
 	}
 	// #G5 / U7 v0.2.4 — surface the actor drill-down affordance.

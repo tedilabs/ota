@@ -11,13 +11,20 @@ import (
 // BodyCursor carries the line-cursor + visual-mode state every
 // detail surface uses (#F5 v0.2.5). Embed in a detail model and
 // drive via Up / Down / Top / Bottom / StartVisual / CancelVisual;
-// render a line slice with RenderLines.
+// render a line slice with RenderViewport.
+//
+// Top is the topmost visible line in the body viewport — it slides
+// so Line stays inside [Top, Top+viewportHeight) whenever a movement
+// method is called with a viewport height. The viewport-aware moves
+// (PageDown / PageUp / HalfPageDown / HalfPageUp) wire Ctrl-F / B /
+// D / U on detail surfaces.
 //
 // Screens own clipboard integration themselves — BodyCursor just
 // reports the selected range so per-screen yank handlers can call
 // the platform's clipboard with the chosen text.
 type BodyCursor struct {
 	Line   int
+	Top    int
 	Visual bool
 	Anchor int
 }
@@ -26,6 +33,9 @@ type BodyCursor struct {
 func (c *BodyCursor) Up() {
 	if c.Line > 0 {
 		c.Line--
+	}
+	if c.Line < c.Top {
+		c.Top = c.Line
 	}
 }
 
@@ -38,15 +48,16 @@ func (c *BodyCursor) Down(total int) {
 }
 
 // Top jumps the cursor to line 0.
-func (c *BodyCursor) Top() {
+func (c *BodyCursor) GoTop() {
 	c.Line = 0
+	c.Top = 0
 	if !c.Visual {
 		c.Anchor = 0
 	}
 }
 
 // Bottom jumps the cursor to the last line.
-func (c *BodyCursor) Bottom(total int) {
+func (c *BodyCursor) GoBottom(total int) {
 	if total > 0 {
 		c.Line = total - 1
 	} else {
@@ -54,6 +65,84 @@ func (c *BodyCursor) Bottom(total int) {
 	}
 	if !c.Visual {
 		c.Anchor = c.Line
+	}
+}
+
+// PageDown advances the cursor by one viewport. The viewport top
+// follows so the cursor stays anchored relative to it. Clamped to
+// the last line.
+func (c *BodyCursor) PageDown(viewport, total int) {
+	if viewport <= 0 {
+		viewport = 1
+	}
+	c.Line += viewport
+	if c.Line > total-1 {
+		c.Line = total - 1
+	}
+	if c.Line < 0 {
+		c.Line = 0
+	}
+}
+
+// PageUp moves the cursor up by one viewport.
+func (c *BodyCursor) PageUp(viewport int) {
+	if viewport <= 0 {
+		viewport = 1
+	}
+	c.Line -= viewport
+	if c.Line < 0 {
+		c.Line = 0
+	}
+}
+
+// HalfPageDown / HalfPageUp wire Ctrl-D / Ctrl-U.
+func (c *BodyCursor) HalfPageDown(viewport, total int) {
+	step := viewport / 2
+	if step < 1 {
+		step = 1
+	}
+	c.Line += step
+	if c.Line > total-1 {
+		c.Line = total - 1
+	}
+	if c.Line < 0 {
+		c.Line = 0
+	}
+}
+
+func (c *BodyCursor) HalfPageUp(viewport int) {
+	step := viewport / 2
+	if step < 1 {
+		step = 1
+	}
+	c.Line -= step
+	if c.Line < 0 {
+		c.Line = 0
+	}
+}
+
+// EnsureVisible slides Top so Line falls inside the viewport. Call
+// before rendering when the cursor may have moved past the window.
+func (c *BodyCursor) EnsureVisible(viewport, total int) {
+	if viewport <= 0 {
+		c.Top = 0
+		return
+	}
+	if total <= viewport {
+		c.Top = 0
+		return
+	}
+	if c.Line < c.Top {
+		c.Top = c.Line
+	}
+	if c.Line >= c.Top+viewport {
+		c.Top = c.Line - viewport + 1
+	}
+	if c.Top+viewport > total {
+		c.Top = total - viewport
+	}
+	if c.Top < 0 {
+		c.Top = 0
 	}
 }
 
@@ -105,17 +194,34 @@ func (c BodyCursor) SelectedLines(lines []string) []string {
 	return lines[start : end+1]
 }
 
-// RenderLines returns the body lines with cursor + visual styling
-// applied. Each line is padded to `width` cells; the cursor row
-// gets the `▸ ` prefix + RowCursor tint, lines inside the visual
-// range get an accent tint.
-func (c BodyCursor) RenderLines(lines []string, width int, tk Tokens) []string {
+// RenderViewport returns the visible window of body lines with
+// cursor + visual styling applied. height is the number of rows the
+// caller has reserved for the body cursor area; when <= 0 the full
+// list is rendered (for tests / legacy callers without a height).
+//
+// Each rendered line is padded to `width` cells; the cursor row gets
+// the `▸ ` prefix + RowCursor tint, lines inside the visual range
+// get the same RowCursor tint without the marker (matches the Users
+// detail visual-mode behavior).
+func (c *BodyCursor) RenderViewport(lines []string, width, height int, tk Tokens) []string {
 	if len(lines) == 0 {
 		return nil
 	}
+	if height > 0 {
+		c.EnsureVisible(height, len(lines))
+	}
 	start, end := c.VisualRange()
-	out := make([]string, len(lines))
-	for i, line := range lines {
+	from, to := 0, len(lines)
+	if height > 0 {
+		from = c.Top
+		to = c.Top + height
+		if to > len(lines) {
+			to = len(lines)
+		}
+	}
+	out := make([]string, 0, to-from)
+	for i := from; i < to; i++ {
+		line := lines[i]
 		prefix := "  "
 		if i == c.Line {
 			prefix = "▸ "
@@ -125,11 +231,17 @@ func (c BodyCursor) RenderLines(lines []string, width int, tk Tokens) []string {
 		case i == c.Line:
 			full = tk.RowCursor.Render(StripCSI(full))
 		case c.Visual && i >= start && i <= end:
-			full = tk.Accent.Render(StripCSI(full))
+			full = tk.RowCursor.Render(StripCSI(full))
 		}
-		out[i] = full
+		out = append(out, full)
 	}
 	return out
+}
+
+// RenderLines is the legacy no-height shim — equivalent to
+// RenderViewport with height=0.
+func (c *BodyCursor) RenderLines(lines []string, width int, tk Tokens) []string {
+	return c.RenderViewport(lines, width, 0, tk)
 }
 
 // JoinLines glues a slice with newlines — convenience for callers

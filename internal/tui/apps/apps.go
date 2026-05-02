@@ -392,6 +392,8 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.opened {
+		viewport := m.detailViewportRows()
+		total := len(appDetailLines(m.detail, m.detailTab))
 		switch km.Type {
 		case tea.KeyEsc:
 			// #F5 v0.2.5 — Esc cancels visual mode first, then
@@ -413,6 +415,18 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailTab = shared.PrevTab(m.detailTab)
 			m.detailCursor = shared.BodyCursor{}
 			return m, nil
+		case tea.KeyCtrlF:
+			m.detailCursor.PageDown(viewport, total)
+			return m, nil
+		case tea.KeyCtrlB:
+			m.detailCursor.PageUp(viewport)
+			return m, nil
+		case tea.KeyCtrlD:
+			m.detailCursor.HalfPageDown(viewport, total)
+			return m, nil
+		case tea.KeyCtrlU:
+			m.detailCursor.HalfPageUp(viewport)
+			return m, nil
 		case tea.KeyRunes:
 			switch string(km.Runes) {
 			case "r":
@@ -420,16 +434,16 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detailCursor = shared.BodyCursor{}
 				return m, nil
 			case "j":
-				m.detailCursor.Down(len(appDetailLines(m.detail, m.detailTab)))
+				m.detailCursor.Down(total)
 				return m, nil
 			case "k":
 				m.detailCursor.Up()
 				return m, nil
 			case "g":
-				m.detailCursor.Top()
+				m.detailCursor.GoTop()
 				return m, nil
 			case "G":
-				m.detailCursor.Bottom(len(appDetailLines(m.detail, m.detailTab)))
+				m.detailCursor.GoBottom(total)
 				return m, nil
 			case "v", "V":
 				if m.detailCursor.Visual {
@@ -517,10 +531,18 @@ func (m ListModel) now() time.Time {
 	return time.Now()
 }
 
+// detailViewportRows returns the row budget the body cursor can scroll
+// inside on the App Detail surface. The header eats 3 rows (title +
+// tab bar + divider).
+func (m ListModel) detailViewportRows() int {
+	return shared.DetailBodyRowBudget(m.height, 3)
+}
+
 // View renders the list (or the detail when opened).
 func (m ListModel) View() string {
 	if m.opened {
-		return renderAppDetailTabbedWithCursor(m.detail, m.detailTab, m.detailCursor, m.chromeContentWidth()-2)
+		return renderAppDetailTabbedWithCursor(m.detail, m.detailTab, m.detailCursor,
+			m.chromeContentWidth()-2, m.detailViewportRows())
 	}
 	if m.lastErr != nil {
 		return "Apps  (error)\n" + shared.ErrorPanel("Apps", m.lastErr)
@@ -714,13 +736,15 @@ func yankDetailLines(c shared.BodyCursor, lines []string) tea.Cmd {
 }
 
 func renderAppDetailTabbed(a domain.App, active AppDetailTab) string {
-	return renderAppDetailTabbedWithCursor(a, active, shared.BodyCursor{}, 0)
+	return renderAppDetailTabbedWithCursor(a, active, shared.BodyCursor{}, 0, 0)
 }
 
 // renderAppDetailTabbedWithCursor is the cursor-aware variant used by
 // the live View. cursor.Line marks the focused row with `▸ ` + the
-// RowCursor tint; visual range gets an accent tint (#F5 v0.2.5).
-func renderAppDetailTabbedWithCursor(a domain.App, active AppDetailTab, cursor shared.BodyCursor, width int) string {
+// RowCursor tint; visual range shares the same RowCursor tint without
+// the marker (#F5 v0.2.5). height clips the body slice so the chrome
+// doesn't truncate cursor rows that scrolled off-screen.
+func renderAppDetailTabbedWithCursor(a domain.App, active AppDetailTab, cursor shared.BodyCursor, width, height int) string {
 	var b strings.Builder
 	b.WriteString("App Detail\n")
 	b.WriteString(renderAppTabBar(active))
@@ -742,7 +766,7 @@ func renderAppDetailTabbedWithCursor(a domain.App, active AppDetailTab, cursor s
 		return b.String()
 	}
 	tk := activeTokens()
-	rendered := cursor.RenderLines(lines, width, tk)
+	rendered := cursor.RenderViewport(lines, width, height, tk)
 	b.WriteString(shared.JoinLines(rendered))
 	return b.String()
 }

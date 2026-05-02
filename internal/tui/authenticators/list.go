@@ -223,6 +223,8 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.opened {
+		viewport := m.detailViewportRows()
+		total := len(authDetailLines(m.detail, m.detailTab))
 		switch msg.Type {
 		case tea.KeyEsc:
 			// #F5 v0.2.5 — Esc cancels visual mode first.
@@ -244,19 +246,31 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailTab = shared.PrevTab(m.detailTab)
 			m.detailCursor = shared.BodyCursor{}
 			return m, nil
+		case tea.KeyCtrlF:
+			m.detailCursor.PageDown(viewport, total)
+			return m, nil
+		case tea.KeyCtrlB:
+			m.detailCursor.PageUp(viewport)
+			return m, nil
+		case tea.KeyCtrlD:
+			m.detailCursor.HalfPageDown(viewport, total)
+			return m, nil
+		case tea.KeyCtrlU:
+			m.detailCursor.HalfPageUp(viewport)
+			return m, nil
 		case tea.KeyRunes:
 			switch string(msg.Runes) {
 			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 				m.detailCursor = shared.BodyCursor{}
 			case "j":
-				m.detailCursor.Down(len(authDetailLines(m.detail, m.detailTab)))
+				m.detailCursor.Down(total)
 			case "k":
 				m.detailCursor.Up()
 			case "g":
-				m.detailCursor.Top()
+				m.detailCursor.GoTop()
 			case "G":
-				m.detailCursor.Bottom(len(authDetailLines(m.detail, m.detailTab)))
+				m.detailCursor.GoBottom(total)
 			case "v", "V":
 				if m.detailCursor.Visual {
 					m.detailCursor.CancelVisual()
@@ -374,9 +388,17 @@ func (m ListModel) visible() []domain.Authenticator {
 	return out
 }
 
+// detailViewportRows returns the row budget the body cursor scrolls
+// inside on the Authenticator Detail surface (#F5 v0.2.5). 3 rows
+// reserved for the title + tab bar + divider header.
+func (m ListModel) detailViewportRows() int {
+	return shared.DetailBodyRowBudget(m.height, 3)
+}
+
 func (m ListModel) View() string {
 	if m.opened {
-		return renderAuthDetailTabbedWithCursor(m.detail, m.detailTab, m.detailCursor, m.chromeContentWidth()-2)
+		return renderAuthDetailTabbedWithCursor(m.detail, m.detailTab, m.detailCursor,
+			m.chromeContentWidth()-2, m.detailViewportRows())
 	}
 	if m.lastErr != nil {
 		return "Authenticators  (error)\n" + shared.ErrorPanel("authenticators", m.lastErr)
@@ -470,12 +492,13 @@ func authDetailLines(a domain.Authenticator, active AuthDetailTab) []string {
 // renderAuthDetailTabbed renders the Pretty / JSON / YAML triad
 // (legacy / no-cursor entrypoint).
 func renderAuthDetailTabbed(a domain.Authenticator, active AuthDetailTab) string {
-	return renderAuthDetailTabbedWithCursor(a, active, shared.BodyCursor{}, 0)
+	return renderAuthDetailTabbedWithCursor(a, active, shared.BodyCursor{}, 0, 0)
 }
 
 // renderAuthDetailTabbedWithCursor highlights the focused row + any
-// visual selection (#F5 v0.2.5).
-func renderAuthDetailTabbedWithCursor(a domain.Authenticator, active AuthDetailTab, cursor shared.BodyCursor, width int) string {
+// visual selection (#F5 v0.2.5). height clips the body slice so the
+// chrome doesn't truncate cursor rows that scrolled off-screen.
+func renderAuthDetailTabbedWithCursor(a domain.Authenticator, active AuthDetailTab, cursor shared.BodyCursor, width, height int) string {
 	var b strings.Builder
 	b.WriteString("Authenticator Detail\n")
 	b.WriteString(renderAuthTabBar(active))
@@ -494,7 +517,7 @@ func renderAuthDetailTabbedWithCursor(a domain.Authenticator, active AuthDetailT
 		return b.String()
 	}
 	tk := activeTokens()
-	rendered := cursor.RenderLines(authDetailLines(a, active), width, tk)
+	rendered := cursor.RenderViewport(authDetailLines(a, active), width, height, tk)
 	b.WriteString(shared.JoinLines(rendered))
 	return b.String()
 }

@@ -384,6 +384,28 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailTab = shared.PrevTab(m.detailTab)
 			m.detailCursor = shared.BodyCursor{}
 			return m, nil
+		case tea.KeyCtrlF:
+			if !m.detailTargetsFocused {
+				m.detailCursor.PageDown(m.detailViewportRows(),
+					len(ruleDetailLines(m.detail, m.detailTab, m.groupNames)))
+			}
+			return m, nil
+		case tea.KeyCtrlB:
+			if !m.detailTargetsFocused {
+				m.detailCursor.PageUp(m.detailViewportRows())
+			}
+			return m, nil
+		case tea.KeyCtrlD:
+			if !m.detailTargetsFocused {
+				m.detailCursor.HalfPageDown(m.detailViewportRows(),
+					len(ruleDetailLines(m.detail, m.detailTab, m.groupNames)))
+			}
+			return m, nil
+		case tea.KeyCtrlU:
+			if !m.detailTargetsFocused {
+				m.detailCursor.HalfPageUp(m.detailViewportRows())
+			}
+			return m, nil
 		case tea.KeyEnter:
 			// #G4 / U7 v0.2.4 — drill into the focused target's
 			// Group Detail. No-op when targets aren't focused so the
@@ -441,12 +463,12 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "g":
 				if !m.detailTargetsFocused {
-					m.detailCursor.Top()
+					m.detailCursor.GoTop()
 					return m, nil
 				}
 			case "G":
 				if !m.detailTargetsFocused {
-					m.detailCursor.Bottom(len(ruleDetailLines(m.detail, m.detailTab, m.groupNames)))
+					m.detailCursor.GoBottom(len(ruleDetailLines(m.detail, m.detailTab, m.groupNames)))
 					return m, nil
 				}
 			case "v", "V":
@@ -599,6 +621,18 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // View renders SCR-030 (TUI_DESIGN §15.4 / §16.6). Columns: STATUS / NAME /
 // TARGETS / UPDATED. When at least one rule is INVALID an inline banner
 // summarizes the count (REQ-R03 AC-3).
+// detailViewportRows returns the row budget the body cursor scrolls
+// inside on the Rule Detail surface (#F5 v0.2.5). Header reservation
+// (3) covers title + tab bar + divider; the optional Pretty-tab
+// "] focuses TARGETS …" footer eats one more row.
+func (m ListModel) detailViewportRows() int {
+	header := 3
+	if m.detailTab == RuleDetailTabPretty && len(m.detail.TargetGroupIDs) > 0 {
+		header++
+	}
+	return shared.DetailBodyRowBudget(m.height, header)
+}
+
 func (m ListModel) View() string {
 	if m.opened {
 		// #G4 / U7 v0.2.4 — pass the TARGETS focus state so the
@@ -609,7 +643,7 @@ func (m ListModel) View() string {
 			focusIdx = m.detailTargetCur
 		}
 		return renderRuleDetailTabbedWithFocusCursor(m.detail, m.detailTab, focusIdx, m.groupNames,
-			m.detailCursor, m.chromeContentWidth()-2)
+			m.detailCursor, m.chromeContentWidth()-2, m.detailViewportRows())
 	}
 	if m.lastErr != nil {
 		return "Group Rules  (error)\n" + shared.ErrorPanel("group rules", m.lastErr)
@@ -1056,7 +1090,7 @@ func renderRuleDetailTabbed(r domain.GroupRule, active RuleDetailTab) string {
 // drill-down affordance (#G4 / U7 v0.2.4). groupNames resolves IDs
 // to human names when populated.
 func renderRuleDetailTabbedWithFocus(r domain.GroupRule, active RuleDetailTab, focusIdx int, groupNames map[string]string) string {
-	return renderRuleDetailTabbedWithFocusCursor(r, active, focusIdx, groupNames, shared.BodyCursor{}, 0)
+	return renderRuleDetailTabbedWithFocusCursor(r, active, focusIdx, groupNames, shared.BodyCursor{}, 0, 0)
 }
 
 // ruleDetailLines returns the active tab's body as a flat line slice
@@ -1077,11 +1111,13 @@ func ruleDetailLines(r domain.GroupRule, active RuleDetailTab, groupNames map[st
 
 // renderRuleDetailTabbedWithFocusCursor is the cursor-aware variant
 // used by the live View. cursor.Line marks the focused row with
-// `▸ ` + the RowCursor tint; visual range gets an accent tint
-// (#F5 v0.2.5). The cursor render only kicks in when targets are not
-// focused (focusIdx < 0); the targets focus path keeps its native
-// `▸` row marker untouched.
-func renderRuleDetailTabbedWithFocusCursor(r domain.GroupRule, active RuleDetailTab, focusIdx int, groupNames map[string]string, cursor shared.BodyCursor, width int) string {
+// `▸ ` + the RowCursor tint; visual range shares the same RowCursor
+// tint without the marker (#F5 v0.2.5). The cursor render only kicks
+// in when targets are not focused (focusIdx < 0); the targets focus
+// path keeps its native `▸` row marker untouched. height clips the
+// body slice so the chrome doesn't truncate cursor rows that
+// scrolled off-screen.
+func renderRuleDetailTabbedWithFocusCursor(r domain.GroupRule, active RuleDetailTab, focusIdx int, groupNames map[string]string, cursor shared.BodyCursor, width, height int) string {
 	var b strings.Builder
 	b.WriteString("Group Rule Detail\n")
 	b.WriteString(renderRuleTabBar(active))
@@ -1100,7 +1136,7 @@ func renderRuleDetailTabbedWithFocusCursor(r domain.GroupRule, active RuleDetail
 	} else {
 		lines := ruleDetailLines(r, active, groupNames)
 		tk := activeTokens()
-		rendered := cursor.RenderLines(lines, width, tk)
+		rendered := cursor.RenderViewport(lines, width, height, tk)
 		b.WriteString(shared.JoinLines(rendered))
 	}
 	if active == RuleDetailTabPretty && len(r.TargetGroupIDs) > 0 {
