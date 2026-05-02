@@ -235,6 +235,16 @@ func (m SearchModel) StatusBadges() []shared.ChromeBadge {
 	if m.filter != "" {
 		out = append(out, shared.ChromeBadge{Key: "FILTER", Value: m.filter})
 	}
+	// #F3 v0.2.5 — surface the load-older state so operators know
+	// whether the API has more pages waiting (sentinel reachable via
+	// `k` from row 0).
+	if m.canLoadOlder() {
+		out = append(out, shared.ChromeBadge{
+			Key:   "MORE",
+			Value: "k+Enter",
+			Tone:  shared.BadgeSuccess,
+		})
+	}
 	return out
 }
 
@@ -738,6 +748,11 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			} else if m.cursor == 0 && m.canLoadOlder() {
 				m.cursor = sentinelRow
+			} else if m.cursor == 0 {
+				// At the top with no older page to load. Tell the
+				// operator explicitly so they don't wonder whether
+				// the keypath is broken (#F3 v0.2.5 follow-up).
+				return m, emitNoMoreLogsToast(m.timeRange)
 			}
 		case "d":
 			m.ggChord.Reset()
@@ -869,6 +884,20 @@ func (m SearchModel) canLoadOlder() bool {
 // sentinel — sits one slot above the real data rows so `k` from
 // row 0 lands on it (#F3 v0.2.5).
 const sentinelRow = -1
+
+// emitNoMoreLogsToast tells the operator that `k` from row 0 ran
+// out of older history within the active window — most often
+// because the API returned every event in one page. Hint suggests
+// extending the range so they don't think the keypath is broken.
+func emitNoMoreLogsToast(window time.Duration) tea.Cmd {
+	return func() tea.Msg {
+		return shared.ToastMsg{
+			Text:  fmt.Sprintf("no older logs in the last %s — try a longer range (1 / 3 / c / e)", timeRangeLabel(window)),
+			Level: shared.ToastInfo,
+			Until: time.Now().Add(4 * time.Second),
+		}
+	}
+}
 
 // chromeContentWidth returns the body cells the chrome reserves per
 // row, used to land the scrollbar gutter flush against the right
