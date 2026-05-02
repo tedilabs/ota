@@ -510,6 +510,8 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"Enter / d", "open log event detail"},
 			{"/", "filter loaded events by substring (client-side)"},
 			{"Q", "search Okta server (q=… history fetch)"},
+			{"k from row 0", "land on the load-older sentinel"},
+			{"Enter on sentinel", "fetch older page (after=cursor)"},
 			{"s", "toggle tail mode (on/off)"},
 			{"f", "toggle auto-follow (live ↔ paused)"},
 			{"r", "refresh — refetch the current window"},

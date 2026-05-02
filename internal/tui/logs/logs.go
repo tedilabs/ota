@@ -387,7 +387,15 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nextPageAfter = msg.after
 		m.loadingOlder = false
 		m.fetching = false
-		if shift > 0 {
+		// #F3 v0.2.5 — operator was on the sentinel (cursor=-1)
+		// triggering this fetch. Park them on row 0 of the prepended
+		// page (the new oldest data row) so they immediately see the
+		// older content rather than staring at the sentinel again.
+		// For any other prior cursor position, shift down so the
+		// "current row" stays anchored to the same event.
+		if m.cursor == sentinelRow {
+			m.cursor = 0
+		} else if shift > 0 {
 			m.cursor += shift
 			m.viewportTop += shift
 		}
@@ -655,11 +663,9 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.cursor = clampLogIdx(m.cursor-page, len(rows))
 	case tea.KeyEnter:
-		// #F3 v0.2.5 — Enter on the oldest visible row (when the
-		// load-older sentinel is showing) fetches the next older page
-		// instead of opening detail. Cursor at index 0 + canLoadOlder
-		// is the gate; any other position opens detail as before.
-		if m.cursor == 0 && m.canLoadOlder() && !m.loadingOlder {
+		// #F3 v0.2.5 — Enter on the load-older sentinel fetches the
+		// next older page; Enter on a real row opens detail.
+		if m.cursor == sentinelRow && m.canLoadOlder() && !m.loadingOlder {
 			m.loadingOlder = true
 			m.fetching = true
 			return m, fetchOlderPageCmd(m.deps.Service, m.timeRange, m.query, m.nextPageAfter)
@@ -718,13 +724,20 @@ func (m SearchModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.queryInput = m.query
 		case "j":
 			m.ggChord.Reset()
-			if m.cursor < len(rows)-1 {
+			// #F3 v0.2.5 — `j` from the sentinel row falls back to row 0.
+			if m.cursor == sentinelRow {
+				m.cursor = 0
+			} else if m.cursor < len(rows)-1 {
 				m.cursor++
 			}
 		case "k":
 			m.ggChord.Reset()
+			// #F3 v0.2.5 — `k` from row 0 lands on the sentinel when
+			// older logs are available; from sentinel it stays put.
 			if m.cursor > 0 {
 				m.cursor--
+			} else if m.cursor == 0 && m.canLoadOlder() {
+				m.cursor = sentinelRow
 			}
 		case "d":
 			m.ggChord.Reset()
@@ -804,18 +817,31 @@ func (m SearchModel) View() string {
 	top, end := shared.WindowBounds(m.cursor, m.viewportTop, len(rows), shared.ListBodyRowBudget(m.height))
 	budget := end - top
 	rowTarget := m.chromeContentWidth() - 2
-	// #F3 v0.2.5 — when the cursor sits on the OLDEST row in the
-	// buffer AND the next-page cursor is set, render a "press Enter
-	// to load older logs" sentinel ABOVE the data rows. Operators
-	// see the affordance once they scroll up far enough; pressing
-	// Enter from row 0 fires fetchOlderPageCmd.
+	// #F3 v0.2.5 — when the next-page cursor is set, render a
+	// navigable sentinel ABOVE row 0. cursor==sentinelRow places
+	// the `▸` marker on the sentinel itself; Enter on the sentinel
+	// fires fetchOlderPageCmd. Sentinel only renders when the
+	// viewport top is already row 0 (operator has scrolled up to
+	// meet the oldest data).
 	showSentinel := m.canLoadOlder() && top == 0
 	if showSentinel {
-		hint := "  ↑  Press Enter to load older logs"
+		hint := "↑  Press Enter to load older logs"
 		if m.loadingOlder {
-			hint = "  ⠋  Loading older logs…"
+			hint = "⠋  Loading older logs…"
 		}
-		b.WriteString(tk.Muted.Render(hint))
+		prefix := "  "
+		line := tk.Muted.Render(hint)
+		if m.cursor == sentinelRow {
+			prefix = "▸ "
+			line = tk.Accent.Render(hint)
+		}
+		// Pad to rowTarget so the cursor highlight extends across
+		// the full body width like a normal row.
+		full := shared.PadOrTruncateVisible(prefix+line, rowTarget)
+		if m.cursor == sentinelRow {
+			full = tk.RowCursor.Render(shared.StripCSI(full))
+		}
+		b.WriteString(full)
 		b.WriteByte('\n')
 	}
 	for i := top; i < end; i++ {
@@ -838,6 +864,11 @@ func (m SearchModel) View() string {
 func (m SearchModel) canLoadOlder() bool {
 	return m.nextPageAfter != "" && m.deps.Service != nil
 }
+
+// sentinelRow is the cursor index assigned to the load-older
+// sentinel — sits one slot above the real data rows so `k` from
+// row 0 lands on it (#F3 v0.2.5).
+const sentinelRow = -1
 
 // chromeContentWidth returns the body cells the chrome reserves per
 // row, used to land the scrollbar gutter flush against the right
