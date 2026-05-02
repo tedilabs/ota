@@ -342,18 +342,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		// Forward to child Screen Models so they can adapt their column
-		// widths / drop rules to the new terminal size. Sized child models
-		// re-render with the right number of cells on the next View() call.
+		// widths / drop rules to the new terminal size. Capture each
+		// child's returned Cmd so the spinner tick chain (scheduled in
+		// the child's WindowSizeMsg handler) actually reaches the
+		// Bubbletea runtime — without this the loading spinner sits on
+		// its first frame forever.
+		var cmds []tea.Cmd
 		for s, child := range m.screens {
-			updated, _ := child.Update(msg)
+			updated, c := child.Update(msg)
 			m.screens[s] = updated
+			if c != nil {
+				cmds = append(cmds, c)
+			}
 		}
 		// Bubbletea always emits an initial WindowSizeMsg at startup so
 		// this is the natural place to kick off the one-shot /me probe
 		// (issue #124) AND the first status.okta.com poll (issue
 		// #190 v0.2.2). Both fire at most once per session — the
 		// status probe self-reschedules every 5min via tick.
-		var cmds []tea.Cmd
 		if c := m.kickPrincipalFetch(); c != nil {
 			cmds = append(cmds, c)
 		}
@@ -1808,6 +1814,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, openHelpCmd()
 		case "q":
 			return m, quitConfirmCmd()
+		case "R":
+			// Global "refresh active screen" — emits the shared
+			// RefreshScreenMsg the active list / detail consumes as
+			// an out-of-band re-fetch trigger. Help advertised this
+			// since v0.2.0; the wiring was simply missing until now.
+			return m, refreshScreenCmd()
 		case "~":
 			// Global Okta API timeline overlay. Disabled when no
 			// recorder was wired (e.g. tests).

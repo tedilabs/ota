@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -101,6 +102,18 @@ func NewWithClock(dir string, ringSize int, now time.Time) (*Recorder, error) {
 	if err := pruneOlderThan(dir, now, RetentionDays); err != nil {
 		// Pruning failure is not fatal — log and keep going.
 		_ = err
+	}
+	// Hydrate the ring with the most recent entries from prior
+	// sessions so the `~` overlay carries history across restarts.
+	if loaded, maxSeq := loadRingFromDisk(dir, now, ringSize); len(loaded) > 0 {
+		copy(r.ring, loaded)
+		if len(loaded) >= ringSize {
+			r.full = true
+			r.head = 0
+		} else {
+			r.head = len(loaded)
+		}
+		r.seq.Store(maxSeq)
 	}
 	return r, nil
 }
@@ -215,6 +228,93 @@ func (r *Recorder) writeLocked(e Entry) error {
 		return err
 	}
 	return r.writer.Flush()
+}
+
+// loadRingFromDisk reads up to ringSize most recent entries from the
+// retained NDJSON files (newest day first, oldest within each file
+// last so chronological order is preserved). Returns the populated
+// slice plus the highest SeqID encountered so the recorder can
+// continue numbering past restarts. Files older than RetentionDays
+// are skipped — pruneOlderThan will delete them lazily.
+func loadRingFromDisk(dir string, now time.Time, ringSize int) (entries []Entry, maxSeq uint64) {
+	dirEntries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0
+	}
+	cutoff := now.UTC().AddDate(0, 0, -RetentionDays)
+	type dated struct {
+		name string
+		date time.Time
+	}
+	files := make([]dated, 0, len(dirEntries))
+	for _, ent := range dirEntries {
+		if ent.IsDir() {
+			continue
+		}
+		name := ent.Name()
+		if !strings.HasPrefix(name, "api-") || !strings.HasSuffix(name, ".ndjson") {
+			continue
+		}
+		datePart := strings.TrimSuffix(strings.TrimPrefix(name, "api-"), ".ndjson")
+		t, err := time.Parse("2006-01-02", datePart)
+		if err != nil || t.Before(cutoff) {
+			continue
+		}
+		files = append(files, dated{name: name, date: t})
+	}
+	// Newest day first — we walk back through history filling the
+	// ring, then reverse so the returned slice reads oldest → newest.
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].date.After(files[j].date)
+	})
+
+	collected := make([]Entry, 0, ringSize)
+	for _, f := range files {
+		if len(collected) >= ringSize {
+			break
+		}
+		path := filepath.Join(dir, f.name)
+		dayEntries, dayMax := readNDJSONFile(path)
+		if dayMax > maxSeq {
+			maxSeq = dayMax
+		}
+		// Within a single day file, oldest is first. We want the
+		// ringSize most-recent entries overall, so prepend the day's
+		// entries in reverse and stop once full.
+		for i := len(dayEntries) - 1; i >= 0 && len(collected) < ringSize; i-- {
+			collected = append(collected, dayEntries[i])
+		}
+	}
+	// `collected` is currently newest-first because we walked days +
+	// per-day entries in reverse. Flip back to oldest-first so the
+	// ring's chronological semantics match Record() ordering.
+	for i, j := 0, len(collected)-1; i < j; i, j = i+1, j-1 {
+		collected[i], collected[j] = collected[j], collected[i]
+	}
+	return collected, maxSeq
+}
+
+// readNDJSONFile parses an api-YYYY-MM-DD.ndjson file. Lines that
+// fail to decode are skipped silently — corrupt entries shouldn't
+// take the recorder down.
+func readNDJSONFile(path string) (entries []Entry, maxSeq uint64) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0
+	}
+	defer f.Close()
+	dec := json.NewDecoder(f)
+	for {
+		var e Entry
+		if err := dec.Decode(&e); err != nil {
+			break
+		}
+		if e.SeqID > maxSeq {
+			maxSeq = e.SeqID
+		}
+		entries = append(entries, e)
+	}
+	return entries, maxSeq
 }
 
 // pruneOlderThan deletes api-*.ndjson files in dir whose date stamp

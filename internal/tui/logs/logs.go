@@ -473,19 +473,35 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case followTickMsg:
 		// Stale tick — operator toggled follow off and back on, or
 		// changed the time range. Drop the tick and let the new
-		// generation's tick chain take over.
+		// generation's tick chain take over. Don't reschedule:
+		// the active chain will continue to advance on its own
+		// generation, otherwise we'd accumulate parallel chains
+		// every time scheduleFollowTickCmd was called from an
+		// outer batch (Init / Q+Enter / F+Enter / Esc-clear paths).
 		if msg.gen != m.followGen || !m.follow {
 			return m, nil
+		}
+		// Pause the auto-fetch while the operator is actively
+		// browsing older entries (cursor not parked on the freshest
+		// row). Each j/k or k-from-row-0 navigation is a signal
+		// that the operator is reading something specific — pulling
+		// new rows underneath them resets focus and bumps the rate
+		// limit for no benefit. Resume fetching as soon as the
+		// cursor returns to the bottom. Mirrors k9s' "pause tail
+		// while scrolling" behavior.
+		if !m.followCursorAtTail() {
+			return m, m.scheduleFollowTickCmd()
 		}
 		m.fetching = true
 		return m, m.followFetchCmd()
 	case followFetchedMsg:
 		m.fetching = false
 		if msg.gen != m.followGen || !m.follow {
-			// Stale result — schedule the next tick if follow is
-			// still on so the loop resumes naturally on the
-			// current generation.
-			return m, m.scheduleFollowTickCmd()
+			// Stale result — drop on the floor. The active chain
+			// is responsible for the next tick; do NOT reschedule
+			// here or we double the in-flight tick chains every
+			// time followGen is bumped.
+			return m, nil
 		}
 		// Issue #179 v0.1.17 — dedupe by UUID before appending. The
 		// since-cursor advance is best-effort: Okta's `since` is
@@ -1015,6 +1031,22 @@ func (m SearchModel) View() string {
 // service being wired (#F3 v0.2.5).
 func (m SearchModel) canLoadOlder() bool {
 	return m.nextPageAfter != "" && m.deps.Service != nil
+}
+
+// followCursorAtTail reports whether the cursor is parked on the
+// most recent visible row — the only state where pulling new
+// events underneath it is non-disruptive. Detail-mode is treated
+// as "not tail" because the operator is reading a specific event
+// and any underlying buffer change would shuffle their context.
+func (m SearchModel) followCursorAtTail() bool {
+	if m.opened || m.filtering || m.queryEditing || m.serverFilterEditing {
+		return false
+	}
+	rows := m.visible()
+	if len(rows) == 0 {
+		return true
+	}
+	return m.cursor == len(rows)-1
 }
 
 // sentinelRow is the cursor index assigned to the load-older

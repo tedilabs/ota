@@ -26,8 +26,13 @@ import (
 // principalUsersPort is a UsersPort double whose Get("me") returns a
 // fixed Okta-shaped principal. List remains empty so the active screen
 // stays free of seeded rows that could obscure the chrome assertion.
+// meCalls counts Get("me") calls so OnlyFiresOnce can assert the latch
+// without relying on the shape of the WindowSizeMsg return value (the
+// App Shell now batches child spinner-tick Cmds in alongside the
+// principal probe Cmd).
 type principalUsersPort struct {
-	me domain.User
+	me      domain.User
+	meCalls int
 }
 
 func (p *principalUsersPort) List(_ context.Context, _ domain.UsersQuery) (domain.Iterator[domain.User], error) {
@@ -35,6 +40,7 @@ func (p *principalUsersPort) List(_ context.Context, _ domain.UsersQuery) (domai
 }
 func (p *principalUsersPort) Get(_ context.Context, id string) (domain.User, error) {
 	if id == "me" {
+		p.meCalls++
 		return p.me, nil
 	}
 	return domain.User{}, domain.ErrNotFound
@@ -90,21 +96,45 @@ func Test_AppShell_PrincipalProbe_RendersInChrome(t *testing.T) {
 		UsersPort: port,
 	})
 
-	// Drive the runtime: WindowSizeMsg fires the /me probe, its Cmd
-	// produces principalLoadedMsg, which Update folds into the model.
+	// Drive the runtime: WindowSizeMsg returns a tea.Batch holding
+	// the /me probe alongside child spinner-tick Cmds. Calling the
+	// batch and walking each sub-Cmd gives us the principalLoadedMsg
+	// Update folds back into the model.
 	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = updated.(app.Model)
 	require.NotNil(t, cmd, "WindowSizeMsg must kick off the /me probe Cmd")
-	msg := cmd()
-	require.NotNil(t, msg, "/me probe must produce a follow-up Msg")
-	updated, _ = m.Update(msg)
-	m = updated.(app.Model)
+	for _, sub := range invokeBatch(cmd) {
+		if sub == nil {
+			continue
+		}
+		if next := sub(); next != nil {
+			updated, _ = m.Update(next)
+			m = updated.(app.Model)
+		}
+	}
 
 	view := testfx.StripANSI(m.View())
 	assert.Contains(t, view, "admin@acme.com",
 		"chrome TitleBar must surface the authenticated principal")
 	assert.Contains(t, view, "[prod]",
 		"chrome TitleBar must keep the env badge after principal lands")
+}
+
+// invokeBatch unwraps a tea.Cmd into its constituent sub-cmds. When
+// the cmd is a tea.Batch, the call returns a tea.BatchMsg ([]tea.Cmd);
+// otherwise the whole cmd is returned in a single-element slice so
+// callers can drive it the same way regardless of wrapping.
+func invokeBatch(cmd tea.Cmd) []tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		return []tea.Cmd(batch)
+	}
+	// Non-batch — wrap the original cmd so the caller's loop still
+	// runs once.
+	return []tea.Cmd{func() tea.Msg { return msg }}
 }
 
 // Test_AppShell_PrincipalProbe_OnlyFiresOnce — the latch must guard the
@@ -128,14 +158,33 @@ func Test_AppShell_PrincipalProbe_OnlyFiresOnce(t *testing.T) {
 		UsersPort: port,
 	})
 
-	// 1st WindowSizeMsg → Cmd present.
+	// 1st WindowSizeMsg fires the /me probe via the App Shell's
+	// kickPrincipalFetch latch. Drive each sub-Cmd in the returned
+	// batch so the port observes the actual call.
 	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = updated.(app.Model)
 	require.NotNil(t, cmd, "first WindowSizeMsg must fire /me")
+	for _, sub := range invokeBatch(cmd) {
+		if sub != nil {
+			_ = sub() // discard the message — we only care about the side effect
+		}
+	}
+	require.Equal(t, 1, port.meCalls,
+		"first WindowSizeMsg must fire /me exactly once")
 
-	// 2nd WindowSizeMsg → Cmd nil (latch held).
-	_, cmd2 := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	assert.Nil(t, cmd2, "subsequent WindowSizeMsg must NOT re-fire /me")
+	// 2nd WindowSizeMsg — latch should hold so /me does not fire
+	// again. Drive any returned cmds the same way and re-check the
+	// counter.
+	updated, cmd2 := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = updated.(app.Model)
+	for _, sub := range invokeBatch(cmd2) {
+		if sub != nil {
+			_ = sub()
+		}
+	}
+	require.Equal(t, 1, port.meCalls,
+		"subsequent WindowSizeMsg must NOT re-fire /me (latch held)")
+	_ = m
 }
 
 // Test_AppShell_PrincipalProbe_NoUsersPort — chrome stays clean when the
