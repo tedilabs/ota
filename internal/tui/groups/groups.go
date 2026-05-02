@@ -427,8 +427,23 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Sequence(tea.Println(m.View()), tea.Quit)
 	}
 	// Arrow keys map to Vim-style runes so the rune switch below
-	// handles both (issue #159).
-	msg = shared.NormalizeArrowKey(msg)
+	// handles both (issue #159). #F2 v0.2.5 — Up/Down only; Right
+	// stays as hScroll-right while `l` rune opens Logs.
+	if msg.Type == tea.KeyRight && !m.opened && !m.filtering {
+		specs := groupsColumnSpecs()
+		max := shared.MaxHScroll(specs, m.groupsInnerWidth(), 2)
+		if m.hScroll < max {
+			m.hScroll++
+		}
+		return m, nil
+	}
+	if msg.Type == tea.KeyLeft && !m.opened && !m.filtering {
+		if m.hScroll > 0 {
+			m.hScroll--
+		}
+		return m, nil
+	}
+	msg = shared.NormalizeArrowKeyVerticalOnly(msg)
 	// Detail mode (TUI_DESIGN §3.6 + §15.7): Esc returns to the list; Tab /
 	// Shift-Tab cycle through tabs; `r` toggles the Raw tab against the
 	// last-visited non-Raw tab.
@@ -629,11 +644,16 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "l":
+			// #F2 v0.2.5 — `l` jumps to Logs scoped to the cursor row's
+			// human-readable name. hScroll-right migrated to the Right
+			// arrow key (Vim-style symmetry with `h` for left preserved).
 			m.ggChord.Reset()
-			specs := groupsColumnSpecs()
-			max := shared.MaxHScroll(specs, m.groupsInnerWidth(), 2)
-			if m.hScroll < max {
-				m.hScroll++
+			if g := m.selected(); g != nil {
+				q := g.Profile.Name
+				if q == "" {
+					q = g.ID
+				}
+				return m, openLogsForCmd(q)
 			}
 			return m, nil
 		case "N":
@@ -1537,6 +1557,12 @@ func openUserDetailCmd(id string) tea.Cmd {
 
 func openAppDetailCmd(id string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenAppDetailMsg{ID: id} }
+}
+
+// openLogsForCmd asks the App Shell to open Logs scoped to a query
+// (#F2 v0.2.5).
+func openLogsForCmd(q string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenLogsMsg{Query: q} }
 }
 
 var (

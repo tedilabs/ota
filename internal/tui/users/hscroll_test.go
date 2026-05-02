@@ -65,7 +65,7 @@ func Test_UsersList_LStepsLeftColumnsOffViewport(t *testing.T) {
 		"precondition: LOGIN column (leftmost in #145 lineup) visible before scroll")
 	require.Contains(t, before, "alice@acme.com")
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	mdl, ok := updated.(users.ListModel)
 	require.True(t, ok)
 
@@ -136,7 +136,7 @@ func Test_UsersList_LClampsAtMax(t *testing.T) {
 	})
 
 	for i := 0; i < 20; i++ {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 		mdl, ok := updated.(users.ListModel)
 		require.True(t, ok)
 		m = mdl
@@ -167,7 +167,7 @@ func Test_UsersList_NoScrollWhenNaturalFits(t *testing.T) {
 	})
 
 	before := testfx.StripANSI(m.View())
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	mdl, ok := updated.(users.ListModel)
 	require.True(t, ok)
 	after := testfx.StripANSI(mdl.View())

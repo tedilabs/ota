@@ -29,6 +29,13 @@ type OpenAppDetailMsg struct{ ID string }
 // Members box drill-down and Log Detail actor drill-down.
 type OpenUserDetailMsg struct{ ID string }
 
+// OpenLogsMsg switches the active screen to Logs and pre-fills the
+// server-side query with `Query` so the operator lands on log events
+// mentioning that resource (#F2 v0.2.5). Emitted by every list /
+// detail screen on the `l` keypress; the resource passes its
+// human-readable identifier (login / name / label).
+type OpenLogsMsg struct{ Query string }
+
 // ActionItem is a single row in the resource action menu (issue
 // #175 v0.1.15). Each screen exposes Actions() []ActionItem; the
 // App Shell builds the picker around them and dispatches RunAction

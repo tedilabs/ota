@@ -139,6 +139,12 @@ func (m SearchModel) Fetching() bool { return m.fetching }
 // v0.2.4).
 type logsSpinnerTickMsg struct{}
 
+// OpenForQueryMsg routes a cross-screen `l`-shortcut request from the
+// App Shell into the Logs list (#F2 v0.2.5). The model overwrites
+// m.query with the supplied text and re-fetches the history window
+// scoped to that query. Empty Query just re-fetches without scope.
+type OpenForQueryMsg struct{ Query string }
+
 // NewSearchModel constructs a SearchModel with defaults (tail off, follow on,
 // poll interval 10s per issue #179 v0.1.17). When deps.RefreshInterval is set,
 // it overrides the default. Falls back to deps.Tail's adaptive interval when
@@ -344,6 +350,24 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.fetching = true
 		return m, fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query)
+	case OpenForQueryMsg:
+		// #F2 v0.2.5 — `l` shortcut from another resource. Overwrite
+		// the active query, reset cursor, and re-fetch the history
+		// window scoped to the new query.
+		m.query = strings.TrimSpace(msg.Query)
+		m.queryInput = ""
+		m.queryEditing = false
+		m.cursor = 0
+		m.viewportTop = 0
+		m.followGen++
+		if m.deps.Service == nil {
+			return m, nil
+		}
+		m.fetching = true
+		return m, tea.Batch(
+			fetchHistoryWindowQueryCmd(m.deps.Service, m.timeRange, m.query),
+			m.scheduleFollowTickCmd(),
+		)
 	case followTickMsg:
 		// Stale tick — operator toggled follow off and back on, or
 		// changed the time range. Drop the tick and let the new

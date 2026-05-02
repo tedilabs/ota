@@ -411,6 +411,7 @@ func generalHelpEntries() []helpEntry {
 		{"/", "incremental search (lists)"},
 		{"?", "this help"},
 		{"a", "resource action menu (issue #175)"},
+		{"l", "open Logs scoped to current resource (#F2)"},
 		{"Esc", "cancel mode / close overlay"},
 		{"q", "close screen / quit (with confirm)"},
 		{"Ctrl-c", "soft quit (tail confirm)"},

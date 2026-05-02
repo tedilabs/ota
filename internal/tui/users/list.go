@@ -593,6 +593,17 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyRunes:
 			switch string(msg.Runes) {
+			case "l":
+				// #F2 v0.2.5 — `l` from User Detail jumps to Logs
+				// scoped to this user's login.
+				q := m.detailUser.Profile.Login
+				if q == "" {
+					q = m.detailUser.ID
+				}
+				if q != "" {
+					return m, openLogsForCmd(q)
+				}
+				return m, nil
 			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 				m.detailLine = 0
@@ -784,15 +795,29 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.clampedCursor(), nil
 	}
 
-	// Horizontal scroll (issue #122 + #159). `l` / Right advance the
-	// column slice; `h` / Left retreat. Clamped to [0, MaxHScroll].
-	if msg.Type == tea.KeyRight || (msg.Type == tea.KeyRunes && string(msg.Runes) == "l") {
+	// Horizontal scroll (issue #122 + #159). Arrow keys only —
+	// lowercase `l` is reserved for the cross-resource logs jump
+	// (#F2 v0.2.5); `h` stays for hScroll-left so Vim-style
+	// retreat still works.
+	if msg.Type == tea.KeyRight {
 		m.hScroll = m.clampHScroll(m.hScroll + 1)
 		return m, nil
 	}
 	if msg.Type == tea.KeyLeft || (msg.Type == tea.KeyRunes && string(msg.Runes) == "h") {
 		if m.hScroll > 0 {
 			m.hScroll--
+		}
+		return m, nil
+	}
+	// #F2 v0.2.5 — `l` jumps to Logs scoped to the cursor row's
+	// human-readable identifier (login).
+	if msg.Type == tea.KeyRunes && string(msg.Runes) == "l" {
+		if u := m.cursorUser(); u != nil {
+			q := u.Profile.Login
+			if q == "" {
+				q = u.ID
+			}
+			return m, openLogsForCmd(q)
 		}
 		return m, nil
 	}
@@ -2308,6 +2333,23 @@ func fetchUserAppLinksCmd(port domain.UsersPort, userID string) tea.Cmd {
 // requests the App Shell routes to the Groups / Apps screens (issue
 // #171). The shared.OpenGroup/AppDetailMsg types live in the shared
 // package to keep the users → app import boundary clean.
+// cursorUser returns the visible row at the current cursor or the
+// open detail's user. Used by the `l` shortcut to fetch the actor
+// identifier (#F2 v0.2.5).
+func (m ListModel) cursorUser() *domain.User {
+	if m.opened {
+		u := m.detailUser
+		return &u
+	}
+	return m.selected()
+}
+
+// openLogsForCmd asks the App Shell to switch to Logs and pre-fill
+// the server-side query. (#F2 v0.2.5)
+func openLogsForCmd(q string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenLogsMsg{Query: q} }
+}
+
 func openGroupDetailCmd(id string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenGroupDetailMsg{ID: id} }
 }

@@ -1,27 +1,27 @@
-╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Help · Users List                                                                                                                                                                             │
-├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Press Esc to close                                                                                                                                                                            │
-│                                                                                                                                                                                               │
-│ ── Resource ──                                │ ── General ──                              │ ── Navigation ──                             │ ── Palette ──                                     │
-│ Enter / d        open detail (all attributes) │ :       open command palette               │ j / k            cursor down / up            │ :users            Users list                      │
-│ Shift+S          sort by STATUS               │ /       incremental search (lists)         │ h / l            scroll columns left / right │ :groups           Groups list                     │
-│ Shift+N          sort by NAME (login)         │ ?       this help                          │ gg / G           top / bottom                │ :group-rules      Group Rules list                │
-│ Shift+L          sort by LAST LOGIN           │ a       resource action menu (issue #175)  │ Ctrl-d / Ctrl-u  half-page down / up         │ :policies         Policies (with type picker)     │
-│ Shift+C          sort by CREATED / CHANGED    │ Esc     cancel mode / close overlay        │ Ctrl-f / Ctrl-b  page down / up              │ :apps             Apps (with type picker)         │
-│ :reset-password  send reset-password email    │ q       close screen / quit (with confirm) │                                              │ :authenticator    Authenticators (factor methods) │
-│ :unlock          clear LOCKED_OUT state       │ Ctrl-c  soft quit (tail confirm)           │                                              │ :logs             System Log                      │
-│ :reset-mfa       remove enrolled MFA factors  │ Ctrl-l  force redraw                       │                                              │ :saml-app         SAML apps                       │
-│                                               │ R       refresh (cache invalidate)         │                                              │ :oidc-app         OIDC apps                       │
-│                                               │ :quit   quit ota                           │                                              │ :okta-sign-on     Okta Sign-On policies           │
-│                                               │                                            │                                              │ :password-policy  Password policies               │
-│                                               │                                            │                                              │ :reset-password   trigger Reset Password          │
-│                                               │                                            │                                              │ :unlock           Unlock the selected user        │
-│                                               │                                            │                                              │ :reset-mfa        Reset MFA factors               │
-│                                               │                                            │                                              │ :unmask <fld>     reveal a masked detail field    │
-│                                               │                                            │                                              │ :mask             re-mask all PII fields          │
-│                                               │                                            │                                              │ :help             open this overlay               │
-│                                               │                                            │                                              │ :quit             quit ota                        │
-│                                                                                                                                                                                               │
-│ <Esc> close · </> filter                                                                                                                                                                      │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Help · Users List                                                                                                                                                                                     │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Press Esc to close                                                                                                                                                                                    │
+│                                                                                                                                                                                                       │
+│ ── Resource ──                                │ ── General ──                                      │ ── Navigation ──                             │ ── Palette ──                                     │
+│ Enter / d        open detail (all attributes) │ :       open command palette                       │ j / k            cursor down / up            │ :users            Users list                      │
+│ Shift+S          sort by STATUS               │ /       incremental search (lists)                 │ h / l            scroll columns left / right │ :groups           Groups list                     │
+│ Shift+N          sort by NAME (login)         │ ?       this help                                  │ gg / G           top / bottom                │ :group-rules      Group Rules list                │
+│ Shift+L          sort by LAST LOGIN           │ a       resource action menu (issue #175)          │ Ctrl-d / Ctrl-u  half-page down / up         │ :policies         Policies (with type picker)     │
+│ Shift+C          sort by CREATED / CHANGED    │ l       open Logs scoped to current resource (#F2) │ Ctrl-f / Ctrl-b  page down / up              │ :apps             Apps (with type picker)         │
+│ :reset-password  send reset-password email    │ Esc     cancel mode / close overlay                │                                              │ :authenticator    Authenticators (factor methods) │
+│ :unlock          clear LOCKED_OUT state       │ q       close screen / quit (with confirm)         │                                              │ :logs             System Log                      │
+│ :reset-mfa       remove enrolled MFA factors  │ Ctrl-c  soft quit (tail confirm)                   │                                              │ :saml-app         SAML apps                       │
+│                                               │ Ctrl-l  force redraw                               │                                              │ :oidc-app         OIDC apps                       │
+│                                               │ R       refresh (cache invalidate)                 │                                              │ :okta-sign-on     Okta Sign-On policies           │
+│                                               │ :quit   quit ota                                   │                                              │ :password-policy  Password policies               │
+│                                               │                                                    │                                              │ :reset-password   trigger Reset Password          │
+│                                               │                                                    │                                              │ :unlock           Unlock the selected user        │
+│                                               │                                                    │                                              │ :reset-mfa        Reset MFA factors               │
+│                                               │                                                    │                                              │ :unmask <fld>     reveal a masked detail field    │
+│                                               │                                                    │                                              │ :mask             re-mask all PII fields          │
+│                                               │                                                    │                                              │ :help             open this overlay               │
+│                                               │                                                    │                                              │ :quit             quit ota                        │
+│                                                                                                                                                                                                       │
+│ <Esc> close · </> filter                                                                                                                                                                              │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

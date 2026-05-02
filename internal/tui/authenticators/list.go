@@ -236,8 +236,18 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailTab = shared.PrevTab(m.detailTab)
 			return m, nil
 		case tea.KeyRunes:
-			if string(msg.Runes) == "r" {
+			switch string(msg.Runes) {
+			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
+			case "l":
+				// #F2 v0.2.5 — open Logs from authenticator detail.
+				q := m.detail.Name
+				if q == "" {
+					q = string(m.detail.Type)
+				}
+				if q != "" {
+					return m, openLogsForCmd(q)
+				}
 			}
 			return m, nil
 		}
@@ -300,9 +310,27 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.filtering = true
 			m.filter = ""
+		case "l":
+			// #F2 v0.2.5 — open Logs scoped to the authenticator's
+			// human-readable name.
+			if m.cursor >= 0 && m.cursor < len(rows) {
+				q := rows[m.cursor].Name
+				if q == "" {
+					q = string(rows[m.cursor].Type)
+				}
+				if q != "" {
+					return m, openLogsForCmd(q)
+				}
+			}
 		}
 	}
 	return m, nil
+}
+
+// openLogsForCmd asks the App Shell to open Logs scoped to a query
+// (#F2 v0.2.5).
+func openLogsForCmd(q string) tea.Cmd {
+	return func() tea.Msg { return shared.OpenLogsMsg{Query: q} }
 }
 
 func (m ListModel) now() time.Time {

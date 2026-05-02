@@ -546,6 +546,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, fwd := child.Update(users.OpenDetailByIDMsg{ID: msg.ID})
 		m.screens[ScreenUsers] = updated
 		return m, tea.Batch(cmd, fwd)
+	case shared.OpenLogsMsg:
+		// #F2 v0.2.5 — `l` shortcut from any resource. Switch to
+		// Logs and forward an OpenForQueryMsg so the screen pre-fills
+		// the server-side query with the resource's identifier.
+		m.active = ScreenLogs
+		m.overlay = OverlayNone
+		var cmd tea.Cmd
+		m, cmd = m.ensureScreen(ScreenLogs)
+		child := m.screens[ScreenLogs]
+		updated, fwd := child.Update(logs.OpenForQueryMsg{Query: msg.Query})
+		m.screens[ScreenLogs] = updated
+		return m, tea.Batch(cmd, fwd)
 	case OpenPolicyTypeMsg:
 		// Issue #165 — replace the Policies wrapper with one scoped
 		// to the requested type so the picker doesn't render
