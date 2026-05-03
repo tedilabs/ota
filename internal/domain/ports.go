@@ -111,6 +111,37 @@ type AuthenticatorsPort interface {
 	Get(ctx context.Context, id string) (Authenticator, error)
 }
 
+// NetworkZonesPort is the outbound boundary for Okta Network Zones
+// (/api/v1/zones). Read-only in MVP — operators inspect the
+// configured IP / dynamic boundaries that policies reference.
+type NetworkZonesPort interface {
+	List(ctx context.Context) ([]NetworkZone, error)
+	Get(ctx context.Context, id string) (NetworkZone, error)
+}
+
+// AuthorizationServersPort is the outbound boundary for Okta Custom
+// Authorization Servers (/api/v1/authorizationServers). Read-only in
+// MVP.
+type AuthorizationServersPort interface {
+	List(ctx context.Context) ([]AuthorizationServer, error)
+	Get(ctx context.Context, id string) (AuthorizationServer, error)
+}
+
+// APITokensPort is the outbound boundary for Okta API Tokens
+// (/api/v1/api-tokens). Read-only in MVP — minting / revoking is
+// out of scope for the inspect-only surface.
+type APITokensPort interface {
+	List(ctx context.Context) ([]APIToken, error)
+}
+
+// AdministratorsPort is the outbound boundary for Okta IAM admin
+// role assignments. List flattens
+// /api/v1/iam/assignees/users + per-user /api/v1/users/{id}/roles
+// into one (user, role) pair per row.
+type AdministratorsPort interface {
+	List(ctx context.Context) ([]Administrator, error)
+}
+
 // LogsPort is the outbound boundary for Okta System Logs.
 // Search is the iterator-style entrypoint used by tail mode (auto-
 // follows Link: rel="next" until exhausted). SearchPage is the

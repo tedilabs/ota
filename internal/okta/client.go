@@ -147,6 +147,28 @@ func (c *Client) Authenticators() *AuthenticatorsAdapter {
 	return &AuthenticatorsAdapter{client: c}
 }
 
+// NetworkZones returns a NetworkZonesAdapter bound to this client.
+func (c *Client) NetworkZones() *NetworkZonesAdapter {
+	return &NetworkZonesAdapter{client: c}
+}
+
+// AuthorizationServers returns an AuthorizationServersAdapter bound
+// to this client.
+func (c *Client) AuthorizationServers() *AuthorizationServersAdapter {
+	return &AuthorizationServersAdapter{client: c}
+}
+
+// APITokens returns an APITokensAdapter bound to this client.
+func (c *Client) APITokens() *APITokensAdapter {
+	return &APITokensAdapter{client: c}
+}
+
+// Administrators returns an AdministratorsAdapter bound to this
+// client.
+func (c *Client) Administrators() *AdministratorsAdapter {
+	return &AdministratorsAdapter{client: c}
+}
+
 // doGet performs a GET, applying auth, rate-limit observation, and 429 retry.
 // The caller owns the returned response body and MUST close it.
 func (c *Client) doGet(ctx context.Context, urlStr string) (*http.Response, error) {

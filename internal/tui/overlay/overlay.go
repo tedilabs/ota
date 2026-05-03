@@ -18,6 +18,8 @@ import (
 // (REQ-U02 AC-1).
 var paletteHints = []string{
 	":users", ":groups", ":grouprules", ":policies", ":logs",
+	":apps", ":authenticators",
+	":network-zones", ":authorization-servers", ":api-tokens", ":administrators",
 	":profile", ":search", ":filter", ":unmask", ":mask", ":raw",
 	":refresh", ":about", ":ratelimit", ":errors", ":healthcheck",
 	":apilog", ":debug", ":help", ":quit",

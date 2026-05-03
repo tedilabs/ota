@@ -8,6 +8,12 @@
 │   :grouprules                                            │
 │   :policies                                              │
 │   :logs                                                  │
+│   :apps                                                  │
+│   :authenticators                                        │
+│   :network-zones                                         │
+│   :authorization-servers                                 │
+│   :api-tokens                                            │
+│   :administrators                                        │
 │   :profile                                               │
 │   :search                                                │
 │   :filter                                                │

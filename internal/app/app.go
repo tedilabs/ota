@@ -23,8 +23,12 @@ import (
 	"github.com/tedilabs/ota/internal/tui/overlay"
 	"github.com/tedilabs/ota/internal/tui/policies"
 	"github.com/tedilabs/ota/internal/tui/rules"
+	"github.com/tedilabs/ota/internal/tui/admins"
+	"github.com/tedilabs/ota/internal/tui/apitokens"
+	"github.com/tedilabs/ota/internal/tui/authservers"
 	"github.com/tedilabs/ota/internal/tui/shared"
 	"github.com/tedilabs/ota/internal/tui/users"
+	"github.com/tedilabs/ota/internal/tui/zones"
 	"github.com/tedilabs/ota/internal/version"
 )
 
@@ -39,6 +43,10 @@ const (
 	ScreenLogs
 	ScreenApps
 	ScreenAuthenticators
+	ScreenNetworkZones
+	ScreenAuthorizationServers
+	ScreenAPITokens
+	ScreenAdministrators
 	ScreenUserDetail
 	ScreenGroupDetail
 	ScreenRuleDetail
@@ -63,6 +71,14 @@ func (s Screen) String() string {
 		return "apps"
 	case ScreenAuthenticators:
 		return "authenticators"
+	case ScreenNetworkZones:
+		return "network-zones"
+	case ScreenAuthorizationServers:
+		return "authorization-servers"
+	case ScreenAPITokens:
+		return "api-tokens"
+	case ScreenAdministrators:
+		return "administrators"
 	case ScreenUserDetail:
 		return "user-detail"
 	case ScreenGroupDetail:
@@ -192,13 +208,17 @@ type Deps struct {
 
 	// Ports are injected raw so child Screen Models can be constructed by
 	// the App Shell without exporting fields from the service Bundle.
-	UsersPort          domain.UsersPort
-	GroupsPort         domain.GroupsPort
-	GroupRulesPort     domain.GroupRulesPort
-	PoliciesPort       domain.PoliciesPort
-	LogsPort           domain.LogsPort
-	AppsPort           domain.AppsPort
-	AuthenticatorsPort domain.AuthenticatorsPort
+	UsersPort                domain.UsersPort
+	GroupsPort               domain.GroupsPort
+	GroupRulesPort           domain.GroupRulesPort
+	PoliciesPort             domain.PoliciesPort
+	LogsPort                 domain.LogsPort
+	AppsPort                 domain.AppsPort
+	AuthenticatorsPort       domain.AuthenticatorsPort
+	NetworkZonesPort         domain.NetworkZonesPort
+	AuthorizationServersPort domain.AuthorizationServersPort
+	APITokensPort            domain.APITokensPort
+	AdministratorsPort       domain.AdministratorsPort
 
 	// APIRecorder is the cross-session NDJSON capture of every Okta
 	// HTTP round-trip; the `~` overlay reads its in-memory snapshot
@@ -659,6 +679,24 @@ func screenFromName(name string) (Screen, bool) {
 		"auth", "auths",
 		"factor", "factors":
 		return ScreenAuthenticators, true
+	case "zone", "zones",
+		"network-zone", "network-zones",
+		"network_zone", "network_zones",
+		"netzone", "netzones":
+		return ScreenNetworkZones, true
+	case "authorization-server", "authorization-servers",
+		"authorization_server", "authorization_servers",
+		"authserver", "authservers",
+		"as":
+		return ScreenAuthorizationServers, true
+	case "api-token", "api-tokens",
+		"api_token", "api_tokens",
+		"apitoken", "apitokens",
+		"token", "tokens":
+		return ScreenAPITokens, true
+	case "administrator", "administrators",
+		"admin", "admins":
+		return ScreenAdministrators, true
 	}
 	return 0, false
 }
@@ -1742,6 +1780,50 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 	case ScreenAuthenticators:
 		mdl := authenticators.NewListModel(authenticators.Deps{
 			Port:            m.deps.AuthenticatorsPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
+		})
+		return mdl, mdl.Init()
+	case ScreenNetworkZones:
+		mdl := zones.New(zones.Deps{
+			Port:            m.deps.NetworkZonesPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
+		})
+		return mdl, mdl.Init()
+	case ScreenAuthorizationServers:
+		mdl := authservers.New(authservers.Deps{
+			Port:            m.deps.AuthorizationServersPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
+		})
+		return mdl, mdl.Init()
+	case ScreenAPITokens:
+		mdl := apitokens.New(apitokens.Deps{
+			Port:            m.deps.APITokensPort,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
+		})
+		return mdl, mdl.Init()
+	case ScreenAdministrators:
+		mdl := admins.New(admins.Deps{
+			Port:            m.deps.AdministratorsPort,
 			Clock:           m.deps.Clock,
 			Logger:          m.deps.Logger,
 			Keys:            m.deps.Keys,
