@@ -2080,8 +2080,16 @@ func paletteCommandPool() []string {
 		"swa-app",
 		"scim-app",
 		"authenticator",
+		// Read-only resource surfaces added in v0.2.5+. Each has a
+		// matching screenFromName branch + Spec under
+		// internal/tui/<pkg>.
+		"network-zone",
+		"authorization-server",
+		"api-token",
+		"administrator",
 		"unmask", "mask",
 		"reset-password", "unlock", "reset-mfa",
+		"apilog",
 		"help", "quit",
 	}
 }
