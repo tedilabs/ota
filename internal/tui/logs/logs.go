@@ -190,9 +190,17 @@ func NewSearchModel(deps Deps) SearchModel {
 		interval = deps.Tail.PollInterval()
 	}
 	m := SearchModel{
-		deps:         deps,
-		events:       deps.InitialEvents,
-		follow:       true,
+		deps:   deps,
+		events: deps.InitialEvents,
+		// Auto-follow is OFF by default — pressing `f` opts in. The
+		// Logs screen is primarily an investigation surface
+		// (operators reading specific events), so the historical
+		// "fetch every 10s underneath them" behavior was burning
+		// rate-limit budget for no benefit. Operators monitoring
+		// live activity press `f` to flip auto-follow on; the
+		// scheduleFollowTickCmd chain only starts when follow is
+		// true. (#F6 v0.2.5)
+		follow:       false,
 		pollInterval: interval,
 		width:        deps.Width,
 		height:       deps.Height,

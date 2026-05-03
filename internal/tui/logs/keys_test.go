@@ -64,12 +64,12 @@ func Test_LogsSearch_F_TogglesFollowVisibly(t *testing.T) {
 		Clock:         clock.NewFake(time.Now()),
 	})
 
-	require.True(t, hasLogsBadge(m, "FOLLOW", ""),
-		"default state must publish a [FOLLOW] chrome status badge")
+	require.True(t, hasLogsBadge(m, "FOLLOW", "off"),
+		"default state must publish [FOLLOW: off] — auto-follow is opt-in (#F6 v0.2.5)")
 
 	m = runKey(t, m, 'f')
-	assert.True(t, hasLogsBadge(m, "FOLLOW", "off"),
-		"`f` must flip the badge to [FOLLOW: off]")
+	assert.True(t, hasLogsBadge(m, "FOLLOW", ""),
+		"`f` must flip the badge to [FOLLOW] (on)")
 }
 
 func Test_LogsSearch_S_TogglesTailVisibly(t *testing.T) {
