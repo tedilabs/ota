@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tedilabs/ota/internal/apilog"
 	"github.com/tedilabs/ota/internal/tui/shared"
@@ -240,13 +241,45 @@ func (m APIRecorderModel) cursorEntry() apilog.Entry {
 
 // timelineLines returns the timeline pane's rendered rows — used
 // both by the View and by the BodyCursor when the timeline pane is
-// focused (so j/k/g/G/v/V/y work uniformly).
+// focused (so j/k/g/G/v/V/y work uniformly). Yanked rows carry the
+// raw cell text, no ANSI styling.
 func (m APIRecorderModel) timelineLines() []string {
 	out := make([]string, len(m.entries))
+	pathWidth := m.timelinePathWidth()
 	for i, e := range m.entries {
-		out[i] = formatTimelineRow(e)
+		out[i] = formatTimelineRow(e, pathWidth)
 	}
 	return out
+}
+
+// timelinePathWidth returns the cells available for the PATH column
+// after subtracting the fixed columns + gutters. Mirrors the layout
+// math used by the header + render so they stay in lockstep.
+func (m APIRecorderModel) timelinePathWidth() int {
+	_, _, leftW, _, _, _, _ := m.layout()
+	return timelinePathWidthFor(leftW)
+}
+
+// Column widths for the timeline. Tuned so 3-digit status codes +
+// "DELETE" methods + "120ms"-class durations all align.
+const (
+	tlColTime     = 8 // HH:MM:SS
+	tlColMethod   = 7 // DELETE + space
+	tlColStatus   = 5 // " 200 " padded badge
+	tlColDuration = 8 // "999ms  " right-aligned
+	tlGutter      = 1 // 1-cell gutter between columns
+)
+
+// timelinePathWidthFor returns the dynamic PATH column width given
+// the timeline pane's total width. Caller passes the pane width so
+// the same formula drives header + data row layouts.
+func timelinePathWidthFor(paneWidth int) int {
+	const fixed = tlColTime + tlColMethod + tlColStatus + tlColDuration + 4*tlGutter
+	w := paneWidth - fixed
+	if w < 8 {
+		w = 8
+	}
+	return w
 }
 
 // View composes the 3-pane layout into a modal box. Width comes
@@ -300,25 +333,40 @@ func (m APIRecorderModel) layout() (width, height, leftW, rightW, innerW, innerH
 	return
 }
 
-// renderTimeline returns the left pane's rendered rows — windowed
-// around the timeline cursor and styled. When the timeline pane is
-// focused the cursor row + visual range get the RowCursor highlight;
-// otherwise the cursor is dimmed (Accent only) to indicate the
-// inspected entry without drawing focus away from the active pane.
+// renderTimeline returns the left pane's rendered rows — column
+// header at the top, windowed data rows below. When the timeline
+// pane is focused the cursor row + visual range get the RowCursor
+// highlight; otherwise the cursor stays Accent-tinted so the
+// operator can still see which entry the request/response panes are
+// reflecting. Status cells carry a per-class background tint
+// (2xx green / 4xx yellow / 5xx + ERR red) so the eye snaps to
+// non-2xx outcomes at a glance.
 func (m APIRecorderModel) renderTimeline(width, height int, tk shared.Tokens) string {
-	if len(m.entries) == 0 {
-		return tk.Muted.Render(shared.PadOrTruncateVisible("(no API calls captured yet)", width))
+	pathWidth := timelinePathWidthFor(width)
+	header := timelineHeader(pathWidth, tk)
+	headerWidth := shared.VisibleWidth(header)
+	if headerWidth < width {
+		header = header + strings.Repeat(" ", width-headerWidth)
 	}
-	// Window around the cursor.
+
+	if len(m.entries) == 0 {
+		empty := tk.Muted.Render(shared.PadOrTruncateVisible("(no API calls captured yet)", width))
+		return header + "\n" + empty
+	}
+	// Reserve 1 row for the header — the data window scrolls under it.
+	dataHeight := height - 1
+	if dataHeight < 1 {
+		dataHeight = 1
+	}
 	cursor := m.timelineCursor.Line
-	top := cursor - height/2
+	top := cursor - dataHeight/2
 	if top < 0 {
 		top = 0
 	}
-	end := top + height
+	end := top + dataHeight
 	if end > len(m.entries) {
 		end = len(m.entries)
-		top = end - height
+		top = end - dataHeight
 		if top < 0 {
 			top = 0
 		}
@@ -326,18 +374,24 @@ func (m APIRecorderModel) renderTimeline(width, height int, tk shared.Tokens) st
 	visualStart, visualEnd := m.timelineCursor.VisualRange()
 
 	var b strings.Builder
+	b.WriteString(header)
+	b.WriteByte('\n')
 	for i := top; i < end; i++ {
-		row := formatTimelineRow(m.entries[i])
-		row = shared.PadOrTruncateVisible(row, width)
+		entry := m.entries[i]
+		var row string
 		switch {
 		case i == cursor && m.pane == APIRecorderPaneTimeline:
-			row = tk.RowCursor.Render(shared.StripCSI(row))
+			row = tk.RowCursor.Render(shared.StripCSI(formatTimelineRow(entry, pathWidth)))
+			row = shared.PadOrTruncateVisible(row, width)
 		case m.pane == APIRecorderPaneTimeline && m.timelineCursor.Visual && i >= visualStart && i <= visualEnd:
-			row = tk.RowCursor.Render(shared.StripCSI(row))
+			row = tk.RowCursor.Render(shared.StripCSI(formatTimelineRow(entry, pathWidth)))
+			row = shared.PadOrTruncateVisible(row, width)
 		case i == cursor:
-			row = tk.Accent.Render(shared.StripCSI(row))
+			row = tk.Accent.Render(shared.StripCSI(formatTimelineRow(entry, pathWidth)))
+			row = shared.PadOrTruncateVisible(row, width)
 		default:
-			row = colorMethodStatus(row, m.entries[i], tk)
+			row = renderTimelineRowStyled(entry, pathWidth, tk)
+			row = padTrailing(row, width)
 		}
 		b.WriteString(row)
 		if i < end-1 {
@@ -347,10 +401,99 @@ func (m APIRecorderModel) renderTimeline(width, height int, tk shared.Tokens) st
 	return b.String()
 }
 
+// timelineHeader returns the column-header row matching the data
+// rows' layout. Header text is muted + bold so it reads as chrome,
+// not data.
+func timelineHeader(pathWidth int, tk shared.Tokens) string {
+	g := strings.Repeat(" ", tlGutter)
+	header := padRightAR("WHEN", tlColTime) + g +
+		padRightAR("METHOD", tlColMethod) + g +
+		padRightAR("PATH", pathWidth) + g +
+		padRightAR("STATUS", tlColStatus) + g +
+		padLeftAR("MS", tlColDuration)
+	return tk.Muted.Bold(true).Render(header)
+}
+
+// renderTimelineRowStyled returns one data row with per-cell
+// styling: muted timestamp, accent method, plain path, status badge
+// tinted by class, muted duration. Cells are padded to the canonical
+// column widths defined above so the header lines up with every row.
+func renderTimelineRowStyled(e apilog.Entry, pathWidth int, tk shared.Tokens) string {
+	g := strings.Repeat(" ", tlGutter)
+	stamp := tk.Muted.Render(padRightAR(e.Time.Local().Format("15:04:05"), tlColTime))
+	method := methodStyle(e.Method, tk).Render(padRightAR(e.Method, tlColMethod))
+	path := shared.PadOrTruncateVisible(e.Path, pathWidth)
+	status := statusBadge(e, tk)
+	dur := tk.Muted.Render(padLeftAR(formatDurationMS(e.DurationMS), tlColDuration))
+	return stamp + g + method + g + path + g + status + g + dur
+}
+
+// methodStyle picks a foreground tint for the HTTP method cell. GET
+// and HEAD read as routine reads; mutating verbs (POST/PUT/PATCH/
+// DELETE) get warmer colors so destructive ops stand out in a long
+// timeline.
+func methodStyle(method string, tk shared.Tokens) lipgloss.Style {
+	switch method {
+	case "GET", "HEAD":
+		return tk.Accent
+	case "POST", "PUT", "PATCH":
+		return tk.Warning
+	case "DELETE":
+		return tk.Danger
+	default:
+		return tk.FG
+	}
+}
+
+// statusBadge renders the status column cell with a per-class
+// background highlight: 2xx green, 3xx neutral (muted), 4xx yellow,
+// 5xx + transport errors red. Cell width is tlColStatus (5) so the
+// header aligns. Empty status (in-flight) renders as a muted dash.
+func statusBadge(e apilog.Entry, tk shared.Tokens) string {
+	const w = tlColStatus
+	if e.Err != "" {
+		return tk.BadgeUnmask.Render(centerAR("ERR", w))
+	}
+	if e.Status <= 0 {
+		return tk.Muted.Render(centerAR("---", w))
+	}
+	code := strconv.Itoa(e.Status)
+	switch {
+	case e.Status >= 500:
+		return tk.BadgeUnmask.Render(centerAR(code, w))
+	case e.Status >= 400:
+		return tk.BadgeLarge.Render(centerAR(code, w))
+	case e.Status >= 200 && e.Status < 300:
+		return tk.BadgeRule.Render(centerAR(code, w))
+	default:
+		// 3xx / 1xx — no background, just plain text. Keeps the
+		// neutral case from competing with the alarm classes.
+		return centerAR(code, w)
+	}
+}
+
+// formatDurationMS renders a millisecond count as "Nms" / "1.2s".
+// Right-aligned by the caller via padLeftAR.
+func formatDurationMS(ms int64) string {
+	if ms < 1000 {
+		return strconv.FormatInt(ms, 10) + "ms"
+	}
+	// Show 1 decimal on seconds so "1.2s" stays terse.
+	tenths := ms / 100
+	whole := tenths / 10
+	frac := tenths % 10
+	return strconv.FormatInt(whole, 10) + "." + strconv.FormatInt(frac, 10) + "s"
+}
+
 // renderRightColumn stacks the REQUEST + RESPONSE boxes vertically.
 // The focused pane (when one of req/resp) gets the active section
 // header tint + body cursor + visual range; the other dims its
 // header so the operator can tell at a glance which pane owns Tab.
+//
+// Each pane keeps both a plain and a styled view of its lines:
+// plainLines drive cursor accounting + yank (so clipboard text is
+// pristine), styledLines feed the screen render so JSON bodies +
+// header keys + status badges all carry their syntax tints.
 func (m APIRecorderModel) renderRightColumn(width, height int, tk shared.Tokens) string {
 	if len(m.entries) == 0 {
 		empty := tk.Muted.Render(shared.PadOrTruncateVisible("(select a row)", width))
@@ -360,19 +503,26 @@ func (m APIRecorderModel) renderRightColumn(width, height int, tk shared.Tokens)
 	if half < 4 {
 		half = 4
 	}
-	reqLines := buildRequestLines(m.cursorEntry())
-	respLines := buildResponseLines(m.cursorEntry())
+	entry := m.cursorEntry()
+	reqPlain := buildRequestLines(entry)
+	respPlain := buildResponseLines(entry)
+	reqStyled := styledRequestLines(entry, tk)
+	respStyled := styledResponseLines(entry, tk)
+
 	reqBox := m.renderPaneBox("REQUEST", APIRecorderPaneRequest,
-		reqLines, m.requestCursor, width, half, tk)
+		reqPlain, reqStyled, m.requestCursor, width, half, tk)
 	respBox := m.renderPaneBox("RESPONSE", APIRecorderPaneResponse,
-		respLines, m.responseCursor, width, height-half, tk)
+		respPlain, respStyled, m.responseCursor, width, height-half, tk)
 	return reqBox + "\n" + respBox
 }
 
 // renderPaneBox draws one labeled section with cursor + visual
-// styling applied to the focused pane's lines. The pane header tint
-// surfaces focus state at a glance.
-func (m APIRecorderModel) renderPaneBox(label string, paneID APIRecorderPane, lines []string, cur shared.BodyCursor, width, height int, tk shared.Tokens) string {
+// styling applied to the focused pane's lines. plainLines and
+// styledLines must have identical length / index alignment — the
+// cursor + visual selection address the plain slice (so yank carries
+// pristine text) while the visible render reads from the styled
+// slice (so syntax tints survive).
+func (m APIRecorderModel) renderPaneBox(label string, paneID APIRecorderPane, plainLines, styledLines []string, cur shared.BodyCursor, width, height int, tk shared.Tokens) string {
 	if width < 6 {
 		width = 6
 	}
@@ -387,77 +537,103 @@ func (m APIRecorderModel) renderPaneBox(label string, paneID APIRecorderPane, li
 	header = header + tk.Muted.Render(strings.Repeat("─", maxInt(0, width-shared.VisibleWidth(header))))
 
 	bodyHeight := height - 1
-	cur.EnsureVisible(bodyHeight, len(lines))
+	total := len(plainLines)
+	if len(styledLines) < total {
+		// Defensive: pad styledLines with the plain fallback so the
+		// loop below never indexes past the slice on a build error.
+		extra := make([]string, total-len(styledLines))
+		for i := range extra {
+			extra[i] = plainLines[len(styledLines)+i]
+		}
+		styledLines = append(styledLines, extra...)
+	}
+	cur.EnsureVisible(bodyHeight, total)
 	visualStart, visualEnd := cur.VisualRange()
 	from := cur.Top
 	if from < 0 {
 		from = 0
 	}
-	if from > len(lines) {
-		from = len(lines)
+	if from > total {
+		from = total
 	}
 	to := from + bodyHeight
-	if to > len(lines) {
-		to = len(lines)
+	if to > total {
+		to = total
 	}
 
 	out := []string{header}
 	for i := 0; i < bodyHeight; i++ {
 		idx := from + i
-		if idx >= len(lines) {
+		if idx >= total {
 			out = append(out, strings.Repeat(" ", width))
 			continue
 		}
-		raw := lines[idx]
+		styled := styledLines[idx]
 		prefix := "  "
 		if m.pane == paneID && idx == cur.Line {
 			prefix = "▸ "
 		}
-		full := shared.PadOrTruncateVisible(prefix+raw, width)
+		// The cursor / visual highlights strip styling and re-render
+		// with RowCursor so the bg highlight reads cleanly across the
+		// whole row — losing the per-token syntax tints is the
+		// trade-off, mirroring how every other detail surface does it.
 		switch {
 		case m.pane == paneID && idx == cur.Line:
-			full = tk.RowCursor.Render(shared.StripCSI(full))
+			full := shared.PadOrTruncateVisible(prefix+plainLines[idx], width)
+			out = append(out, tk.RowCursor.Render(shared.StripCSI(full)))
 		case m.pane == paneID && cur.Visual && idx >= visualStart && idx <= visualEnd:
-			full = tk.RowCursor.Render(shared.StripCSI(full))
+			full := shared.PadOrTruncateVisible(prefix+plainLines[idx], width)
+			out = append(out, tk.RowCursor.Render(shared.StripCSI(full)))
+		default:
+			// Styled rows preserve their ANSI sequences — pad with
+			// trailing spaces only, never truncate (truncation would
+			// chop mid-CSI and leak escape codes downstream).
+			line := prefix + styled
+			if shared.VisibleWidth(line) > width {
+				// Overflow — fall back to a stripped truncate so we
+				// don't blow the pane width. Rare in practice (most
+				// JSON lines fit easily in 60-cell pane).
+				stripped := shared.StripCSI(line)
+				line = shared.PadOrTruncateVisible(stripped, width)
+			} else {
+				line = padTrailing(line, width)
+			}
+			out = append(out, line)
 		}
-		out = append(out, full)
 	}
 	return strings.Join(out, "\n")
 }
 
-// formatTimelineRow returns "HH:MM:SS  METHOD  /path  STATUS  120ms"
-// — caller is responsible for padding/truncating to the pane width.
-func formatTimelineRow(e apilog.Entry) string {
-	stamp := e.Time.Local().Format("15:04:05")
-	method := padRightAR(e.Method, 6)
-	status := "    "
-	if e.Status > 0 {
-		status = strconv.Itoa(e.Status)
-	} else if e.Err != "" {
-		status = "ERR "
-	}
-	dur := strconv.FormatInt(e.DurationMS, 10) + "ms"
-	return stamp + " " + method + " " + e.Path + "  " + status + "  " + tail(dur, 8)
-}
-
-// colorMethodStatus tints the row based on outcome — simpler than
-// splicing per-token styles, and matches the list-row pattern.
-func colorMethodStatus(row string, e apilog.Entry, tk shared.Tokens) string {
+// formatTimelineRow returns the un-styled timeline row used by the
+// BodyCursor for yank operations (clipboard text shouldn't carry
+// ANSI codes) and for the cursor-row highlight render path (which
+// strips styling and re-renders with RowCursor). The visible View
+// uses renderTimelineRowStyled instead — that path applies per-cell
+// tints and the status badge.
+func formatTimelineRow(e apilog.Entry, pathWidth int) string {
+	g := strings.Repeat(" ", tlGutter)
+	stamp := padRightAR(e.Time.Local().Format("15:04:05"), tlColTime)
+	method := padRightAR(e.Method, tlColMethod)
+	path := shared.PadOrTruncateVisible(e.Path, pathWidth)
+	var status string
 	switch {
-	case e.Status >= 500:
-		return tk.Danger.Render(row)
-	case e.Status >= 400:
-		return tk.Warning.Render(row)
 	case e.Err != "":
-		return tk.Danger.Render(row)
+		status = "ERR"
+	case e.Status > 0:
+		status = strconv.Itoa(e.Status)
 	default:
-		return row
+		status = "---"
 	}
+	statusCell := centerAR(status, tlColStatus)
+	dur := padLeftAR(formatDurationMS(e.DurationMS), tlColDuration)
+	return stamp + g + method + g + path + g + statusCell + g + dur
 }
 
 // buildRequestLines flattens the request fields into renderable
-// lines. Stable order across renders so the request-pane cursor
-// addresses the same content between movements.
+// lines. The plain-text variant (used for yank + cursor accounting)
+// returns lines without any ANSI styling so clipboard pastes don't
+// carry escape sequences. The styled variant lives in
+// styledRequestLines.
 func buildRequestLines(e apilog.Entry) []string {
 	if e.SeqID == 0 && e.Method == "" {
 		return []string{"(no entry selected)"}
@@ -482,7 +658,7 @@ func buildResponseLines(e apilog.Entry) []string {
 	}
 	var out []string
 	statusLine := strconv.Itoa(e.Status) + "  ·  " +
-		strconv.FormatInt(e.DurationMS, 10) + "ms"
+		formatDurationMS(e.DurationMS)
 	if e.Err != "" {
 		statusLine += "  ·  " + e.Err
 	}
@@ -497,7 +673,128 @@ func buildResponseLines(e apilog.Entry) []string {
 	return out
 }
 
-// headerLines returns "Key: value" lines sorted by key.
+// styledRequestLines returns the request body with syntax styling
+// applied to each line. The line count and ordering match
+// buildRequestLines exactly so the BodyCursor's line index addresses
+// the same content in both views.
+func styledRequestLines(e apilog.Entry, tk shared.Tokens) []string {
+	if e.SeqID == 0 && e.Method == "" {
+		return []string{tk.Muted.Render("(no entry selected)")}
+	}
+	var out []string
+	out = append(out, methodStyle(e.Method, tk).Bold(true).Render(e.Method)+
+		"  "+tk.FG.Render(e.URL))
+	out = append(out, "")
+	out = append(out, styledHeaderLines(e.RequestHeaders, tk)...)
+	if e.RequestBody != "" {
+		out = append(out, "")
+		out = append(out, tk.Muted.Render("Body:"))
+		out = append(out, styledBodyLines(e.RequestBody, tk)...)
+	}
+	return out
+}
+
+// styledResponseLines mirrors styledRequestLines for the response
+// pane. The status line carries the per-class background tint so
+// the response pane shows the same color cue as the timeline.
+func styledResponseLines(e apilog.Entry, tk shared.Tokens) []string {
+	if e.SeqID == 0 && e.Method == "" {
+		return []string{tk.Muted.Render("(no entry selected)")}
+	}
+	statusBadgeText := statusBadgeForBody(e, tk)
+	dur := tk.Muted.Render(formatDurationMS(e.DurationMS))
+	statusLine := statusBadgeText + "  " + dur
+	if e.Err != "" {
+		statusLine += "  " + tk.Danger.Render(e.Err)
+	}
+	out := []string{statusLine, ""}
+	out = append(out, styledHeaderLines(e.ResponseHeaders, tk)...)
+	if e.ResponseBody != "" {
+		out = append(out, "")
+		out = append(out, tk.Muted.Render("Body:"))
+		out = append(out, styledBodyLines(e.ResponseBody, tk)...)
+	}
+	return out
+}
+
+// statusBadgeForBody renders the inline status badge used at the top
+// of the Response pane. Same color map as the timeline column but
+// without the fixed 5-cell width — the body pane has more room.
+func statusBadgeForBody(e apilog.Entry, tk shared.Tokens) string {
+	if e.Err != "" {
+		return tk.BadgeUnmask.Render(" ERR ")
+	}
+	if e.Status <= 0 {
+		return tk.Muted.Render(" --- ")
+	}
+	cell := " " + strconv.Itoa(e.Status) + " "
+	switch {
+	case e.Status >= 500:
+		return tk.BadgeUnmask.Render(cell)
+	case e.Status >= 400:
+		return tk.BadgeLarge.Render(cell)
+	case e.Status >= 200 && e.Status < 300:
+		return tk.BadgeRule.Render(cell)
+	default:
+		return tk.Accent.Render(cell)
+	}
+}
+
+// styledHeaderLines tints the header key (Accent) and value (FG) so
+// long header dumps stay scannable. Sensitive values arrive already
+// scrubbed (`***`) from apilog.RedactHeaders, which the Muted style
+// further de-emphasizes.
+func styledHeaderLines(h http.Header, tk shared.Tokens) []string {
+	if len(h) == 0 {
+		return []string{tk.Muted.Render("(no headers)")}
+	}
+	keys := make([]string, 0, len(h))
+	for k := range h {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(h))
+	for _, k := range keys {
+		for _, v := range h[k] {
+			valueStyle := tk.FG
+			if v == apilog.RedactedToken {
+				valueStyle = tk.Muted
+			}
+			line := tk.Accent.Render(k) + tk.Muted.Render(": ") + valueStyle.Render(v)
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// styledBodyLines runs the body through HighlightJSON when it parses
+// as JSON; otherwise falls back to a plain split so non-JSON content
+// (e.g., a 502 HTML page) still renders without crashing the
+// highlighter. Trailing "[truncated]" markers from CapBody stay
+// muted.
+func styledBodyLines(body string, tk shared.Tokens) []string {
+	trimmed := strings.TrimSpace(body)
+	if looksLikeJSON(trimmed) {
+		highlighted := shared.HighlightJSON(body, tk)
+		return splitLines(highlighted)
+	}
+	return splitLines(body)
+}
+
+// looksLikeJSON is a fast prefix sniff so we don't pay an unmarshal
+// cost on every render. Bodies that start with `{` / `[` after
+// trimming are treated as JSON; everything else (HTML, plain text,
+// XML) falls through to the un-highlighted path.
+func looksLikeJSON(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	c := s[0]
+	return c == '{' || c == '['
+}
+
+// headerLines returns "Key: value" lines sorted by key — used by the
+// plain-text path for yank operations.
 func headerLines(h http.Header) []string {
 	if len(h) == 0 {
 		return []string{"(no headers)"}
@@ -554,13 +851,39 @@ func padRightAR(s string, n int) string {
 	return s + strings.Repeat(" ", n-w)
 }
 
-// tail returns the last n cells of s, padding from the left when
-// shorter.
-func tail(s string, n int) string {
-	if shared.VisibleWidth(s) >= n {
+// padLeftAR right-aligns s to n cells (pad with leading spaces).
+func padLeftAR(s string, n int) string {
+	w := shared.VisibleWidth(s)
+	if w >= n {
 		return s
 	}
-	return strings.Repeat(" ", n-shared.VisibleWidth(s)) + s
+	return strings.Repeat(" ", n-w) + s
+}
+
+// centerAR pads s to n cells with leading + trailing spaces so the
+// content sits centered within the cell. Used for the status badge.
+func centerAR(s string, n int) string {
+	w := shared.VisibleWidth(s)
+	if w >= n {
+		return s
+	}
+	pad := n - w
+	left := pad / 2
+	right := pad - left
+	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+}
+
+// padTrailing right-pads an already-styled string to n visible
+// cells. Unlike PadOrTruncateVisible this never truncates — it's
+// for the status-badge row whose styled cells already match the
+// canonical width and just need trailing spaces to reach the pane
+// boundary without clipping the embedded ANSI codes.
+func padTrailing(s string, n int) string {
+	w := shared.VisibleWidth(s)
+	if w >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-w)
 }
 
 // maxInt returns the larger of a, b.
