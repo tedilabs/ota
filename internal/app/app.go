@@ -1285,17 +1285,19 @@ type ChromeBadgeStater interface {
 
 // EscapeOpStater is implemented by screens that report whether `Esc`
 // would do something (close detail, clear filter, exit Visual). The
-// App Shell uses it to surface a `nothing to close` toast in the
-// status row when Esc is a no-op — replaces the silent Esc that
-// operators repeatedly reported.
+// App Shell uses it to choose between forwarding Esc to the screen
+// (escWillAct → true) and firing the quit confirm (escWillAct →
+// false at the navigation root). Pre-2026-05-04 it gated a
+// `nothing to close` toast; the nav-stack rewrite replaced that
+// toast with the back-pop / quit-confirm precedence.
 type EscapeOpStater interface {
 	EscapeWillAct() bool
 }
 
 // escWillAct reports whether the active screen would do something
 // in response to Esc (close detail, clear filter, exit Visual,
-// abort Type-Picker, etc.). When false, the App Shell surfaces a
-// `nothing to close` toast instead of forwarding the keystroke.
+// abort Type-Picker, etc.). When false at the root frame, the App
+// Shell fires the quit confirm.
 func (m Model) escWillAct() bool {
 	if m.overlay != OverlayNone {
 		return true
@@ -1311,6 +1313,59 @@ func (m Model) escWillAct() bool {
 	// publish a hint. Otherwise silent-Esc lists never reach the
 	// child, which is worse than forwarding a no-op.
 	return true
+}
+
+// escIsCritical reports whether Esc has a transient, local-only
+// meaning that must run BEFORE the nav-stack pop fires. Critical
+// states are operator inputs the back-nav shouldn't preempt:
+//
+//   - any open overlay (palette / help / action menu / quit
+//     confirm / API recorder) — those have their own Esc handlers
+//   - filter / query / server-filter input modes (operator is
+//     mid-typing; Esc cancels the input box)
+//   - visual-line selection in a detail body
+//
+// Settled / applied filters on a list are NOT critical — they're
+// part of the screen's persistent state, and the back-nav contract
+// preserves that state when the frame is later revisited. Letting
+// the pop fire on a filtered list keeps the operator's mental
+// model "Esc walks back" intact regardless of in-screen filters.
+func (m Model) escIsCritical() bool {
+	if m.overlay != OverlayNone {
+		return true
+	}
+	child, ok := m.screens[m.active]
+	if !ok {
+		return false
+	}
+	if st, ok := child.(filterInputStater); ok && st.Filtering() {
+		return true
+	}
+	if st, ok := child.(QueryStater); ok && st.QueryEditing() {
+		return true
+	}
+	if st, ok := child.(ServerFilterStater); ok && st.ServerFilterEditing() {
+		return true
+	}
+	if st, ok := child.(visualActiveStater); ok && st.DetailVisualActive() {
+		return true
+	}
+	return false
+}
+
+// visualActiveStater is implemented by detail surfaces that own a
+// visual-line selection (Users today; future detail screens via
+// shared.BodyCursor). Distinct from EscapeOpStater — only "is
+// visual mode currently active?" matters for the Esc precedence.
+type visualActiveStater interface {
+	DetailVisualActive() bool
+}
+
+// filterInputStater narrows FilterStater to the boolean check the
+// nav-stack-aware Esc routing actually needs (so the precedence
+// decision doesn't have to allocate / format the filter string).
+type filterInputStater interface {
+	Filtering() bool
 }
 
 // composeChromeBadges assembles the chrome status row contents
@@ -1924,18 +1979,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleAPIRecorderKey(msg)
 	}
 
-	// 2026-05-04 nav stack: Esc on a screen with nothing locally to
-	// close pops the navigation stack — the operator walks back
-	// through the trail of resources they drilled into. When the
-	// stack is at its root (only one frame), Esc fires the quit
-	// confirm so a final Esc-press still has somewhere to land.
-	if msg.Type == tea.KeyEsc && !m.escWillAct() {
+	// 2026-05-04 nav stack: Esc walks the navigation history.
+	//
+	// Precedence:
+	//   1. Critical local modes (operator typing into a `/` filter
+	//      prompt, `Q` query box, `F` server-filter prompt, or with
+	//      visual-line selection active) — Esc cancels the input
+	//      first and is forwarded to the active screen as normal.
+	//   2. When the stack has more than one frame: Esc pops back
+	//      to the previous frame. Applied filters and open details
+	//      on the popped frame are preserved so re-visiting feels
+	//      stable.
+	//   3. At the root frame, Esc walks the active screen's local
+	//      state first (close open detail, clear applied filter)
+	//      via the existing in-screen Esc handler. Once the screen
+	//      reports nothing to close, the next Esc fires the quit
+	//      confirm so the operator's "back-back-back" gesture
+	//      always has somewhere to land.
+	if msg.Type == tea.KeyEsc && !m.escIsCritical() {
 		if m.canPopNav() {
 			prev, _ := m.popNav()
 			updated, cmd := m.ensureScreen(prev)
 			return updated, cmd
 		}
-		return m, quitConfirmCmd()
+		if !m.escWillAct() {
+			return m, quitConfirmCmd()
+		}
 	}
 
 	switch msg.Type {

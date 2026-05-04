@@ -314,8 +314,9 @@ func (m ListModel) StatusBadges() []shared.ChromeBadge {
 
 // EscapeWillAct reports whether Esc will do something on the Users
 // screen — clear filter / leave detail / cancel filtering / exit
-// Visual / leave extras focus. False when nothing is active so the
-// App Shell surfaces the unified `nothing to close` toast.
+// Visual / leave extras focus. The App Shell consults this at the
+// root frame to decide forward-to-screen vs fire-quit-confirm
+// (2026-05-04 nav-stack rewrite).
 func (m ListModel) EscapeWillAct() bool {
 	return m.filtering || m.opened || m.filter != "" || m.detailExtrasFocused || m.detailVisual
 }

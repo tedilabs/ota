@@ -271,9 +271,9 @@ func (m SearchModel) StatusBadges() []shared.ChromeBadge {
 
 // EscapeWillAct reports whether Esc will do something on the Logs
 // screen — clear filter / leave detail / cancel filtering / clear
-// the active server query. False when nothing is active so the App
-// Shell surfaces the unified `nothing to close` toast instead of
-// forwarding a silent Esc.
+// the active server query. The App Shell consults this at the
+// root frame to decide forward-to-screen vs fire-quit-confirm
+// (2026-05-04 nav-stack rewrite).
 func (m SearchModel) EscapeWillAct() bool {
 	return m.filtering || m.queryEditing || m.serverFilterEditing || m.opened ||
 		m.filter != "" || m.query != "" || m.serverFilter != ""
