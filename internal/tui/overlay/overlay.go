@@ -377,7 +377,7 @@ func helpTitle(screen string) string {
 		return "Help · Groups List"
 	case "group-detail":
 		return "Help · Group Detail"
-	case "rules":
+	case "grouprules", "rules":
 		return "Help · Group Rules List"
 	case "rule-detail":
 		return "Help · Group Rule Detail"
@@ -389,6 +389,18 @@ func helpTitle(screen string) string {
 		return "Help · System Logs"
 	case "log-detail":
 		return "Help · Log Event"
+	case "apps":
+		return "Help · Apps"
+	case "authenticators":
+		return "Help · Authenticators"
+	case "network-zones":
+		return "Help · Network Zones"
+	case "authorization-servers":
+		return "Help · Authorization Servers"
+	case "api-tokens":
+		return "Help · API Tokens"
+	case "administrators":
+		return "Help · Administrators"
 	default:
 		return "Help"
 	}
@@ -406,48 +418,48 @@ func helpEntriesForScreen(screen string) []helpEntry {
 
 // generalHelpEntries are the app-wide commands surfaced on every screen.
 // k9s slots these into a "General" section so the screen-specific (Resource)
-// and motion (Navigation) keys read at a glance (issue #120).
+// and motion (Navigation) keys read at a glance.
 func generalHelpEntries() []helpEntry {
 	return []helpEntry{
 		{":", "open command palette"},
 		{"/", "incremental search (lists)"},
 		{"?", "this help"},
 		{"~", "Okta API call timeline overlay"},
-		{"a", "resource action menu (issue #175)"},
-		{"l", "open Logs scoped to current resource (#F2)"},
-		{"Esc", "cancel mode / close overlay"},
+		{"a", "resource action menu"},
+		{"l", "open Logs scoped to current resource"},
+		{"R", "refresh active screen"},
+		{"Esc", "back · cancel mode · close overlay"},
 		{"q", "close screen / quit (with confirm)"},
 		{"Ctrl-c", "soft quit (tail confirm)"},
 		{"Ctrl-l", "force redraw"},
-		{"R", "refresh (cache invalidate)"},
-		{":quit", "quit ota"},
 	}
 }
 
 // paletteHelpEntries lists the canonical `:` palette commands so
-// operators can discover routes without reading the source. Issue
-// #U14 v0.2.4 — surfaced in the Help overlay's 4th column. Aliases
-// (e.g. `q`, `gr`) are intentionally omitted — only canonical names
-// appear here so the column stays readable.
+// operators can discover routes without reading the source. Surfaced
+// in the Help overlay's 4th column. Per-type direct routes
+// (`:saml-app`, `:okta-sign-on`, etc.) are intentionally omitted —
+// the autocomplete dropdown surfaces them as the operator types,
+// and including every variant here would push the modal past the
+// chrome's body budget. Aliases (`q`, `gr`, `zones`, `tokens`) are
+// also dropped so the column stays scannable.
 func paletteHelpEntries() []helpEntry {
 	return []helpEntry{
-		{":users", "Users list"},
-		{":groups", "Groups list"},
-		{":group-rules", "Group Rules list"},
-		{":policies", "Policies (with type picker)"},
-		{":apps", "Apps (with type picker)"},
-		{":authenticator", "Authenticators (factor methods)"},
+		{":users", "Users"},
+		{":groups", "Groups"},
+		{":group-rules", "Group Rules"},
+		{":policies", "Policies"},
+		{":apps", "Apps"},
+		{":authenticators", "Authenticators"},
 		{":logs", "System Log"},
-		{":saml-app", "SAML apps"},
-		{":oidc-app", "OIDC apps"},
-		{":okta-sign-on", "Okta Sign-On policies"},
-		{":password-policy", "Password policies"},
-		{":reset-password", "trigger Reset Password"},
-		{":unlock", "Unlock the selected user"},
-		{":reset-mfa", "Reset MFA factors"},
-		{":unmask <fld>", "reveal a masked detail field"},
-		{":mask", "re-mask all PII fields"},
-		{":help", "open this overlay"},
+		{":network-zones", "Network Zones"},
+		{":authorization-servers", "Authorization Servers"},
+		{":api-tokens", "API Tokens"},
+		{":administrators", "Administrators"},
+		{":apilog", "API timeline overlay"},
+		{":unmask <fld>", "reveal a masked field"},
+		{":mask", "re-mask PII fields"},
+		{":help", "this overlay"},
 		{":quit", "quit ota"},
 	}
 }
@@ -471,6 +483,7 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "users":
 		return []helpEntry{
 			{"Enter / d", "open detail (all attributes)"},
+			{"l", "open Logs scoped to this user"},
 			{"Shift+S", "sort by STATUS"},
 			{"Shift+N", "sort by NAME (login)"},
 			{"Shift+L", "sort by LAST LOGIN"},
@@ -482,24 +495,31 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "groups":
 		return []helpEntry{
 			{"Enter / d", "open detail (all attributes)"},
+			{"l", "open Logs scoped to this group"},
 			{"Shift+N", "sort by NAME"},
 		}
-	case "rules":
+	case "grouprules", "rules":
 		return []helpEntry{
 			{"Enter / d", "open detail (all attributes)"},
+			{"l", "open Logs scoped to this rule"},
 			{"Shift+S", "sort by STATUS (INVALID first)"},
 			{"Shift+N", "sort by NAME"},
 		}
 	case "policies":
 		return []helpEntry{
 			{"Enter", "pick type / open detail"},
-			{"Esc", "back to type select / list"},
+			{"Esc", "back · close detail · close picker"},
 			{"r", "toggle rich ↔ raw JSON in detail"},
+			{":okta-sign-on", "jump to Okta Sign-On policies"},
+			{":password-policy", "jump to Password policies"},
+			{":access-policy", "jump to Access policies"},
+			{":mfa-enroll", "jump to MFA Enrollment policies"},
 		}
 	case "apps":
 		return []helpEntry{
 			{"Enter / d", "pick type / open detail"},
-			{"Esc", "back to type select / list"},
+			{"Esc", "back · close detail · close picker"},
+			{"l", "open Logs scoped to this app"},
 			{"/", "filter apps by label / name / mode"},
 			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
 			{"r", "toggle to / from JSON tab"},
@@ -518,8 +538,8 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"F", "edit server filter (filter=… expression)"},
 			{"k from row 0", "land on the load-older sentinel"},
 			{"Enter on sentinel", "fetch older page (after=cursor)"},
-			{"s", "toggle tail mode (on/off)"},
-			{"f", "toggle auto-follow (live ↔ paused)"},
+			{"s", "toggle tail badge (on/off)"},
+			{"f", "toggle auto-follow (default off — opt in)"},
 			{"r", "refresh — refetch the current window"},
 			{"j / k · g / G", "(detail) move body cursor / top / bottom"},
 			{"v / V · y", "(detail) visual select · yank to clipboard"},
@@ -532,47 +552,66 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "authenticators":
 		return []helpEntry{
 			{"Enter / d", "open authenticator detail"},
+			{"l", "open Logs scoped to this authenticator"},
 			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
 			{"r", "toggle to / from JSON tab"},
 			{"j / k · g / G", "(detail) move body cursor / top / bottom"},
 			{"v / V · y", "(detail) visual select · yank to clipboard"},
 		}
+	case "network-zones", "authorization-servers", "api-tokens", "administrators":
+		return []helpEntry{
+			{"Enter / d", "open detail"},
+			{"/", "incremental filter"},
+			{"r", "refresh — refetch the list"},
+			{"Tab / Shift-Tab", "(detail) cycle Pretty / JSON / YAML"},
+			{"j / k · g / G", "(detail) move body cursor / top / bottom"},
+			{"Ctrl-d / Ctrl-u", "(detail) half-page down / up"},
+			{"Ctrl-f / Ctrl-b", "(detail) page down / up"},
+			{"v / V · y", "(detail) visual select · yank to clipboard"},
+			{"Esc", "back · close detail · clear filter"},
+		}
 	case "user-detail":
 		return []helpEntry{
-			{"Tab / Shift-Tab", "cycle detail tabs"},
-			{"r", "jump to / from [Raw] tab"},
-			{"]", "enter Groups+Apps boxes (then j/k flows across both)"},
+			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
+			{"r", "jump to / from [JSON] tab"},
+			{"]", "enter Groups+Apps boxes (j/k flows across both)"},
 			{"[", "(in boxes) jump to first row"},
 			{"j / k · g / G", "move body cursor / top / bottom (out of boxes)"},
+			{"Ctrl-d / Ctrl-u", "half-page down / up (body)"},
+			{"Ctrl-f / Ctrl-b", "page down / up (body)"},
 			{"v / V", "toggle visual line selection"},
 			{"y", "yank cursor line / visual range"},
 			{"Enter", "open Group / App detail (cursor in boxes)"},
-			{"Esc", "cancel visual · exit boxes · close detail"},
+			{"l", "open Logs scoped to this user"},
+			{"Esc", "back · cancel visual · exit boxes · close detail"},
 		}
 	case "rule-detail":
 		return []helpEntry{
-			{"Tab / Shift-Tab", "cycle detail tabs"},
-			{"r", "jump to / from [Raw] tab"},
+			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
+			{"r", "jump to / from [JSON] tab"},
 			{"j / k · g / G", "move body cursor / top / bottom"},
 			{"Ctrl-d / Ctrl-u", "half-page down / up (body)"},
 			{"Ctrl-f / Ctrl-b", "page down / up (body)"},
 			{"v / V", "toggle visual line selection"},
 			{"y", "yank cursor line / visual range"},
 			{"]", "focus TARGETS for drill-down"},
-			{"Esc", "cancel visual · then back to list"},
+			{"Esc", "back · cancel visual · close detail"},
 		}
 	case "group-detail":
 		return []helpEntry{
-			{"Tab / Shift-Tab", "cycle detail tabs"},
-			{"r", "jump to / from [Raw] tab"},
-			{"m", "Members tab (lazy load)"},
-			{"j / k · g / G", "move body cursor / top / bottom"},
+			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
+			{"r", "jump to / from [JSON] tab"},
+			{"m", "focus the Members box"},
+			{"]", "enter Members+Apps boxes (j/k flows across both)"},
+			{"[", "(in boxes) jump to first row"},
+			{"j / k · g / G", "move body cursor / top / bottom (out of boxes)"},
 			{"Ctrl-d / Ctrl-u", "half-page down / up (body)"},
 			{"Ctrl-f / Ctrl-b", "page down / up (body)"},
 			{"v / V", "toggle visual line selection"},
 			{"y", "yank cursor line / visual range"},
-			{"]", "focus Members+Apps boxes"},
-			{"Esc", "cancel visual · then back to list"},
+			{"Enter", "open User / App detail (cursor in boxes)"},
+			{"l", "open Logs scoped to this group"},
+			{"Esc", "back · cancel visual · exit boxes · close detail"},
 		}
 	case "policy-detail":
 		return []helpEntry{
@@ -582,18 +621,19 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 			{"Ctrl-f / Ctrl-b", "page down / up (body)"},
 			{"v / V", "toggle visual line selection"},
 			{"y", "yank cursor line / visual range"},
-			{"Esc", "cancel visual · then back to list"},
+			{"Esc", "back · cancel visual · close detail"},
 		}
 	case "log-detail":
 		return []helpEntry{
-			{"Tab / Shift-Tab", "cycle detail tabs"},
-			{"r", "jump to / from JSON tab"},
+			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
+			{"r", "jump to / from [JSON] tab"},
+			{"Enter", "drill into the actor's User detail"},
 			{"j / k · g / G", "move body cursor / top / bottom"},
 			{"Ctrl-d / Ctrl-u", "half-page down / up (body)"},
 			{"Ctrl-f / Ctrl-b", "page down / up (body)"},
 			{"v / V", "toggle visual line selection"},
 			{"y", "yank cursor line / visual range"},
-			{"Esc", "cancel visual · then back to list"},
+			{"Esc", "back · cancel visual · close detail"},
 		}
 	default:
 		return nil

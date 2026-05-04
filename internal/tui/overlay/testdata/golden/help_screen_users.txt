@@ -1,27 +1,25 @@
-╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Help · Users List                                                                                                                                                                                     │
-├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Press Esc to close                                                                                                                                                                                    │
-│                                                                                                                                                                                                       │
-│ ── Resource ──                                │ ── General ──                                      │ ── Navigation ──                             │ ── Palette ──                                     │
-│ Enter / d        open detail (all attributes) │ :       open command palette                       │ j / k            cursor down / up            │ :users            Users list                      │
-│ Shift+S          sort by STATUS               │ /       incremental search (lists)                 │ h / l            scroll columns left / right │ :groups           Groups list                     │
-│ Shift+N          sort by NAME (login)         │ ?       this help                                  │ gg / G           top / bottom                │ :group-rules      Group Rules list                │
-│ Shift+L          sort by LAST LOGIN           │ ~       Okta API call timeline overlay             │ Ctrl-d / Ctrl-u  half-page down / up         │ :policies         Policies (with type picker)     │
-│ Shift+C          sort by CREATED / CHANGED    │ a       resource action menu (issue #175)          │ Ctrl-f / Ctrl-b  page down / up              │ :apps             Apps (with type picker)         │
-│ :reset-password  send reset-password email    │ l       open Logs scoped to current resource (#F2) │                                              │ :authenticator    Authenticators (factor methods) │
-│ :unlock          clear LOCKED_OUT state       │ Esc     cancel mode / close overlay                │                                              │ :logs             System Log                      │
-│ :reset-mfa       remove enrolled MFA factors  │ q       close screen / quit (with confirm)         │                                              │ :saml-app         SAML apps                       │
-│                                               │ Ctrl-c  soft quit (tail confirm)                   │                                              │ :oidc-app         OIDC apps                       │
-│                                               │ Ctrl-l  force redraw                               │                                              │ :okta-sign-on     Okta Sign-On policies           │
-│                                               │ R       refresh (cache invalidate)                 │                                              │ :password-policy  Password policies               │
-│                                               │ :quit   quit ota                                   │                                              │ :reset-password   trigger Reset Password          │
-│                                               │                                                    │                                              │ :unlock           Unlock the selected user        │
-│                                               │                                                    │                                              │ :reset-mfa        Reset MFA factors               │
-│                                               │                                                    │                                              │ :unmask <fld>     reveal a masked detail field    │
-│                                               │                                                    │                                              │ :mask             re-mask all PII fields          │
-│                                               │                                                    │                                              │ :help             open this overlay               │
-│                                               │                                                    │                                              │ :quit             quit ota                        │
-│                                                                                                                                                                                                       │
-│ <Esc> close · </> filter                                                                                                                                                                              │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Help · Users List                                                                                                                                                                            │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Press Esc to close                                                                                                                                                                           │
+│                                                                                                                                                                                              │
+│ ── Resource ──                                 │ ── General ──                                │ ── Navigation ──                             │ ── Palette ──                                 │
+│ Enter / d        open detail (all attributes)  │ :       open command palette                 │ j / k            cursor down / up            │ :users                  Users                 │
+│ l                open Logs scoped to this user │ /       incremental search (lists)           │ h / l            scroll columns left / right │ :groups                 Groups                │
+│ Shift+S          sort by STATUS                │ ?       this help                            │ gg / G           top / bottom                │ :group-rules            Group Rules           │
+│ Shift+N          sort by NAME (login)          │ ~       Okta API call timeline overlay       │ Ctrl-d / Ctrl-u  half-page down / up         │ :policies               Policies              │
+│ Shift+L          sort by LAST LOGIN            │ a       resource action menu                 │ Ctrl-f / Ctrl-b  page down / up              │ :apps                   Apps                  │
+│ Shift+C          sort by CREATED / CHANGED     │ l       open Logs scoped to current resource │                                              │ :authenticators         Authenticators        │
+│ :reset-password  send reset-password email     │ R       refresh active screen                │                                              │ :logs                   System Log            │
+│ :unlock          clear LOCKED_OUT state        │ Esc     back · cancel mode · close overlay   │                                              │ :network-zones          Network Zones         │
+│ :reset-mfa       remove enrolled MFA factors   │ q       close screen / quit (with confirm)   │                                              │ :authorization-servers  Authorization Servers │
+│                                                │ Ctrl-c  soft quit (tail confirm)             │                                              │ :api-tokens             API Tokens            │
+│                                                │ Ctrl-l  force redraw                         │                                              │ :administrators         Administrators        │
+│                                                │                                              │                                              │ :apilog                 API timeline overlay  │
+│                                                │                                              │                                              │ :unmask <fld>           reveal a masked field │
+│                                                │                                              │                                              │ :mask                   re-mask PII fields    │
+│                                                │                                              │                                              │ :help                   this overlay          │
+│                                                │                                              │                                              │ :quit                   quit ota              │
+│                                                                                                                                                                                              │
+│ <Esc> close · </> filter                                                                                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

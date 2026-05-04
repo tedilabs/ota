@@ -89,7 +89,7 @@ func Test_HelpForLogs_ShowsTailKeys(t *testing.T) {
 	t.Parallel()
 	got := testfx.StripANSI(overlay.NewHelpModelFor("logs").View())
 	assert.Contains(t, got, "Help · System Logs")
-	for _, line := range []string{"toggle tail mode", "toggle auto-follow"} {
+	for _, line := range []string{"toggle tail badge", "toggle auto-follow"} {
 		assert.Contains(t, got, line, "Logs help must mention %q", line)
 	}
 }
