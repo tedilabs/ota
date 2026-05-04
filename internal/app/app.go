@@ -97,6 +97,47 @@ func (s Screen) String() string {
 // tests can assert against the router state without reaching into internals.
 func ActiveScreenName(m Model) string { return m.active.String() }
 
+// resetNav replaces the entire stack with the supplied root and
+// updates m.active to match. Used by `:` palette commands —
+// "navigate to <res>" is the operator declaring a fresh root, so
+// any prior history is discarded (and visiting a screen the
+// operator already passed through doesn't pile up duplicates).
+func (m *Model) resetNav(s Screen) {
+	m.navStack = []Screen{s}
+	m.active = s
+}
+
+// pushNav appends a frame onto the stack — used by every cross-
+// resource drill-down so Esc walks back to the previous resource.
+// Idempotent: pushing the screen the operator is already on is a
+// no-op (avoids piling up Logs frames when the operator hits `l`
+// twice on the same Logs screen, etc.).
+func (m *Model) pushNav(s Screen) {
+	if len(m.navStack) > 0 && m.navStack[len(m.navStack)-1] == s {
+		m.active = s
+		return
+	}
+	m.navStack = append(m.navStack, s)
+	m.active = s
+}
+
+// popNav drops the top frame and returns the new top. Returns
+// (zero, false) when the stack already holds the root frame; the
+// caller should fire the quit confirm in that case (root Esc).
+func (m *Model) popNav() (Screen, bool) {
+	if len(m.navStack) <= 1 {
+		return 0, false
+	}
+	m.navStack = m.navStack[:len(m.navStack)-1]
+	m.active = m.navStack[len(m.navStack)-1]
+	return m.active, true
+}
+
+// canPopNav reports whether popNav would do work — used by the Esc
+// handler so the App Shell can pick "back" vs "quit confirm" before
+// surfacing the legacy "nothing to close" toast.
+func (m Model) canPopNav() bool { return len(m.navStack) > 1 }
+
 // Overlay identifies the active overlay, if any.
 type Overlay int
 
@@ -248,6 +289,18 @@ type Model struct {
 	active  Screen
 	overlay Overlay
 
+	// navStack tracks the screen-level navigation history (Android
+	// activity-stack semantics, 2026-05-04). The bottom is the root
+	// resource the operator opened with `:` — palette commands
+	// REPLACE the stack with that root. Cross-resource drill-downs
+	// (User Detail → Group Detail, Log actor → User Detail, `l`
+	// jumping to Logs scoped to the current resource) PUSH onto the
+	// stack instead of replacing it. Esc with nothing else to close
+	// pops one level; popping the last frame fires the quit confirm.
+	// The stack always carries at least one element while the App
+	// Shell is alive — pushNav / popNav maintain that invariant.
+	navStack []Screen
+
 	// screens lazy-caches child Screen Models keyed by Screen enum. Built on
 	// demand by ensureScreen so unused screens never allocate.
 	screens map[Screen]tea.Model
@@ -328,9 +381,10 @@ type Model struct {
 // so Init() can return its first Cmd directly.
 func New(deps Deps) Model {
 	m := Model{
-		deps:    deps,
-		active:  deps.InitialScreen,
-		overlay: OverlayNone,
+		deps:     deps,
+		active:   deps.InitialScreen,
+		overlay:  OverlayNone,
+		navStack: []Screen{deps.InitialScreen},
 		screens: map[Screen]tea.Model{},
 	}
 	if mdl, _ := m.buildScreen(m.active); mdl != nil {
@@ -540,14 +594,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.overlay = OverlayQuitConfirm
 		return m, nil
 	case ScreenChangeMsg:
-		m.active = msg.Target
+		// `:` palette commands declare a fresh root — wipe the nav
+		// stack so the operator's mental model of "Esc walks back
+		// through the chain I drilled into" stays clean.
+		m.resetNav(msg.Target)
 		m.overlay = OverlayNone
 		m.paletteInput = ""
 		updated, cmd := m.ensureScreen(m.active)
 		return updated, cmd
 	case SwitchScreenMsg:
 		if s, ok := screenFromName(msg.Target); ok {
-			m.active = s
+			m.resetNav(s)
 			m.overlay = OverlayNone
 			m.paletteInput = ""
 			updated, cmd := m.ensureScreen(m.active)
@@ -555,8 +612,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case OpenResourceMsg:
+		// Cross-resource drill-down (e.g., Log actor → User Detail).
+		// Push instead of replace so Esc returns to the previous
+		// resource rather than silently switching it out.
 		if s, ok := detailScreenFor(msg.Kind); ok {
-			m.active = s
+			m.pushNav(s)
 			m.overlay = OverlayNone
 			updated, cmd := m.ensureScreen(m.active)
 			return updated, cmd
@@ -564,10 +624,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case OpenGroupDetailMsg:
 		// Issue #171: cross-screen drill-down from User Detail's
-		// Groups row Enter. Switch to the Groups list (building it
-		// if needed), then forward an internal groups msg so the
-		// list fetches the target group and surfaces detail mode.
-		m.active = ScreenGroups
+		// Groups row Enter. Push the Groups frame so Esc returns
+		// to the User Detail the operator came from.
+		m.pushNav(ScreenGroups)
 		m.overlay = OverlayNone
 		var cmd tea.Cmd
 		m, cmd = m.ensureScreen(ScreenGroups)
@@ -577,7 +636,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, fwd)
 	case OpenAppDetailMsg:
 		// Issue #171: same flow for the Apps Wrapper.
-		m.active = ScreenApps
+		m.pushNav(ScreenApps)
 		m.overlay = OverlayNone
 		var cmd tea.Cmd
 		m, cmd = m.ensureScreen(ScreenApps)
@@ -588,7 +647,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case OpenUserDetailMsg:
 		// #G2 / U7 v0.2.4 — Users counterpart. The Users list owns
 		// the OpenDetailByIDMsg handler directly (no Wrapper).
-		m.active = ScreenUsers
+		m.pushNav(ScreenUsers)
 		m.overlay = OverlayNone
 		var cmd tea.Cmd
 		m, cmd = m.ensureScreen(ScreenUsers)
@@ -600,8 +659,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// #F2 / #F4 v0.2.5 — `l` shortcut from any resource. Switch
 		// to Logs and forward an OpenForFilterMsg so the screen
 		// pre-fills the server-side `filter=` expression keyed by
-		// the resource's ID.
-		m.active = ScreenLogs
+		// the resource's ID. Push the frame so Esc returns to the
+		// resource the operator was inspecting.
+		m.pushNav(ScreenLogs)
 		m.overlay = OverlayNone
 		var cmd tea.Cmd
 		m, cmd = m.ensureScreen(ScreenLogs)
@@ -612,8 +672,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case OpenPolicyTypeMsg:
 		// Issue #165 — replace the Policies wrapper with one scoped
 		// to the requested type so the picker doesn't render
-		// underneath the typed list.
-		m.active = ScreenPolicies
+		// underneath the typed list. Palette-driven so we reset the
+		// nav stack — operator declared a fresh root.
+		m.resetNav(ScreenPolicies)
 		m.overlay = OverlayNone
 		mdl := policies.NewWrapperForType(policies.Deps{
 			Port:   m.deps.PoliciesPort,
@@ -627,7 +688,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, mdl.Init()
 	case OpenAppTypeMsg:
 		// Issue #166 — same pattern for Apps.
-		m.active = ScreenApps
+		m.resetNav(ScreenApps)
 		m.overlay = OverlayNone
 		mdl := apps.NewWrapperForType(apps.Deps{
 			Port:            m.deps.AppsPort,
@@ -1863,13 +1924,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleAPIRecorderKey(msg)
 	}
 
-	// v0.2.0: Esc on a list with no overlay / filter / Visual / detail
-	// open used to be silent — operators repeatedly reported pressing
-	// Esc and getting no feedback. Surface a transient toast so the
-	// no-op is acknowledged without side effects.
-	// #A7 v0.2.4 — uses the unified ToastMsg path now.
+	// 2026-05-04 nav stack: Esc on a screen with nothing locally to
+	// close pops the navigation stack — the operator walks back
+	// through the trail of resources they drilled into. When the
+	// stack is at its root (only one frame), Esc fires the quit
+	// confirm so a final Esc-press still has somewhere to land.
 	if msg.Type == tea.KeyEsc && !m.escWillAct() {
-		return m, toastCmdInfo("nothing to close")
+		if m.canPopNav() {
+			prev, _ := m.popNav()
+			updated, cmd := m.ensureScreen(prev)
+			return updated, cmd
+		}
+		return m, quitConfirmCmd()
 	}
 
 	switch msg.Type {
