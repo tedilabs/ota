@@ -103,6 +103,13 @@ type cardState struct {
 	// Posture-specific state.
 	posture    PostureMetrics
 	hasPosture bool
+
+	// Events-specific state. cursor indexes events when the
+	// Events card is focused — Enter drills into Logs scoped to
+	// the highlighted event's actor or target.
+	events       []CriticalEvent
+	hasEvents    bool
+	eventsCursor int
 }
 
 // Model is the home dashboard screen.
@@ -269,6 +276,18 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 			p := countPosture(ctx, deps, now)
 			return postureLoadedMsg{metrics: p}
 		}
+	case CardEvents:
+		if m.deps.Logs == nil {
+			return nil
+		}
+		port := m.deps.Logs
+		now := m.now()
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			events, err := fetchCriticalEvents(ctx, port, now, 6)
+			return eventsLoadedMsg{events: events, err: err}
+		}
 	}
 	return nil
 }
@@ -296,6 +315,12 @@ type activityLoadedMsg struct {
 // postureLoadedMsg delivers the Risk & Governance snapshot.
 type postureLoadedMsg struct {
 	metrics PostureMetrics
+}
+
+// eventsLoadedMsg delivers the latest critical-events batch.
+type eventsLoadedMsg struct {
+	events []CriticalEvent
+	err    error
 }
 
 // refreshTickMsg fires the auto-refresh chain. Carries a gen value
@@ -368,6 +393,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case UpdateHealthMsg:
 		m.health = msg.Snapshot
 		m.hasHealth = true
+		m.lastUpdated = m.now()
+		return m, nil
+	case eventsLoadedMsg:
+		st := m.cards[CardEvents]
+		if st == nil {
+			st = &cardState{}
+			m.cards[CardEvents] = st
+		}
+		st.loading = false
+		st.err = msg.err
+		if msg.err == nil {
+			st.events = msg.events
+			st.hasEvents = true
+			if st.eventsCursor >= len(st.events) {
+				st.eventsCursor = 0
+			}
+		}
 		m.lastUpdated = m.now()
 		return m, nil
 	case refreshTickMsg:
@@ -448,6 +490,15 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.advanceFocus(-1)
 		return m, nil
 	case tea.KeyEnter:
+		// When the Events card is focused, Enter drills into the
+		// highlighted event's actor's user-detail (via Logs scoped
+		// filter). Otherwise the rest of the cards use the
+		// generic drillTargetFor mapping.
+		if m.focus == CardEvents {
+			if cmd := m.drillEventCmd(); cmd != nil {
+				return m, cmd
+			}
+		}
 		if target, ok := drillTargetFor(m.focus); ok {
 			return m, openResourceCmd(target)
 		}
@@ -455,13 +506,41 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyRunes:
 		switch string(km.Runes) {
 		case "j":
+			// j inside the Events card moves between events; outside,
+			// it moves card focus. Keeps the dashboard's keymap
+			// consistent with how Users / Logs lists work.
+			if m.focus == CardEvents && m.cards[CardEvents] != nil && m.cards[CardEvents].hasEvents {
+				st := m.cards[CardEvents]
+				if st.eventsCursor < len(st.events)-1 {
+					st.eventsCursor++
+				}
+				return m, nil
+			}
 			m.advanceFocus(1)
 		case "k":
+			if m.focus == CardEvents && m.cards[CardEvents] != nil && m.cards[CardEvents].hasEvents {
+				st := m.cards[CardEvents]
+				if st.eventsCursor > 0 {
+					st.eventsCursor--
+				}
+				return m, nil
+			}
 			m.advanceFocus(-1)
 		case "g":
+			if m.focus == CardEvents && m.cards[CardEvents] != nil {
+				m.cards[CardEvents].eventsCursor = 0
+				return m, nil
+			}
 			m.cursor = 0
 			m.focus = cardOrder[0]
 		case "G":
+			if m.focus == CardEvents && m.cards[CardEvents] != nil {
+				st := m.cards[CardEvents]
+				if len(st.events) > 0 {
+					st.eventsCursor = len(st.events) - 1
+				}
+				return m, nil
+			}
 			m.cursor = len(cardOrder) - 1
 			m.focus = cardOrder[m.cursor]
 		case "r", "R":
@@ -469,6 +548,30 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// drillEventCmd opens Logs filtered to the actor (or target when
+// the event has no human actor) of the highlighted critical event.
+// Returns nil when the Events card has no data yet so Enter falls
+// through to the generic drillTargetFor("logs") path.
+func (m Model) drillEventCmd() tea.Cmd {
+	st := m.cards[CardEvents]
+	if st == nil || !st.hasEvents || len(st.events) == 0 {
+		return nil
+	}
+	ev := st.events[st.eventsCursor]
+	filter := ""
+	switch {
+	case ev.ActorID != "":
+		filter = `actor.id eq "` + ev.ActorID + `"`
+	case ev.TargetID != "":
+		filter = `target.id eq "` + ev.TargetID + `"`
+	default:
+		filter = `eventType eq "` + ev.EventType + `"`
+	}
+	return func() tea.Msg {
+		return shared.OpenLogsMsg{Filter: filter}
+	}
 }
 
 func (m *Model) advanceFocus(d int) {
@@ -556,9 +659,57 @@ func (m Model) renderGrid(width int, tk shared.Tokens) string {
 		m.renderHealthCard(tk),
 	)
 	row4 := m.renderRow(width, tk,
-		m.renderPlaceholder(CardEvents, "Recent Critical Events", "wires in Phase 5 — last N high-severity log events"),
+		m.renderEventsCard(tk),
 	)
 	return row1 + "\n\n" + row2 + "\n\n" + row3 + "\n\n" + row4
+}
+
+// renderEventsCard surfaces the last N high-severity System Log
+// entries with relative timestamps + event type + actor. When the
+// Events card is focused, the highlighted row carries the
+// RowCursor tint + a `▸` glyph so Enter's drill target is obvious.
+func (m Model) renderEventsCard(tk shared.Tokens) string {
+	st := m.cards[CardEvents]
+	focused := m.focus == CardEvents
+	titleStyle := tk.Muted.Bold(true)
+	if focused {
+		titleStyle = tk.Accent.Bold(true)
+	}
+	header := titleStyle.Render("Recent Critical Events")
+	if st == nil || !st.hasEvents {
+		body := tk.Muted.Render("loading…")
+		if st != nil && st.err != nil {
+			body = tk.Danger.Render("err: " + truncate(st.err.Error(), 60))
+		}
+		return header + "\n" + body
+	}
+	if len(st.events) == 0 {
+		return header + "\n" + tk.Success.Render("✓ nothing critical in the last 6h")
+	}
+	now := m.now()
+	lines := []string{header}
+	for i, ev := range st.events {
+		isCursor := focused && i == st.eventsCursor
+		prefix := "  "
+		if isCursor {
+			prefix = "▸ "
+		}
+		when := rpad(relativeAge(now, ev.When), 8)
+		eventType := rpad(ev.EventType, 36)
+		actor := ev.ActorLogin
+		if actor == "" {
+			actor = ev.ActorID
+		}
+		raw := prefix + tk.Muted.Render(when) + " " + tk.Accent.Render(eventType) + " " + tk.FG.Render(actor)
+		if isCursor {
+			raw = tk.RowCursor.Render(shared.StripCSI(prefix + when + " " + eventType + " " + actor))
+		}
+		lines = append(lines, raw)
+	}
+	if focused {
+		lines = append(lines, "", tk.Muted.Render("Enter → Logs scoped to the highlighted event's actor"))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderActivityCard surfaces the two-window summary on top, the
