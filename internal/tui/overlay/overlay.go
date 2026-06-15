@@ -486,10 +486,12 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "home":
 		return []helpEntry{
 			{"Tab / Shift-Tab", "cycle focus across cards"},
-			{"j / k", "next / previous card"},
-			{"g / G", "first / last card"},
+			{"j / k", "next / previous card (or event row when Events focused)"},
+			{"g / G", "first / last card (or first / last event)"},
 			{"Enter", "drill into the focused card's resource"},
+			{"Enter (Events)", "open Logs scoped to the highlighted event's actor"},
 			{"R", "refresh all metrics"},
+			{"t", "cycle the Activity card's secondary window (7d / 30d)"},
 		}
 	case "users":
 		return []helpEntry{

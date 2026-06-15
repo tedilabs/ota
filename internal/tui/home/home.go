@@ -130,6 +130,12 @@ type Model struct {
 	health    HealthSnapshot
 	hasHealth bool
 
+	// activityWindow controls the SECOND column on the Activity
+	// card (the first is always 24h since the sparkline depends
+	// on it). `t` cycles through 7d → 30d → 7d. The selected
+	// window's fetcher re-fires on cycle.
+	secondaryWindow time.Duration
+
 	lastUpdated time.Time
 	refreshGen  int
 }
@@ -139,11 +145,12 @@ type Model struct {
 // to keep them fresh.
 func New(deps Deps) Model {
 	m := Model{
-		deps:   deps,
-		width:  deps.Width,
-		height: deps.Height,
-		focus:  CardUsers,
-		cards:  map[CardID]*cardState{},
+		deps:            deps,
+		width:           deps.Width,
+		height:          deps.Height,
+		focus:           CardUsers,
+		cards:           map[CardID]*cardState{},
+		secondaryWindow: 7 * 24 * time.Hour,
 	}
 	for _, c := range cardOrder {
 		m.cards[c] = &cardState{}
@@ -244,6 +251,8 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 		}
 		port := m.deps.Logs
 		now := m.now()
+		secLabel := windowLabel(m.secondaryWindow)
+		secSince := m.secondaryWindow
 		return tea.Batch(
 			func() tea.Msg {
 				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -255,9 +264,9 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 			func() tea.Msg {
 				ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 				defer cancel()
-				win := activityWindow{label: "7d", since: 7 * 24 * time.Hour, withSpark: false}
+				win := activityWindow{label: secLabel, since: secSince, withSpark: false}
 				m, err := countActivity(ctx, port, now, win)
-				return activityLoadedMsg{window: "7d", metrics: m, err: err}
+				return activityLoadedMsg{window: secLabel, metrics: m, err: err}
 			},
 		)
 	case CardPosture:
@@ -368,11 +377,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		st.loading = false
 		st.err = msg.err
 		if msg.err == nil {
-			switch msg.window {
-			case "24h":
+			if msg.window == "24h" {
 				st.activity24h = msg.metrics
 				st.hasActivity24h = true
-			case "7d":
+			} else {
+				// Anything else goes into the secondary slot —
+				// label is carried inside metrics.WindowLabel.
 				st.activity7d = msg.metrics
 				st.hasActivity7d = true
 			}
@@ -545,9 +555,41 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focus = cardOrder[m.cursor]
 		case "r", "R":
 			return m, m.refreshAllCmd()
+		case "t":
+			// Cycle the Activity card's secondary window: 7d → 30d → 7d.
+			// Re-fire the fetcher with the new window so the next render
+			// reflects the change.
+			switch m.secondaryWindow {
+			case 7 * 24 * time.Hour:
+				m.secondaryWindow = 30 * 24 * time.Hour
+			default:
+				m.secondaryWindow = 7 * 24 * time.Hour
+			}
+			if st := m.cards[CardActivity]; st != nil {
+				st.hasActivity7d = false // force "loading…" until new window lands
+			}
+			return m, m.fetchCmdFor(CardActivity)
 		}
 	}
 	return m, nil
+}
+
+// windowLabel renders the secondary-window label the Activity card
+// shows next to "(24h)". Picks the most concise human form.
+func windowLabel(d time.Duration) string {
+	switch d {
+	case 7 * 24 * time.Hour:
+		return "7d"
+	case 14 * 24 * time.Hour:
+		return "14d"
+	case 30 * 24 * time.Hour:
+		return "30d"
+	}
+	days := int(d.Hours() / 24)
+	if days > 0 {
+		return strconv.Itoa(days) + "d"
+	}
+	return strconv.Itoa(int(d.Hours())) + "h"
 }
 
 // drillEventCmd opens Logs filtered to the actor (or target when
@@ -714,7 +756,8 @@ func (m Model) renderEventsCard(tk shared.Tokens) string {
 
 // renderActivityCard surfaces the two-window summary on top, the
 // hourly sign-in sparkline on the bottom. Missing windows render
-// "—" so the operator sees partial data as it lands.
+// "—" so the operator sees partial data as it lands. The secondary
+// window label is dynamic — `t` cycles 7d → 30d → 7d.
 func (m Model) renderActivityCard(tk shared.Tokens) string {
 	st := m.cards[CardActivity]
 	focused := m.focus == CardActivity
@@ -722,7 +765,11 @@ func (m Model) renderActivityCard(tk shared.Tokens) string {
 	if focused {
 		titleStyle = tk.Accent.Bold(true)
 	}
-	header := titleStyle.Render("Activity (24h · 7d)")
+	secLabel := windowLabel(m.secondaryWindow)
+	header := titleStyle.Render("Activity (24h · " + secLabel + ")")
+	if focused {
+		header = header + tk.Muted.Render("   (t toggles window)")
+	}
 	if st == nil || (!st.hasActivity24h && !st.hasActivity7d) {
 		body := tk.Muted.Render("loading…")
 		if st != nil && st.err != nil {
@@ -752,7 +799,7 @@ func (m Model) renderActivityCard(tk shared.Tokens) string {
 		}
 		return left +
 			styleA.Render(rpad(valA, 8)) + tk.Muted.Render("(24h) ") +
-			styleB.Render(rpad(valB, 8)) + tk.Muted.Render("(7d)")
+			styleB.Render(rpad(valB, 8)) + tk.Muted.Render("("+secLabel+")")
 	}
 	lines := []string{
 		header,
