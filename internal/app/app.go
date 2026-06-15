@@ -12,6 +12,7 @@ import (
 
 	"github.com/tedilabs/ota/internal/apilog"
 	"github.com/tedilabs/ota/internal/clock"
+	"github.com/tedilabs/ota/internal/dashboard"
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
 	"github.com/tedilabs/ota/internal/oktastatus"
@@ -275,6 +276,11 @@ type Deps struct {
 	// HTTP round-trip; the `~` overlay reads its in-memory snapshot
 	// to render the timeline. Nil disables the overlay.
 	APIRecorder *apilog.Recorder
+
+	// DashboardCache backs the home screen's per-card snapshot
+	// persisted across sessions. Nil falls back to in-memory only
+	// (tests and harnesses with no UserCacheDir).
+	DashboardCache *dashboard.Cache
 
 	// LogsRefreshInterval / DefaultRefreshInterval drive the auto-refresh
 	// tickers (issue #177 v0.1.16). Logs default 5s, every other list
@@ -1860,6 +1866,7 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			Width:           m.width,
 			Height:          m.height,
 			RefreshInterval: m.deps.DefaultRefreshInterval,
+			Cache:           m.deps.DashboardCache,
 		})
 		return mdl, mdl.Init()
 	case ScreenUsers:
