@@ -26,6 +26,7 @@ import (
 	"github.com/tedilabs/ota/internal/tui/admins"
 	"github.com/tedilabs/ota/internal/tui/apitokens"
 	"github.com/tedilabs/ota/internal/tui/authservers"
+	"github.com/tedilabs/ota/internal/tui/home"
 	"github.com/tedilabs/ota/internal/tui/shared"
 	"github.com/tedilabs/ota/internal/tui/users"
 	"github.com/tedilabs/ota/internal/tui/zones"
@@ -36,6 +37,12 @@ import (
 type Screen int
 
 const (
+	// ScreenUsers stays at iota 0 so the zero-value InitialScreen
+	// (used by the existing test scaffolding) still resolves to the
+	// Users list. The real `ota` binary's wire.go explicitly sets
+	// InitialScreen = ScreenHome, so operators boot into the
+	// dashboard while tests keep their pre-Home behaviour
+	// unchanged.
 	ScreenUsers Screen = iota
 	ScreenGroups
 	ScreenRules
@@ -47,6 +54,7 @@ const (
 	ScreenAuthorizationServers
 	ScreenAPITokens
 	ScreenAdministrators
+	ScreenHome
 	ScreenUserDetail
 	ScreenGroupDetail
 	ScreenRuleDetail
@@ -57,6 +65,8 @@ const (
 // String returns the screen's `:command` form (or a detail-view label).
 func (s Screen) String() string {
 	switch s {
+	case ScreenHome:
+		return "home"
 	case ScreenUsers:
 		return "users"
 	case ScreenGroups:
@@ -611,6 +621,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updated, cmd
 		}
 		return m, nil
+	case shared.OpenScreenMsg:
+		// Drill-down emitted by a child screen (today: the home
+		// dashboard's card Enter). Push onto the nav stack — Esc on
+		// the destination walks back to wherever the operator came
+		// from rather than silently dropping the trail.
+		if s, ok := screenFromName(msg.Target); ok {
+			m.pushNav(s)
+			m.overlay = OverlayNone
+			updated, cmd := m.ensureScreen(m.active)
+			return updated, cmd
+		}
+		return m, nil
 	case OpenResourceMsg:
 		// Cross-resource drill-down (e.g., Log actor → User Detail).
 		// Push instead of replace so Esc returns to the previous
@@ -720,6 +742,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // codes (u/g/gr/l).
 func screenFromName(name string) (Screen, bool) {
 	switch strings.ToLower(name) {
+	case "home", "dashboard":
+		// `h` intentionally NOT aliased — already routes to help.
+		return ScreenHome, true
 	case "user", "users", "u":
 		return ScreenUsers, true
 	case "group", "groups", "g":
@@ -1817,6 +1842,26 @@ func (m Model) ensureScreen(s Screen) (Model, tea.Cmd) {
 // resource via :cmd (issue #113).
 func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 	switch s {
+	case ScreenHome:
+		mdl := home.New(home.Deps{
+			Users:           m.deps.UsersPort,
+			Groups:          m.deps.GroupsPort,
+			GroupRules:      m.deps.GroupRulesPort,
+			Policies:        m.deps.PoliciesPort,
+			Apps:            m.deps.AppsPort,
+			Authenticators:  m.deps.AuthenticatorsPort,
+			Logs:            m.deps.LogsPort,
+			APITokens:       m.deps.APITokensPort,
+			Administrators:  m.deps.AdministratorsPort,
+			OrgURL:          m.deps.OrgURL,
+			Clock:           m.deps.Clock,
+			Logger:          m.deps.Logger,
+			Keys:            m.deps.Keys,
+			Width:           m.width,
+			Height:          m.height,
+			RefreshInterval: m.deps.DefaultRefreshInterval,
+		})
+		return mdl, mdl.Init()
 	case ScreenUsers:
 		mdl := users.NewListModel(users.Deps{
 			Port:            m.deps.UsersPort,
@@ -2214,6 +2259,7 @@ func paletteCommandPool() []string {
 		"bookmark-app",
 		"swa-app",
 		"scim-app",
+		"home",
 		"authenticator",
 		// Read-only resource surfaces added in v0.2.5+. Each has a
 		// matching screenFromName branch + Spec under

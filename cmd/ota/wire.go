@@ -134,6 +134,11 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 		// override via cfg.OktaStatusEndpoint when self-hosted Okta
 		// orgs run a different statuspage (rare).
 		OktaStatusEndpoint: oktastatus.DefaultEndpoint,
+		// 2026-05-04: boot into the Okta-admin-style dashboard
+		// instead of the Users list. Operators that want the old
+		// behavior can `:users` immediately on boot — that
+		// repushes Users on top of the nav stack.
+		InitialScreen: app.ScreenHome,
 	})
 	return model, cfg, nil
 }

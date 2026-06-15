@@ -38,6 +38,16 @@ type OpenUserDetailMsg struct{ ID string }
 // keypress; the resource composes the expression around its ID.
 type OpenLogsMsg struct{ Filter string }
 
+// OpenScreenMsg is the screen-level navigation request a child
+// screen can emit when it wants the App Shell to switch the active
+// resource by canonical name (the same lookup the `:` palette uses
+// via screenFromName). Used today by the home dashboard's card-
+// drilldown — pressing Enter on the Users card emits
+// OpenScreenMsg{Target: "users"} and the App Shell pushes the
+// matching frame onto the nav stack. Shape mirrors app.SwitchScreenMsg
+// so the App Shell handler can forward to the same resolver.
+type OpenScreenMsg struct{ Target string }
+
 // ActionItem is a single row in the resource action menu (issue
 // #175 v0.1.15). Each screen exposes Actions() []ActionItem; the
 // App Shell builds the picker around them and dispatches RunAction
