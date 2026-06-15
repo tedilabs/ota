@@ -1,0 +1,208 @@
+# GoReleaser v2 config.
+#
+# Local snapshot (no publish):
+#   goreleaser release --snapshot --clean
+#
+# Real release (from CI, triggered by a `v*` tag push):
+#   goreleaser release --clean
+#
+# Single-platform local dry-run:
+#   goreleaser build --single-target --snapshot --clean
+
+version: 2
+
+project_name: ota
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: ota
+    main: ./cmd/ota
+    binary: ota
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/tedilabs/ota/internal/version.Tag={{.Version}}
+      - -X github.com/tedilabs/ota/internal/version.Commit={{.Commit}}
+      - -X github.com/tedilabs/ota/internal/version.BuildTime={{.Date}}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows arm64 has demand but historical ota operators are on amd64.
+      # Re-enable when an operator asks.
+      - goos: windows
+        goarch: arm64
+
+# macOS universal binary: lipo arm64 + amd64 into one file so brew can ship
+# a single artifact that runs on both Apple Silicon and Intel.
+universal_binaries:
+  - id: ota-universal
+    name_template: ota
+    replace: false # keep per-arch artifacts too, for direct downloads
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}macos
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if .Arch }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE*
+      - README*
+      - docs/*
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+# Release notes built from conventional-commit-style messages between tags.
+# The `groups` block buckets commits so the published notes read like a
+# proper changelog instead of a flat shortlog.
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: Bug fixes
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: Performance
+      regexp: "^.*perf[(\\w)]*:+.*$"
+      order: 2
+    - title: Refactors
+      regexp: "^.*refactor[(\\w)]*:+.*$"
+      order: 3
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: tedilabs
+    name: ota
+  name_template: "ota {{ .Tag }}"
+  prerelease: auto
+  draft: false
+  mode: replace
+  header: |
+    ## ota {{ .Tag }}
+
+    A k9s-style terminal UI for Okta Workforce Identity.
+
+    See `Install` below for one-liner / Homebrew / direct download options.
+  footer: |
+    ---
+
+    **Install via Homebrew (macOS / Linux):**
+    ```sh
+    brew install tedilabs/tap/ota
+    ```
+
+    **Install via the install script (macOS / Linux):**
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/tedilabs/ota/main/install.sh | sh
+    ```
+
+    **Run via Docker:**
+    ```sh
+    docker run --rm -it -e OKTA_API_TOKEN=$OKTA_API_TOKEN ghcr.io/tedilabs/ota:{{ .Tag }}
+    ```
+
+# Homebrew tap (v2.16+ uses `homebrew_casks`, the replacement for the
+# deprecated `brews:` block). Requires a separate repo
+# `tedilabs/homebrew-tap` and a PAT in CI exposed as
+# HOMEBREW_TAP_GITHUB_TOKEN (write access to that repo). End-user
+# install:
+#
+#   brew tap tedilabs/tap
+#   brew install ota          # routes to the cask automatically on Homebrew 4+
+homebrew_casks:
+  - name: ota
+    ids:
+      - default
+    binaries:
+      - ota
+    homepage: https://github.com/tedilabs/ota
+    description: A k9s-style terminal UI for Okta Workforce Identity.
+    repository:
+      owner: tedilabs
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      pull_request:
+        enabled: false # push directly on tag; flip to true to open a PR instead
+    directory: Casks
+    commit_author:
+      name: tedilabs-bot
+      email: bot@tedilabs.dev
+    # Unsigned binaries downloaded by Homebrew get Gatekeeper-quarantined
+    # on macOS, which makes `ota` fail with "cannot be opened because the
+    # developer cannot be verified". Strip the quarantine bit post-install
+    # so first-run is friction-free until we ship proper code signing.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/ota"]
+          end
+
+# Multi-arch container images, pushed to GHCR. dockers_v2 supersedes
+# the legacy `dockers:` + `docker_manifests:` pair — buildx assembles
+# the multi-arch manifest in one pass, so `docker pull
+# ghcr.io/tedilabs/ota:latest` picks the right arch automatically.
+# Requires the GitHub Actions workflow to `docker login ghcr.io` ahead
+# of time (handled in release.yml).
+dockers_v2:
+  - id: ota
+    ids:
+      - ota
+    dockerfile: Dockerfile
+    images:
+      - ghcr.io/tedilabs/ota
+    tags:
+      - "{{ .Version }}"
+      - "latest"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: ota
+      org.opencontainers.image.description: A k9s-style TUI for Okta Workforce Identity
+      org.opencontainers.image.url: https://github.com/tedilabs/ota
+      org.opencontainers.image.source: https://github.com/tedilabs/ota
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.licenses: Apache-2.0
+
+# SBOMs alongside the release archives so supply-chain tooling (Snyk,
+# Grype, etc.) can verify dependencies without parsing the binary itself.
+sboms:
+  - artifacts: archive

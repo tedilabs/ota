@@ -1,0 +1,75 @@
+name: release
+
+# Two triggers — push a `v*` tag for the normal release flow, or hit
+# "Run workflow" in the GitHub UI when you need a one-off rebuild
+# (e.g. CI infra flake on the original tag, GHCR push retry).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)release (e.g. v0.3.0). Leave blank to use the current ref."
+        required: false
+        type: string
+
+permissions:
+  # Required for GoReleaser to upload assets + create the GitHub Release.
+  contents: write
+  # Required to push images to GHCR.
+  packages: write
+  # Optional — populated when SBOM signing / id-token use is wired later.
+  id-token: write
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # GoReleaser needs the full history so the changelog generator
+          # can walk between this tag and the previous one.
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up QEMU
+        # Multi-arch Docker builds need binfmt for cross-platform images.
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          # Default GITHUB_TOKEN is enough for the Release + GHCR push.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT scoped `repo` on tedilabs/homebrew-tap so the Homebrew
+          # formula bump can land. Skip if you haven't created the tap
+          # yet — comment out the `brews:` block in .goreleaser.yaml.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

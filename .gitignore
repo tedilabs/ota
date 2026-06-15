@@ -6,6 +6,9 @@
 coverage.out
 coverage.html
 
+# GoReleaser snapshot + release output.
+/dist/
+
 # Editors
 .DS_Store
 .idea/
