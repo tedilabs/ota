@@ -85,16 +85,27 @@ var cardOrder = []CardID{
 // cardState tracks per-card lifecycle independently — fetching, last
 // error, last successful observation. The View reads these to paint
 // the freshness stamp + spinner / error glyph.
+//
+// requested flips true once a fetch for this card has been
+// dispatched in the current session — the home screen uses it to
+// avoid re-firing fetches on every Tab cycle. The operator can
+// always force a refresh with R.
+//
+// The sampled flag indicates the count came from a single-page
+// sample rather than a full enumeration; the card renders an "≈"
+// prefix in that case so the operator knows the number is a lower
+// bound, not a precise total.
 type cardState struct {
-	loading bool
-	err     error
-	counts  dashboard.Counts
-	// hasCounts distinguishes "we observed an empty list" (Total=0
-	// but real) from "we haven't fetched yet" (Total=0 and stale).
+	loading   bool
+	requested bool
+	err       error
+	counts    dashboard.Counts
+	sampled   bool
 	hasCounts bool
 
 	// Activity-specific state. The Activity card fans out TWO
-	// fetches (24h + 7d) so we accumulate them as they land.
+	// fetches (one short + one longer window) so we accumulate
+	// them as they land.
 	activity24h    ActivityMetrics
 	activity7d     ActivityMetrics
 	hasActivity24h bool
@@ -150,7 +161,7 @@ func New(deps Deps) Model {
 		height:          deps.Height,
 		focus:           CardUsers,
 		cards:           map[CardID]*cardState{},
-		secondaryWindow: 7 * 24 * time.Hour,
+		secondaryWindow: 1 * time.Hour, // start cheap; `t` widens
 	}
 	for _, c := range cardOrder {
 		m.cards[c] = &cardState{}
@@ -182,34 +193,49 @@ func (m *Model) seedFromCache() {
 	}
 }
 
-// Init fans out one cmd per card with a port to call. Cards without
-// ports (or in Phase 4/5 that aren't yet wired) stay seeded from
-// cache. Phase 2 wires Users / Groups / Apps.
+// Init kicks ONE fetch — the focused card. The rest fire lazily on
+// first focus to keep Okta rate-limit budget intact (the previous
+// eager-fanout-everything-on-boot approach hammered every category
+// at once and consistently tripped the 60/min cap). The seeded
+// cache values render under the focused card immediately so the
+// dashboard still has numbers on screen during the round-trip.
+//
+// Auto-refresh is DISABLED by default — every other resource
+// surface in ota learned the same lesson with the Logs follow flag
+// (see v0.2.5 commit). Operators that want continuous polling can
+// hit `R`; that's a single explicit gesture instead of a 10s
+// background tick fanned out across 8+ paginated endpoints.
 func (m Model) Init() tea.Cmd {
-	var cmds []tea.Cmd
-	for _, c := range cardOrder {
-		if cmd := m.fetchCmdFor(c); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+	cmd, _ := m.ensureFetch(m.focus)
+	return cmd
+}
+
+// ensureFetch dispatches the fetcher for `c` exactly once per
+// session. Subsequent calls return nil so Tab-cycling doesn't
+// re-spam the network. The bool return reports whether a fetch
+// was actually scheduled — used by Update's focus-change handler.
+func (m Model) ensureFetch(c CardID) (tea.Cmd, bool) {
+	st := m.cards[c]
+	if st == nil {
+		st = &cardState{}
+		m.cards[c] = st
 	}
-	// Refresh tick chain — fires once after RefreshInterval, then
-	// followFetchedMsg-style chains itself on each tick.
-	if tick := m.scheduleRefreshTickCmd(); tick != nil {
-		cmds = append(cmds, tick)
+	if st.requested {
+		return nil, false
 	}
-	switch len(cmds) {
-	case 0:
-		return nil
-	case 1:
-		return cmds[0]
+	cmd := m.fetchCmdFor(c)
+	if cmd == nil {
+		return nil, false
 	}
-	return tea.Batch(cmds...)
+	st.requested = true
+	st.loading = true
+	return cmd, true
 }
 
 // fetchCmdFor returns the cmd that loads `c`'s data, or nil when
-// the card isn't fetchable. Activity returns a tea.Batch of two
-// cmds (24h + 7d) so the card paints partial data as windows land
-// independently.
+// the card isn't fetchable. Each card costs exactly one API call
+// against its category — single-page sampling keeps Okta rate-
+// limit budget intact even when the operator R-spams.
 func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 	switch c {
 	case CardUsers:
@@ -220,8 +246,8 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			counts, err := countUsers(ctx, port, m.now())
-			return cardLoadedMsg{card: CardUsers, counts: counts, err: err}
+			counts, sampled, err := countUsers(ctx, port, m.now())
+			return cardLoadedMsg{card: CardUsers, counts: counts, sampled: sampled, err: err}
 		}
 	case CardGroups:
 		if m.deps.Groups == nil {
@@ -231,8 +257,8 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			counts, err := countGroups(ctx, port, m.now())
-			return cardLoadedMsg{card: CardGroups, counts: counts, err: err}
+			counts, sampled, err := countGroups(ctx, port, m.now())
+			return cardLoadedMsg{card: CardGroups, counts: counts, sampled: sampled, err: err}
 		}
 	case CardApps:
 		if m.deps.Apps == nil {
@@ -242,33 +268,31 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			counts, err := countApps(ctx, port, m.now())
-			return cardLoadedMsg{card: CardApps, counts: counts, err: err}
+			counts, sampled, err := countApps(ctx, port, m.now())
+			return cardLoadedMsg{card: CardApps, counts: counts, sampled: sampled, err: err}
 		}
 	case CardActivity:
+		// Activity now uses a SINGLE window — Phase 6's two-window
+		// design fired two log fetches concurrently which doubled
+		// the logs rate-limit burn for marginal extra value. `t`
+		// still cycles the window choice but only one fetch fires
+		// per refresh.
 		if m.deps.Logs == nil {
 			return nil
 		}
 		port := m.deps.Logs
 		now := m.now()
-		secLabel := windowLabel(m.secondaryWindow)
-		secSince := m.secondaryWindow
-		return tea.Batch(
-			func() tea.Msg {
-				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-				defer cancel()
-				win := activityWindow{label: "24h", since: 24 * time.Hour, withSpark: true}
-				m, err := countActivity(ctx, port, now, win)
-				return activityLoadedMsg{window: "24h", metrics: m, err: err}
-			},
-			func() tea.Msg {
-				ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-				defer cancel()
-				win := activityWindow{label: secLabel, since: secSince, withSpark: false}
-				m, err := countActivity(ctx, port, now, win)
-				return activityLoadedMsg{window: secLabel, metrics: m, err: err}
-			},
-		)
+		win := activityWindow{
+			label:     windowLabel(m.activityWindowSize()),
+			since:     m.activityWindowSize(),
+			withSpark: true,
+		}
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			am, sampled, err := countActivity(ctx, port, now, win)
+			return activityLoadedMsg{window: win.label, metrics: am, sampled: sampled, err: err}
+		}
 	case CardPosture:
 		// Posture fans out across multiple ports inside countPosture;
 		// gate only on having SOMETHING wired so a partial deps
@@ -306,9 +330,10 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 // per-card payload shapes — keeps the type switch in Update
 // reading as documentation.
 type cardLoadedMsg struct {
-	card   CardID
-	counts dashboard.Counts
-	err    error
+	card    CardID
+	counts  dashboard.Counts
+	sampled bool
+	err     error
 }
 
 // activityLoadedMsg is the per-window result from countActivity.
@@ -316,8 +341,9 @@ type cardLoadedMsg struct {
 // folds each into m.cards[CardActivity] without blocking the other
 // window.
 type activityLoadedMsg struct {
-	window  string // "24h" / "7d"
+	window  string // "1h" / "6h" / "24h" — see windowLabel.
 	metrics ActivityMetrics
+	sampled bool
 	err     error
 }
 
@@ -332,18 +358,12 @@ type eventsLoadedMsg struct {
 	err    error
 }
 
-// refreshTickMsg fires the auto-refresh chain. Carries a gen value
-// so a tick from a previous chain (e.g. operator hit R in the
-// middle of an interval) gets dropped instead of double-fetching.
+// refreshTickMsg is the legacy auto-refresh signal. The home
+// screen no longer subscribes to a tick chain — every fetch is
+// lazy + operator-triggered — but the type stays so any in-flight
+// tick from a pre-fix session lands in the Update default case
+// without crashing.
 type refreshTickMsg struct{ gen int }
-
-func (m Model) scheduleRefreshTickCmd() tea.Cmd {
-	if m.deps.RefreshInterval <= 0 {
-		return nil
-	}
-	return shared.ScheduleRefreshTickCmd(m.deps.RefreshInterval,
-		refreshTickMsg{gen: m.refreshGen})
-}
 
 // Update handles window sizing + focus navigation + per-card fetch
 // results.
@@ -363,6 +383,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		st.err = msg.err
 		if msg.err == nil {
 			st.counts = msg.counts
+			st.sampled = msg.sampled
 			st.hasCounts = true
 			m.persist(msg.card, msg.counts)
 		}
@@ -377,15 +398,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		st.loading = false
 		st.err = msg.err
 		if msg.err == nil {
-			if msg.window == "24h" {
-				st.activity24h = msg.metrics
-				st.hasActivity24h = true
-			} else {
-				// Anything else goes into the secondary slot —
-				// label is carried inside metrics.WindowLabel.
-				st.activity7d = msg.metrics
-				st.hasActivity7d = true
-			}
+			st.activity24h = msg.metrics
+			st.hasActivity24h = true
+			st.sampled = msg.sampled
 		}
 		m.lastUpdated = m.now()
 		return m, nil
@@ -423,17 +438,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastUpdated = m.now()
 		return m, nil
 	case refreshTickMsg:
-		if msg.gen != m.refreshGen {
-			return m, nil
-		}
-		var cmds []tea.Cmd
-		for _, c := range cardOrder {
-			if cmd := m.fetchCmdFor(c); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-		cmds = append(cmds, m.scheduleRefreshTickCmd())
-		return m, tea.Batch(cmds...)
+		// Drop — auto-refresh was retired (the 10s tick was
+		// hammering rate-limit budget across multiple categories).
+		// `R` and shared.RefreshScreenMsg cover manual reload.
+		return m, nil
 	case shared.RefreshScreenMsg:
 		return m, m.refreshAllCmd()
 	case tea.KeyMsg:
@@ -442,20 +450,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// refreshAllCmd bumps the generation + fires every fetcher at once.
-// Hooked to `R` + shared.RefreshScreenMsg.
+// refreshAllCmd bumps the generation + re-fires fetchers for every
+// card the operator has ALREADY visited (i.e. requested = true).
+// Cards that haven't been focused yet stay untouched — refreshing
+// them too would defeat the lazy-fetch rate-limit win. Hooked to
+// `R` + shared.RefreshScreenMsg.
 func (m *Model) refreshAllCmd() tea.Cmd {
 	m.refreshGen++
 	var cmds []tea.Cmd
 	for _, c := range cardOrder {
+		st := m.cards[c]
+		if st == nil || !st.requested {
+			continue
+		}
 		if cmd := m.fetchCmdFor(c); cmd != nil {
 			cmds = append(cmds, cmd)
-			if st := m.cards[c]; st != nil {
-				st.loading = true
-			}
+			st.loading = true
 		}
 	}
-	cmds = append(cmds, m.scheduleRefreshTickCmd())
+	if len(cmds) == 0 {
+		// Even at the very first frame R should kick the focused
+		// card so the operator sees data move.
+		cmd, _ := m.ensureFetch(m.focus)
+		if cmd != nil {
+			return cmd
+		}
+		return nil
+	}
 	if len(cmds) == 1 {
 		return cmds[0]
 	}
@@ -494,11 +515,11 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	km = shared.NormalizeArrowKey(km)
 	switch km.Type {
 	case tea.KeyTab:
-		m.advanceFocus(1)
-		return m, nil
+		cmd := m.advanceFocus(1)
+		return m, cmd
 	case tea.KeyShiftTab:
-		m.advanceFocus(-1)
-		return m, nil
+		cmd := m.advanceFocus(-1)
+		return m, cmd
 	case tea.KeyEnter:
 		// When the Events card is focused, Enter drills into the
 		// highlighted event's actor's user-detail (via Logs scoped
@@ -526,7 +547,8 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			m.advanceFocus(1)
+			cmd := m.advanceFocus(1)
+			return m, cmd
 		case "k":
 			if m.focus == CardEvents && m.cards[CardEvents] != nil && m.cards[CardEvents].hasEvents {
 				st := m.cards[CardEvents]
@@ -535,7 +557,8 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			m.advanceFocus(-1)
+			cmd := m.advanceFocus(-1)
+			return m, cmd
 		case "g":
 			if m.focus == CardEvents && m.cards[CardEvents] != nil {
 				m.cards[CardEvents].eventsCursor = 0
@@ -543,6 +566,8 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.cursor = 0
 			m.focus = cardOrder[0]
+			cmd, _ := m.ensureFetch(m.focus)
+			return m, cmd
 		case "G":
 			if m.focus == CardEvents && m.cards[CardEvents] != nil {
 				st := m.cards[CardEvents]
@@ -553,20 +578,27 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.cursor = len(cardOrder) - 1
 			m.focus = cardOrder[m.cursor]
+			cmd, _ := m.ensureFetch(m.focus)
+			return m, cmd
 		case "r", "R":
 			return m, m.refreshAllCmd()
 		case "t":
-			// Cycle the Activity card's secondary window: 7d → 30d → 7d.
-			// Re-fire the fetcher with the new window so the next render
-			// reflects the change.
+			// Cycle the Activity card's window: 1h → 6h → 24h → 1h.
+			// Re-fire the fetcher with the new window so the next
+			// render reflects the change. Wider windows are more
+			// expensive on the logs rate-limit category, so the
+			// operator opts in explicitly.
 			switch m.secondaryWindow {
-			case 7 * 24 * time.Hour:
-				m.secondaryWindow = 30 * 24 * time.Hour
+			case 1 * time.Hour:
+				m.secondaryWindow = 6 * time.Hour
+			case 6 * time.Hour:
+				m.secondaryWindow = 24 * time.Hour
 			default:
-				m.secondaryWindow = 7 * 24 * time.Hour
+				m.secondaryWindow = 1 * time.Hour
 			}
 			if st := m.cards[CardActivity]; st != nil {
-				st.hasActivity7d = false // force "loading…" until new window lands
+				st.hasActivity24h = false
+				st.loading = true
 			}
 			return m, m.fetchCmdFor(CardActivity)
 		}
@@ -574,22 +606,26 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// windowLabel renders the secondary-window label the Activity card
-// shows next to "(24h)". Picks the most concise human form.
+// activityWindowSize returns the duration the Activity card is
+// configured to summarize. Defaults to 1h on construction; `t`
+// cycles through 6h / 24h.
+func (m Model) activityWindowSize() time.Duration {
+	if m.secondaryWindow > 0 {
+		return m.secondaryWindow
+	}
+	return time.Hour
+}
+
+// windowLabel renders the Activity-card window label. Prefers
+// hours up to and including 24h (so 24h reads as "24h", not "1d"),
+// then days from 2d onward.
 func windowLabel(d time.Duration) string {
-	switch d {
-	case 7 * 24 * time.Hour:
-		return "7d"
-	case 14 * 24 * time.Hour:
-		return "14d"
-	case 30 * 24 * time.Hour:
-		return "30d"
+	hours := int(d.Hours())
+	if hours <= 24 {
+		return strconv.Itoa(hours) + "h"
 	}
-	days := int(d.Hours() / 24)
-	if days > 0 {
-		return strconv.Itoa(days) + "d"
-	}
-	return strconv.Itoa(int(d.Hours())) + "h"
+	days := hours / 24
+	return strconv.Itoa(days) + "d"
 }
 
 // drillEventCmd opens Logs filtered to the actor (or target when
@@ -616,10 +652,16 @@ func (m Model) drillEventCmd() tea.Cmd {
 	}
 }
 
-func (m *Model) advanceFocus(d int) {
+// advanceFocus moves the cursor through cardOrder and returns the
+// (possibly-nil) lazy fetch cmd for the newly-focused card.
+// Returning the cmd from Update lets the operator see the
+// "loading…" state when they Tab onto a never-fetched card.
+func (m *Model) advanceFocus(d int) tea.Cmd {
 	n := len(cardOrder)
 	m.cursor = (m.cursor + d + n) % n
 	m.focus = cardOrder[m.cursor]
+	cmd, _ := m.ensureFetch(m.focus)
+	return cmd
 }
 
 // drillTargetFor maps a card to the resource screen name the App
@@ -717,16 +759,19 @@ func (m Model) renderEventsCard(tk shared.Tokens) string {
 	if focused {
 		titleStyle = tk.Accent.Bold(true)
 	}
-	header := titleStyle.Render("Recent Critical Events")
+	header := titleStyle.Render("Recent Critical Events (last 1h)")
 	if st == nil || !st.hasEvents {
-		body := tk.Muted.Render("loading…")
+		body := tk.Muted.Render("Tab to fetch · R to refresh")
+		if st != nil && st.loading {
+			body = tk.Muted.Render("loading…")
+		}
 		if st != nil && st.err != nil {
 			body = tk.Danger.Render("err: " + truncate(st.err.Error(), 60))
 		}
 		return header + "\n" + body
 	}
 	if len(st.events) == 0 {
-		return header + "\n" + tk.Success.Render("✓ nothing critical in the last 6h")
+		return header + "\n" + tk.Success.Render("✓ nothing critical in the last hour")
 	}
 	now := m.now()
 	lines := []string{header}
@@ -754,10 +799,12 @@ func (m Model) renderEventsCard(tk shared.Tokens) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderActivityCard surfaces the two-window summary on top, the
-// hourly sign-in sparkline on the bottom. Missing windows render
-// "—" so the operator sees partial data as it lands. The secondary
-// window label is dynamic — `t` cycles 7d → 30d → 7d.
+// renderActivityCard surfaces a single-window event summary with an
+// optional sparkline. The window is `t`-toggleable (1h / 6h / 24h)
+// — wider windows are more expensive on the logs rate-limit
+// category, so they're opt-in. The `≈` prefix appears when the
+// sample hit logsSampleSize and there are likely more events the
+// fetcher didn't drain.
 func (m Model) renderActivityCard(tk shared.Tokens) string {
 	st := m.cards[CardActivity]
 	focused := m.focus == CardActivity
@@ -765,52 +812,44 @@ func (m Model) renderActivityCard(tk shared.Tokens) string {
 	if focused {
 		titleStyle = tk.Accent.Bold(true)
 	}
-	secLabel := windowLabel(m.secondaryWindow)
-	header := titleStyle.Render("Activity (24h · " + secLabel + ")")
+	winLabel := windowLabel(m.activityWindowSize())
+	header := titleStyle.Render("Activity (" + winLabel + ")")
 	if focused {
-		header = header + tk.Muted.Render("   (t toggles window)")
+		header = header + tk.Muted.Render("   (t cycles 1h/6h/24h)")
 	}
-	if st == nil || (!st.hasActivity24h && !st.hasActivity7d) {
-		body := tk.Muted.Render("loading…")
+	if st == nil || !st.hasActivity24h {
+		body := tk.Muted.Render("press Tab to fetch · or R to load now")
+		if st != nil && st.loading {
+			body = tk.Muted.Render("loading…")
+		}
 		if st != nil && st.err != nil {
 			body = tk.Danger.Render("err: " + truncate(st.err.Error(), 60))
 		}
 		return header + "\n" + body
 	}
-	metricRow := func(label string, a, b int, haveA, haveB bool, alarmFn func(int) bool) string {
-		left := tk.Muted.Render(shared.PadOrTruncateVisible(label, 18))
-		valA := "—"
-		if haveA {
-			valA = formatThousands(a)
+	prefix := ""
+	if st.sampled {
+		prefix = "≈ "
+	}
+	metricRow := func(label string, n int, alarmFn func(int) bool) string {
+		left := tk.Muted.Render(shared.PadOrTruncateVisible(label, 20))
+		val := prefix + formatThousands(n)
+		style := tk.FG
+		if alarmFn != nil && alarmFn(n) {
+			style = tk.Danger
 		}
-		valB := "—"
-		if haveB {
-			valB = formatThousands(b)
-		}
-		styleA := tk.FG
-		styleB := tk.FG
-		if alarmFn != nil {
-			if alarmFn(a) {
-				styleA = tk.Danger
-			}
-			if alarmFn(b) {
-				styleB = tk.Danger
-			}
-		}
-		return left +
-			styleA.Render(rpad(valA, 8)) + tk.Muted.Render("(24h) ") +
-			styleB.Render(rpad(valB, 8)) + tk.Muted.Render("("+secLabel+")")
+		return left + style.Render(val)
 	}
 	lines := []string{
 		header,
-		metricRow("Sign-ins",        st.activity24h.SignIns,       st.activity7d.SignIns,       st.hasActivity24h, st.hasActivity7d, nil),
-		metricRow("Failed sign-ins", st.activity24h.FailedSignIns, st.activity7d.FailedSignIns, st.hasActivity24h, st.hasActivity7d, func(n int) bool { return n > 100 }),
-		metricRow("Account lockouts", st.activity24h.AccountLocks, st.activity7d.AccountLocks, st.hasActivity24h, st.hasActivity7d, func(n int) bool { return n > 0 }),
-		metricRow("MFA resets",       st.activity24h.MFAResets,    st.activity7d.MFAResets,    st.hasActivity24h, st.hasActivity7d, nil),
-		metricRow("Admin actions",    st.activity24h.AdminActions, st.activity7d.AdminActions, st.hasActivity24h, st.hasActivity7d, nil),
-		metricRow("User creates",     st.activity24h.UserCreates,  st.activity7d.UserCreates,  st.hasActivity24h, st.hasActivity7d, nil),
+		metricRow("Sign-ins",        st.activity24h.SignIns,       nil),
+		metricRow("Failed sign-ins", st.activity24h.FailedSignIns, func(n int) bool { return n > 100 }),
+		metricRow("Account lockouts", st.activity24h.AccountLocks, func(n int) bool { return n > 0 }),
+		metricRow("MFA resets",       st.activity24h.MFAResets,    nil),
+		metricRow("Admin actions",    st.activity24h.AdminActions, nil),
+		metricRow("User creates",     st.activity24h.UserCreates,  nil),
 	}
-	if st.hasActivity24h && len(st.activity24h.HourlyBuckets) > 0 {
+	if len(st.activity24h.HourlyBuckets) > 0 {
 		spark := dashboard.NormalizeSparkline(st.activity24h.HourlyBuckets)
 		lines = append(lines, "", tk.Muted.Render("hourly sign-ins ")+tk.Accent.Render(dashboard.RenderSparkline(spark)))
 	}
@@ -829,7 +868,14 @@ func (m Model) renderPostureCard(tk shared.Tokens) string {
 	}
 	header := titleStyle.Render("Posture & Risk")
 	if st == nil || !st.hasPosture {
-		return header + "\n" + tk.Muted.Render("loading…")
+		body := tk.Muted.Render("Tab to fetch · R to refresh")
+		if st != nil && st.loading {
+			body = tk.Muted.Render("loading…")
+		}
+		if st != nil && st.err != nil {
+			body = tk.Danger.Render("err: " + truncate(st.err.Error(), 60))
+		}
+		return header + "\n" + body
 	}
 	p := st.posture
 	row := func(icon, msg string, style any) string {
@@ -984,7 +1030,10 @@ func (m Model) renderCountCard(id CardID, title string, statusKeys []string) str
 	header := titleStyle.Render(title)
 
 	if st == nil || !st.hasCounts {
-		body := tk.Muted.Render("loading…")
+		body := tk.Muted.Render("Tab to fetch · R to refresh")
+		if st != nil && st.loading {
+			body = tk.Muted.Render("loading…")
+		}
 		if st != nil && st.err != nil {
 			body = tk.Danger.Render("err: " + truncate(st.err.Error(), 40))
 		}
@@ -995,7 +1044,14 @@ func (m Model) renderCountCard(id CardID, title string, statusKeys []string) str
 	if focused {
 		bigStyle = tk.Accent.Bold(true)
 	}
-	big := bigStyle.Render(formatThousands(st.counts.Total))
+	totalText := formatThousands(st.counts.Total)
+	if st.sampled {
+		// Single-page sample — Total is a lower bound. The "≈"
+		// prefix signals "more than this" so the operator doesn't
+		// read 200 as "exactly 200" on a 50k-user tenant.
+		totalText = "≈ " + totalText + "+"
+	}
+	big := bigStyle.Render(totalText)
 
 	age := tk.Muted.Render(relativeAge(m.now(), st.counts.ObservedAt))
 	if st.loading {

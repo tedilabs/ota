@@ -36,25 +36,19 @@ type activityWindow struct {
 	withSpark bool
 }
 
-// countActivity fans a single LogsPort.Search across the requested
-// window, buckets every event we recognize, and (for the 24h
-// window) populates the 24-cell hourly histogram driving the
-// Activity card's sparkline.
-//
-// Cost note: a 24h window for a busy tenant can be ~50k events
-// (Okta caps history responses at 1000/page so we paginate). 7d is
-// proportionally larger but Okta page sizes + the fact that we're
-// only walking metadata (no body) keep this manageable for typical
-// Workforce tenants. Enterprise operators with > 1M weekly events
-// will want a server-side aggregation we can't currently get from
-// the Logs API — flag as follow-up when somebody complains.
-func countActivity(ctx context.Context, port domain.LogsPort, now time.Time, w activityWindow) (ActivityMetrics, error) {
+// countActivity reads up to logsSampleSize log events from the
+// requested window, buckets every event we recognize, and (for the
+// short window) populates the hourly histogram driving the
+// Activity card's sparkline. Single-page bounded — busy tenants
+// see "≈" prefixed totals rather than a multi-page Okta /logs
+// walk that would chew through the logs rate-limit budget.
+func countActivity(ctx context.Context, port domain.LogsPort, now time.Time, w activityWindow) (ActivityMetrics, bool, error) {
 	out := ActivityMetrics{
 		WindowLabel: w.label,
 		WindowSince: now.Add(-w.since),
 	}
 	if port == nil {
-		return out, nil
+		return out, false, nil
 	}
 	if w.withSpark {
 		out.HourlyBuckets = make([]int, 24)
@@ -63,20 +57,20 @@ func countActivity(ctx context.Context, port domain.LogsPort, now time.Time, w a
 	q := domain.LogsQuery{
 		Since:     &since,
 		SortOrder: domain.SortAscending,
-		Limit:     1000,
+		Limit:     logsSampleSize,
 	}
 	it, err := port.Search(ctx, q)
 	if err != nil {
-		return out, err
+		return out, false, err
 	}
 	defer it.Close()
-	for {
+	for i := 0; i < logsSampleSize; i++ {
 		ev, hasMore, err := it.Next(ctx)
 		if err != nil {
-			return out, err
+			return out, false, err
 		}
 		if !hasMore {
-			break
+			return out, false, nil
 		}
 		switch ev.EventType {
 		case "user.session.start":
@@ -112,7 +106,9 @@ func countActivity(ctx context.Context, port domain.LogsPort, now time.Time, w a
 			out.AdminActions++
 		}
 	}
-	return out, nil
+	// Hit the sample cap — there are likely more events we
+	// deliberately didn't drain. Caller's "sampled" flag flips.
+	return out, true, nil
 }
 
 // hourlyBucket returns the 24-bucket index for `t` relative to

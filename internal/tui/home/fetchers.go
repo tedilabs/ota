@@ -8,40 +8,44 @@ import (
 	"github.com/tedilabs/ota/internal/domain"
 )
 
-// Iterator-walking fetchers — each lists every row from the matching
-// port, buckets by the field the home card cares about, and stamps
-// the ObservedAt time.
+// sampleSize caps every list-card fetch to a single Okta page —
+// the dashboard pays one API call per card instead of N pages of a
+// full enumeration. Tenants with > sampleSize entries see a "≈"
+// prefix + the sample total as a lower bound on the card.
 //
-// Why drain the full iterator instead of `?limit=0`: Okta returns
-// the actual list, not a count. For typical Workforce Identity
-// tenants (< 50k users) this is one or two pages and finishes in
-// well under the 30s context budget. Enterprise tenants with 100k+
-// users will want a smarter approach (a metrics endpoint, or
-// sampling) — flag that as follow-up work when an operator with a
-// big tenant complains.
+// Why 200: Okta's default page size for users/groups/apps is 200
+// (the upper bound varies by endpoint but 200 is universally
+// accepted). One read = one API call.
+const sampleSize = 200
 
-// countUsers walks the Users iterator and buckets by Status.
-func countUsers(ctx context.Context, port domain.UsersPort, now time.Time) (dashboard.Counts, error) {
+// logsSampleSize is the per-fetch cap for log walks. Okta returns
+// up to 1000 events per page on /api/v1/logs; bounding the
+// Activity card to one page keeps the logs category rate-limit
+// budget intact at the cost of an "≈" caveat on busy tenants.
+const logsSampleSize = 1000
+
+// countUsers reads up to sampleSize users from the list iterator
+// and buckets by status. Returns (counts, sampled) — sampled = true
+// when the iterator might have more data we deliberately didn't
+// drain.
+func countUsers(ctx context.Context, port domain.UsersPort, now time.Time) (dashboard.Counts, bool, error) {
 	if port == nil {
-		return dashboard.Counts{}, nil
+		return dashboard.Counts{}, false, nil
 	}
 	it, err := port.List(ctx, domain.UsersQuery{})
 	if err != nil {
-		return dashboard.Counts{}, err
+		return dashboard.Counts{}, false, err
 	}
 	defer it.Close()
 
-	out := dashboard.Counts{
-		ByStatus:   map[string]int{},
-		ObservedAt: now,
-	}
-	for {
+	out := dashboard.Counts{ByStatus: map[string]int{}, ObservedAt: now}
+	for i := 0; i < sampleSize; i++ {
 		u, hasMore, err := it.Next(ctx)
 		if err != nil {
-			return dashboard.Counts{}, err
+			return dashboard.Counts{}, false, err
 		}
 		if !hasMore {
-			break
+			return out, false, nil
 		}
 		out.Total++
 		key := string(u.Status)
@@ -50,32 +54,30 @@ func countUsers(ctx context.Context, port domain.UsersPort, now time.Time) (dash
 		}
 		out.ByStatus[key]++
 	}
-	return out, nil
+	// We hit the sample cap — assume more pages exist. False
+	// positive on tenants with exactly sampleSize entries is
+	// acceptable (the "≈" prefix just reads as approximate).
+	return out, true, nil
 }
 
-// countGroups walks the Groups iterator and buckets by Type
-// (OKTA_GROUP / APP_GROUP / BUILT_IN).
-func countGroups(ctx context.Context, port domain.GroupsPort, now time.Time) (dashboard.Counts, error) {
+func countGroups(ctx context.Context, port domain.GroupsPort, now time.Time) (dashboard.Counts, bool, error) {
 	if port == nil {
-		return dashboard.Counts{}, nil
+		return dashboard.Counts{}, false, nil
 	}
 	it, err := port.List(ctx, domain.GroupsQuery{})
 	if err != nil {
-		return dashboard.Counts{}, err
+		return dashboard.Counts{}, false, err
 	}
 	defer it.Close()
 
-	out := dashboard.Counts{
-		BySubtype:  map[string]int{},
-		ObservedAt: now,
-	}
-	for {
+	out := dashboard.Counts{BySubtype: map[string]int{}, ObservedAt: now}
+	for i := 0; i < sampleSize; i++ {
 		g, hasMore, err := it.Next(ctx)
 		if err != nil {
-			return dashboard.Counts{}, err
+			return dashboard.Counts{}, false, err
 		}
 		if !hasMore {
-			break
+			return out, false, nil
 		}
 		out.Total++
 		key := string(g.Type)
@@ -84,20 +86,16 @@ func countGroups(ctx context.Context, port domain.GroupsPort, now time.Time) (da
 		}
 		out.BySubtype[key]++
 	}
-	return out, nil
+	return out, true, nil
 }
 
-// countApps walks every app type the Apps screen lists, buckets by
-// Status (ACTIVE / INACTIVE) for the headline status row, and by
-// AppType (SAML_2_0 / OPENID_CONNECT / BOOKMARK / AUTO_LOGIN / …)
-// for the subtype breakdown so the card surfaces both axes.
-func countApps(ctx context.Context, port domain.AppsPort, now time.Time) (dashboard.Counts, error) {
+func countApps(ctx context.Context, port domain.AppsPort, now time.Time) (dashboard.Counts, bool, error) {
 	if port == nil {
-		return dashboard.Counts{}, nil
+		return dashboard.Counts{}, false, nil
 	}
 	it, err := port.List(ctx, domain.AppsQuery{})
 	if err != nil {
-		return dashboard.Counts{}, err
+		return dashboard.Counts{}, false, err
 	}
 	defer it.Close()
 
@@ -106,13 +104,13 @@ func countApps(ctx context.Context, port domain.AppsPort, now time.Time) (dashbo
 		BySubtype:  map[string]int{},
 		ObservedAt: now,
 	}
-	for {
+	for i := 0; i < sampleSize; i++ {
 		a, hasMore, err := it.Next(ctx)
 		if err != nil {
-			return dashboard.Counts{}, err
+			return dashboard.Counts{}, false, err
 		}
 		if !hasMore {
-			break
+			return out, false, nil
 		}
 		out.Total++
 		statusKey := string(a.Status)
@@ -126,5 +124,5 @@ func countApps(ctx context.Context, port domain.AppsPort, now time.Time) (dashbo
 		}
 		out.BySubtype[typeKey]++
 	}
-	return out, nil
+	return out, true, nil
 }

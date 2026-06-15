@@ -68,19 +68,21 @@ var criticalEventTypes = map[string]struct{}{
 	"application.user_membership.remove": {},
 }
 
-// fetchCriticalEvents pulls the last 6h of System Log entries,
-// filters down to criticalEventTypes, and returns the most recent
-// `limit` (newest first). 6h is long enough to capture the
-// "overnight pager" window without burning an excessive log fetch.
+// fetchCriticalEvents pulls a single page of System Log entries
+// from the last hour, filters down to criticalEventTypes, and
+// returns the most recent `limit` (newest first). One API call,
+// bounded — busy tenants get the most recent events without the
+// dashboard fanning out a full 6h walk that crushes the logs
+// rate-limit category.
 func fetchCriticalEvents(ctx context.Context, port domain.LogsPort, now time.Time, limit int) ([]CriticalEvent, error) {
 	if port == nil {
 		return nil, nil
 	}
-	since := now.Add(-6 * time.Hour)
+	since := now.Add(-1 * time.Hour)
 	q := domain.LogsQuery{
 		Since:     &since,
 		SortOrder: domain.SortDescending,
-		Limit:     1000,
+		Limit:     500,
 	}
 	it, err := port.Search(ctx, q)
 	if err != nil {
@@ -89,7 +91,7 @@ func fetchCriticalEvents(ctx context.Context, port domain.LogsPort, now time.Tim
 	defer it.Close()
 
 	out := make([]CriticalEvent, 0, limit*2)
-	for {
+	for i := 0; i < 500; i++ {
 		ev, hasMore, err := it.Next(ctx)
 		if err != nil {
 			return nil, err

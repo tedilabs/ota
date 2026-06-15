@@ -485,13 +485,14 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	switch screen {
 	case "home":
 		return []helpEntry{
-			{"Tab / Shift-Tab", "cycle focus across cards"},
+			{"Tab / Shift-Tab", "cycle focus (also kicks the lazy fetch)"},
 			{"j / k", "next / previous card (or event row when Events focused)"},
 			{"g / G", "first / last card (or first / last event)"},
 			{"Enter", "drill into the focused card's resource"},
 			{"Enter (Events)", "open Logs scoped to the highlighted event's actor"},
-			{"R", "refresh all metrics"},
-			{"t", "cycle the Activity card's secondary window (7d / 30d)"},
+			{"R", "refresh every already-loaded card"},
+			{"t", "cycle Activity window (1h → 6h → 24h)"},
+			{"≈", "prefix = single-page sample, real total is higher"},
 		}
 	case "users":
 		return []helpEntry{

@@ -63,7 +63,7 @@ func Test_Home_EnterOnCard_EmitsOpenScreenMsg(t *testing.T) {
 	assert.Equal(t, "apps", open.Target)
 }
 
-func Test_Home_ActivityWindowToggle_CyclesThrough7dAnd30d(t *testing.T) {
+func Test_Home_ActivityWindowToggle_CyclesThrough_1h_6h_24h(t *testing.T) {
 	t.Parallel()
 	m := home.New(home.Deps{Width: 200, Height: 60})
 
@@ -74,17 +74,22 @@ func Test_Home_ActivityWindowToggle_CyclesThrough7dAnd30d(t *testing.T) {
 	}
 	require.Equal(t, home.CardActivity, m.FocusedCard())
 
-	// Default window is 7d. `t` flips to 30d. Another `t` flips back.
-	require.Contains(t, m.View(), "7d",
-		"precondition: Activity card opens at 7d secondary window")
+	// Default window is 1h (cheap-by-default — wider windows
+	// burn more logs rate-limit budget so they're opt-in).
+	require.Contains(t, m.View(), "Activity (1h)",
+		"precondition: Activity card opens on the cheap 1h window")
 
 	m = runKey(t, m, 't')
-	assert.Contains(t, m.View(), "30d",
-		"first 't' must cycle the secondary window to 30d")
+	assert.Contains(t, m.View(), "Activity (6h)",
+		"first 't' must widen the window to 6h")
 
 	m = runKey(t, m, 't')
-	assert.Contains(t, m.View(), "7d",
-		"second 't' must cycle back to 7d")
+	assert.Contains(t, m.View(), "Activity (24h)",
+		"second 't' must widen the window to 24h")
+
+	m = runKey(t, m, 't')
+	assert.Contains(t, m.View(), "Activity (1h)",
+		"third 't' must wrap back to 1h")
 }
 
 func Test_Home_HealthCard_RendersAfterUpdateHealthMsg(t *testing.T) {
@@ -150,8 +155,8 @@ func Test_Home_PostureCard_RendersAfterPostureLoadedMsg(t *testing.T) {
 	t.Parallel()
 	m := home.New(home.Deps{Width: 200, Height: 60})
 
-	require.Contains(t, m.View(), "loading…",
-		"Posture card pre-msg renders 'loading…'")
+	require.Contains(t, m.View(), "Tab to fetch",
+		"Posture card pre-msg renders the lazy-fetch hint (no auto-fetch on boot to preserve rate-limit budget)")
 
 	m = runMsg(t, m, home.PostureLoadedForTest(home.PostureMetrics{
 		SuperAdmins:       7,
