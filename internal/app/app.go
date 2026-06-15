@@ -149,6 +149,55 @@ func (m *Model) popNav() (Screen, bool) {
 // surfacing the legacy "nothing to close" toast.
 func (m Model) canPopNav() bool { return len(m.navStack) > 1 }
 
+// broadcastHealth pushes a fresh HealthSnapshot into the home
+// screen so its Health card can re-render with the latest tenant-
+// status / rate-limit signals. No-op when the home screen isn't
+// instantiated (operator hasn't visited it this session).
+func (m *Model) broadcastHealth() {
+	child, ok := m.screens[ScreenHome]
+	if !ok {
+		return
+	}
+	var rls []domain.RateLimitSnapshot
+	if m.deps.RateLimit != nil {
+		rls = m.deps.RateLimit.Snapshots()
+	}
+	snap := home.HealthSnapshot{
+		OktaStatus:  m.oktaStatus,
+		RateLimits:  rls,
+		LastFetchAt: m.healthLastFetch(),
+		ObservedAt:  m.now(),
+	}
+	if m.deps.APIRecorder != nil {
+		snap.APIRecorderCount = len(m.deps.APIRecorder.Snapshot())
+	}
+	updated, _ := child.Update(home.UpdateHealthMsg{Snapshot: snap})
+	m.screens[ScreenHome] = updated
+}
+
+// healthLastFetch returns the freshest LastUpdated stamp from any
+// list/detail screen — used by Health card's "Last fetch: 2s ago".
+func (m Model) healthLastFetch() time.Time {
+	var newest time.Time
+	for _, child := range m.screens {
+		if st, ok := child.(LastUpdatedStater); ok {
+			t := st.LastUpdated()
+			if t.After(newest) {
+				newest = t
+			}
+		}
+	}
+	return newest
+}
+
+// now returns the model's logical wall clock.
+func (m Model) now() time.Time {
+	if m.deps.Clock != nil {
+		return m.deps.Clock.Now()
+	}
+	return time.Now()
+}
+
 // Overlay identifies the active overlay, if any.
 type Overlay int
 
@@ -508,6 +557,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// surfaces the unreachable state rather than a stale
 		// "operational" reading.
 		m.oktaStatus = msg.snap
+		m.broadcastHealth()
 		return m, scheduleOktaStatusTickCmd(m.deps.OktaStatusEndpoint, msg.snap.Indicator)
 	case openCmdPaletteMsg:
 		m.overlay = OverlayPalette

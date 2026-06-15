@@ -23,6 +23,7 @@ import (
 	"github.com/tedilabs/ota/internal/dashboard"
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
+	"github.com/tedilabs/ota/internal/oktastatus"
 	"github.com/tedilabs/ota/internal/tui/shared"
 )
 
@@ -91,6 +92,17 @@ type cardState struct {
 	// hasCounts distinguishes "we observed an empty list" (Total=0
 	// but real) from "we haven't fetched yet" (Total=0 and stale).
 	hasCounts bool
+
+	// Activity-specific state. The Activity card fans out TWO
+	// fetches (24h + 7d) so we accumulate them as they land.
+	activity24h    ActivityMetrics
+	activity7d     ActivityMetrics
+	hasActivity24h bool
+	hasActivity7d  bool
+
+	// Posture-specific state.
+	posture    PostureMetrics
+	hasPosture bool
 }
 
 // Model is the home dashboard screen.
@@ -103,6 +115,13 @@ type Model struct {
 	cursor int // index into cardOrder
 
 	cards map[CardID]*cardState
+
+	// health is pushed from the App Shell via UpdateHealthMsg —
+	// the chrome already tracks the underlying signals (Okta
+	// status probe, rate-limit monitor, last fetch), so the home
+	// screen reuses them instead of re-fetching.
+	health    HealthSnapshot
+	hasHealth bool
 
 	lastUpdated time.Time
 	refreshGen  int
@@ -173,9 +192,10 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// fetchCmdFor returns the cmd that loads `c`'s counts, or nil when
-// the card isn't fetchable in this phase. The returned msg is a
-// per-card cardLoadedMsg that Update folds back into m.cards.
+// fetchCmdFor returns the cmd that loads `c`'s data, or nil when
+// the card isn't fetchable. Activity returns a tea.Batch of two
+// cmds (24h + 7d) so the card paints partial data as windows land
+// independently.
 func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 	switch c {
 	case CardUsers:
@@ -211,18 +231,71 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 			counts, err := countApps(ctx, port, m.now())
 			return cardLoadedMsg{card: CardApps, counts: counts, err: err}
 		}
+	case CardActivity:
+		if m.deps.Logs == nil {
+			return nil
+		}
+		port := m.deps.Logs
+		now := m.now()
+		return tea.Batch(
+			func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer cancel()
+				win := activityWindow{label: "24h", since: 24 * time.Hour, withSpark: true}
+				m, err := countActivity(ctx, port, now, win)
+				return activityLoadedMsg{window: "24h", metrics: m, err: err}
+			},
+			func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+				defer cancel()
+				win := activityWindow{label: "7d", since: 7 * 24 * time.Hour, withSpark: false}
+				m, err := countActivity(ctx, port, now, win)
+				return activityLoadedMsg{window: "7d", metrics: m, err: err}
+			},
+		)
+	case CardPosture:
+		// Posture fans out across multiple ports inside countPosture;
+		// gate only on having SOMETHING wired so a partial deps
+		// still renders a partial card.
+		if m.deps.Administrators == nil && m.deps.APITokens == nil &&
+			m.deps.GroupRules == nil && m.deps.Authenticators == nil {
+			return nil
+		}
+		deps := m.deps
+		now := m.now()
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			p := countPosture(ctx, deps, now)
+			return postureLoadedMsg{metrics: p}
+		}
 	}
 	return nil
 }
 
-// cardLoadedMsg is the result one card fetcher delivers back to
-// Update. Phase 4 will add cardLoadedActivityMsg etc. with their
-// own payload shapes; keeping per-card msg types means the type
-// switch in Update reads as documentation.
+// cardLoadedMsg is the result one count-card fetcher delivers back
+// to Update. Activity / Posture use their own msg types with
+// per-card payload shapes — keeps the type switch in Update
+// reading as documentation.
 type cardLoadedMsg struct {
 	card   CardID
 	counts dashboard.Counts
 	err    error
+}
+
+// activityLoadedMsg is the per-window result from countActivity.
+// Two of these land per Activity refresh (24h + 7d) and Update
+// folds each into m.cards[CardActivity] without blocking the other
+// window.
+type activityLoadedMsg struct {
+	window  string // "24h" / "7d"
+	metrics ActivityMetrics
+	err     error
+}
+
+// postureLoadedMsg delivers the Risk & Governance snapshot.
+type postureLoadedMsg struct {
+	metrics PostureMetrics
 }
 
 // refreshTickMsg fires the auto-refresh chain. Carries a gen value
@@ -259,6 +332,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			st.hasCounts = true
 			m.persist(msg.card, msg.counts)
 		}
+		m.lastUpdated = m.now()
+		return m, nil
+	case activityLoadedMsg:
+		st := m.cards[CardActivity]
+		if st == nil {
+			st = &cardState{}
+			m.cards[CardActivity] = st
+		}
+		st.loading = false
+		st.err = msg.err
+		if msg.err == nil {
+			switch msg.window {
+			case "24h":
+				st.activity24h = msg.metrics
+				st.hasActivity24h = true
+			case "7d":
+				st.activity7d = msg.metrics
+				st.hasActivity7d = true
+			}
+		}
+		m.lastUpdated = m.now()
+		return m, nil
+	case postureLoadedMsg:
+		st := m.cards[CardPosture]
+		if st == nil {
+			st = &cardState{}
+			m.cards[CardPosture] = st
+		}
+		st.loading = false
+		st.posture = msg.metrics
+		st.hasPosture = true
+		m.lastUpdated = m.now()
+		return m, nil
+	case UpdateHealthMsg:
+		m.health = msg.Snapshot
+		m.hasHealth = true
 		m.lastUpdated = m.now()
 		return m, nil
 	case refreshTickMsg:
@@ -440,16 +549,223 @@ func (m Model) renderGrid(width int, tk shared.Tokens) string {
 		m.renderCountCard(CardApps, "Apps", []string{"ACTIVE", "INACTIVE"}),
 	)
 	row2 := m.renderRow(width, tk,
-		m.renderPlaceholder(CardActivity, "Activity (last 24h · 7d)", "wires in Phase 4 — sign-ins, failures, lockouts, MFA resets"),
+		m.renderActivityCard(tk),
 	)
 	row3 := m.renderRow(width, tk,
-		m.renderPlaceholder(CardPosture, "Posture & Risk", "wires in Phase 4 — super-admins, expiring tokens, inactive users"),
-		m.renderPlaceholder(CardHealth, "Health", "wires in Phase 4 — Okta status, rate-limit headroom, last fetch age"),
+		m.renderPostureCard(tk),
+		m.renderHealthCard(tk),
 	)
 	row4 := m.renderRow(width, tk,
 		m.renderPlaceholder(CardEvents, "Recent Critical Events", "wires in Phase 5 — last N high-severity log events"),
 	)
 	return row1 + "\n\n" + row2 + "\n\n" + row3 + "\n\n" + row4
+}
+
+// renderActivityCard surfaces the two-window summary on top, the
+// hourly sign-in sparkline on the bottom. Missing windows render
+// "—" so the operator sees partial data as it lands.
+func (m Model) renderActivityCard(tk shared.Tokens) string {
+	st := m.cards[CardActivity]
+	focused := m.focus == CardActivity
+	titleStyle := tk.Muted.Bold(true)
+	if focused {
+		titleStyle = tk.Accent.Bold(true)
+	}
+	header := titleStyle.Render("Activity (24h · 7d)")
+	if st == nil || (!st.hasActivity24h && !st.hasActivity7d) {
+		body := tk.Muted.Render("loading…")
+		if st != nil && st.err != nil {
+			body = tk.Danger.Render("err: " + truncate(st.err.Error(), 60))
+		}
+		return header + "\n" + body
+	}
+	metricRow := func(label string, a, b int, haveA, haveB bool, alarmFn func(int) bool) string {
+		left := tk.Muted.Render(shared.PadOrTruncateVisible(label, 18))
+		valA := "—"
+		if haveA {
+			valA = formatThousands(a)
+		}
+		valB := "—"
+		if haveB {
+			valB = formatThousands(b)
+		}
+		styleA := tk.FG
+		styleB := tk.FG
+		if alarmFn != nil {
+			if alarmFn(a) {
+				styleA = tk.Danger
+			}
+			if alarmFn(b) {
+				styleB = tk.Danger
+			}
+		}
+		return left +
+			styleA.Render(rpad(valA, 8)) + tk.Muted.Render("(24h) ") +
+			styleB.Render(rpad(valB, 8)) + tk.Muted.Render("(7d)")
+	}
+	lines := []string{
+		header,
+		metricRow("Sign-ins",        st.activity24h.SignIns,       st.activity7d.SignIns,       st.hasActivity24h, st.hasActivity7d, nil),
+		metricRow("Failed sign-ins", st.activity24h.FailedSignIns, st.activity7d.FailedSignIns, st.hasActivity24h, st.hasActivity7d, func(n int) bool { return n > 100 }),
+		metricRow("Account lockouts", st.activity24h.AccountLocks, st.activity7d.AccountLocks, st.hasActivity24h, st.hasActivity7d, func(n int) bool { return n > 0 }),
+		metricRow("MFA resets",       st.activity24h.MFAResets,    st.activity7d.MFAResets,    st.hasActivity24h, st.hasActivity7d, nil),
+		metricRow("Admin actions",    st.activity24h.AdminActions, st.activity7d.AdminActions, st.hasActivity24h, st.hasActivity7d, nil),
+		metricRow("User creates",     st.activity24h.UserCreates,  st.activity7d.UserCreates,  st.hasActivity24h, st.hasActivity7d, nil),
+	}
+	if st.hasActivity24h && len(st.activity24h.HourlyBuckets) > 0 {
+		spark := dashboard.NormalizeSparkline(st.activity24h.HourlyBuckets)
+		lines = append(lines, "", tk.Muted.Render("hourly sign-ins ")+tk.Accent.Render(dashboard.RenderSparkline(spark)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderPostureCard surfaces risk + governance signals with a
+// one-glyph status icon (✓ / ⚠ / ✗) per row so the eye snaps to
+// rows that need attention.
+func (m Model) renderPostureCard(tk shared.Tokens) string {
+	st := m.cards[CardPosture]
+	focused := m.focus == CardPosture
+	titleStyle := tk.Muted.Bold(true)
+	if focused {
+		titleStyle = tk.Accent.Bold(true)
+	}
+	header := titleStyle.Render("Posture & Risk")
+	if st == nil || !st.hasPosture {
+		return header + "\n" + tk.Muted.Render("loading…")
+	}
+	p := st.posture
+	row := func(icon, msg string, style any) string {
+		s := tk.FG
+		switch ss := style.(type) {
+		case string:
+			switch ss {
+			case "ok":
+				s = tk.Success
+			case "warn":
+				s = tk.Warning
+			case "danger":
+				s = tk.Danger
+			case "muted":
+				s = tk.Muted
+			}
+		}
+		return s.Render(icon) + " " + tk.FG.Render(msg)
+	}
+
+	lines := []string{header}
+
+	// Super admins — > 5 is widely cited as a least-privilege smell.
+	switch {
+	case p.SuperAdmins == 0 && p.TotalAdmins > 0:
+		lines = append(lines, row("✓", "0 SUPER_ADMINs (least-privilege)", "ok"))
+	case p.SuperAdmins > 5:
+		lines = append(lines, row("⚠", formatThousands(p.SuperAdmins)+" SUPER_ADMINs (review)", "warn"))
+	case p.TotalAdmins > 0:
+		lines = append(lines, row("·", formatThousands(p.SuperAdmins)+" SUPER_ADMINs", "muted"))
+	}
+
+	// Expiring tokens.
+	switch {
+	case p.ExpiringTokens7d > 0:
+		lines = append(lines, row("⚠", formatThousands(p.ExpiringTokens7d)+" API tokens expire <7d", "warn"))
+	case p.TotalTokens > 0:
+		lines = append(lines, row("✓", "no tokens expiring this week", "ok"))
+	}
+
+	// Invalid group rules.
+	switch {
+	case p.InvalidGroupRules > 0:
+		lines = append(lines, row("✗", formatThousands(p.InvalidGroupRules)+" INVALID group rules", "danger"))
+	case p.TotalGroupRules > 0:
+		lines = append(lines, row("✓", "0 invalid group rules", "ok"))
+	}
+
+	// Inactive authenticators (read-only signal — operator decides).
+	if p.TotalAuthenticators > 0 {
+		if p.InactiveAuthenticators > 0 {
+			lines = append(lines, row("·",
+				formatThousands(p.InactiveAuthenticators)+" of "+formatThousands(p.TotalAuthenticators)+" authenticators INACTIVE",
+				"muted"))
+		}
+	}
+
+	// Partial-fetch errors.
+	for _, e := range p.Errs {
+		lines = append(lines, tk.Warning.Render("· "+e))
+	}
+
+	if len(lines) == 1 {
+		lines = append(lines, tk.Muted.Render("· nothing to surface yet"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderHealthCard shows live-system signals the App Shell already
+// tracks for its title bar — surfaced here so an operator landing
+// on the home screen sees them without scanning the chrome.
+func (m Model) renderHealthCard(tk shared.Tokens) string {
+	focused := m.focus == CardHealth
+	titleStyle := tk.Muted.Bold(true)
+	if focused {
+		titleStyle = tk.Accent.Bold(true)
+	}
+	header := titleStyle.Render("Health")
+	if !m.hasHealth {
+		return header + "\n" + tk.Muted.Render("warming up…")
+	}
+	h := m.health
+
+	lines := []string{header}
+
+	// Okta status.com signal.
+	switch h.OktaStatus.Indicator {
+	case oktastatus.IndicatorOperational:
+		lines = append(lines, tk.Success.Render("✓")+" "+tk.FG.Render("Okta API operational"))
+	case oktastatus.IndicatorUnknown:
+		lines = append(lines, tk.Muted.Render("·")+" "+tk.Muted.Render("status: unknown"))
+	case oktastatus.IndicatorMaintenance:
+		lines = append(lines, tk.Muted.Render("⏱")+" "+tk.Muted.Render("Okta maintenance: "+h.OktaStatus.Indicator.Label()))
+	default:
+		lines = append(lines, tk.Warning.Render("⚠")+" "+tk.Warning.Render("Okta status: "+h.OktaStatus.Indicator.Label()))
+	}
+
+	// Rate-limit headroom — show the worst-case bucket.
+	if worst, pct := worstRateLimit(h.RateLimits); worst.Category != "" {
+		label := "RL headroom: " + formatPct(pct) + " (" + worst.Category + ")"
+		switch {
+		case pct < 10:
+			lines = append(lines, tk.Danger.Render("✗ ")+tk.Danger.Render(label))
+		case pct < 25:
+			lines = append(lines, tk.Warning.Render("⚠ ")+tk.Warning.Render(label))
+		default:
+			lines = append(lines, tk.Success.Render("✓ ")+tk.FG.Render(label))
+		}
+	}
+
+	// Last fetch age — useful when auto-refresh is off and the
+	// numbers might be hours-stale.
+	if !h.LastFetchAt.IsZero() {
+		lines = append(lines, tk.Muted.Render("⏱ Last fetch: ")+tk.FG.Render(relativeAge(m.now(), h.LastFetchAt)))
+	}
+
+	if h.APIRecorderCount > 0 {
+		lines = append(lines, tk.Muted.Render("· API timeline: ")+tk.FG.Render(formatThousands(h.APIRecorderCount))+tk.Muted.Render(" calls"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// rpad right-pads s to n cells (left-aligned cell content).
+func rpad(s string, n int) string {
+	w := shared.VisibleWidth(s)
+	if w >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-w)
+}
+
+// formatPct rounds the float to int + "%". 78.9 → "79%".
+func formatPct(p float64) string {
+	return strconv.Itoa(int(p+0.5)) + "%"
 }
 
 // renderCountCard renders one Users/Groups/Apps card with the big
