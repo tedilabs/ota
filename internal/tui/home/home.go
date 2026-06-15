@@ -453,7 +453,8 @@ func (m Model) renderGrid(width int, tk shared.Tokens) string {
 }
 
 // renderCountCard renders one Users/Groups/Apps card with the big
-// number, freshness stamp, and per-status breakdown rows. statusKeys
+// number, freshness stamp, Δ-vs-1d / Δ-vs-7d row, per-status
+// breakdown rows, and a 14-day sparkline trend line. statusKeys
 // dictates the order of the breakdown — keeping it explicit means
 // "ACTIVE" always sits above "DEPROVISIONED" regardless of map
 // iteration order.
@@ -482,13 +483,30 @@ func (m Model) renderCountCard(id CardID, title string, statusKeys []string) str
 	}
 	big := bigStyle.Render(formatThousands(st.counts.Total))
 
-	// "5m ago" freshness stamp (Phase 3 will fold Δ-vs-7d here too).
 	age := tk.Muted.Render(relativeAge(m.now(), st.counts.ObservedAt))
 	if st.loading {
 		age = tk.Muted.Render("refreshing…")
 	}
 
-	lines := []string{header, big + "  " + age, ""}
+	lines := []string{header, big + "  " + age}
+
+	// Δ row — both 1d and 7d windows so the operator sees daily
+	// churn next to weekly trend. Hidden when neither window has
+	// a comparable historical roll yet.
+	if cacheKey, ok := cacheKeyFor(id); ok {
+		deltaLine := m.renderDeltaRow(cacheKey, tk)
+		if deltaLine != "" {
+			lines = append(lines, deltaLine)
+		}
+		// Trend sparkline — 14-day series for the 7d window.
+		spark := m.renderTrendSparkline(cacheKey, tk)
+		if spark != "" {
+			lines = append(lines, spark)
+		}
+	}
+
+	lines = append(lines, "")
+
 	// Sort breakdown: explicit-order keys first, then any extras
 	// observed but not enumerated.
 	seen := map[string]struct{}{}
@@ -503,7 +521,6 @@ func (m Model) renderCountCard(id CardID, title string, statusKeys []string) str
 		seen[k] = struct{}{}
 		lines = append(lines, formatStatusRow(k, v, tk))
 	}
-	// Append unknown keys for visibility, sorted alphabetically.
 	extras := make([]string, 0)
 	addExtras := func(src map[string]int) {
 		for k := range src {
@@ -524,6 +541,60 @@ func (m Model) renderCountCard(id CardID, title string, statusKeys []string) str
 		lines = append(lines, formatStatusRow(k, v, tk))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// renderDeltaRow assembles the "+47 ↑ (7d)   +3 → (1d)" line.
+// Returns empty when neither window has a comparable previous
+// roll — typical for the first session before the cache has
+// accumulated history.
+func (m Model) renderDeltaRow(cacheKey string, tk shared.Tokens) string {
+	d7 := dashboard.DeltaFor(m.deps.Cache, cacheKey, m.now(), 7)
+	d1 := dashboard.DeltaFor(m.deps.Cache, cacheKey, m.now(), 1)
+	if !d7.Compared && !d1.Compared {
+		return ""
+	}
+	parts := []string{}
+	if d7.Compared {
+		parts = append(parts, formatDeltaCell(d7, "7d", tk))
+	}
+	if d1.Compared {
+		parts = append(parts, formatDeltaCell(d1, "1d", tk))
+	}
+	return strings.Join(parts, "   ")
+}
+
+// formatDeltaCell stamps "+47 ↑ (7d)" with the arrow + sign tinted
+// by direction. Flat (Diff == 0) uses → in muted; positive uses ↑
+// in accent; negative uses ↓ in warning to draw the eye (an
+// admin's "wait, why are users going down?" trigger).
+func formatDeltaCell(d dashboard.Delta, label string, tk shared.Tokens) string {
+	arrow := "→"
+	style := tk.Muted
+	sign := ""
+	switch {
+	case d.Diff > 0:
+		arrow = "↑"
+		style = tk.Accent
+		sign = "+"
+	case d.Diff < 0:
+		arrow = "↓"
+		style = tk.Warning
+		// strconv handles the leading minus.
+	}
+	num := sign + formatThousands(d.Diff)
+	return style.Render(num+" "+arrow) + tk.Muted.Render(" ("+label+")")
+}
+
+// renderTrendSparkline produces the per-card 14-day sparkline. The
+// caller pads to the card width so the trend reads as a horizontal
+// band sitting flush with the Δ row above.
+func (m Model) renderTrendSparkline(cacheKey string, tk shared.Tokens) string {
+	d := dashboard.DeltaFor(m.deps.Cache, cacheKey, m.now(), 7)
+	if len(d.Sparkline) < 2 {
+		return ""
+	}
+	bar := dashboard.RenderSparkline(d.Sparkline)
+	return tk.Muted.Render("trend ") + tk.Accent.Render(bar)
 }
 
 func formatStatusRow(label string, count int, tk shared.Tokens) string {
