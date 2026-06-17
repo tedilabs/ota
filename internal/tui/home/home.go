@@ -86,6 +86,16 @@ var cardOrder = []CardID{
 	CardActivity, CardPosture, CardHealth, CardEvents,
 }
 
+// Cache keys for the headline scalars the home screen rolls into
+// dashboard.Cache.History so subsequent sessions render "+X ↑ vs 1d"
+// deltas. Kept narrow on purpose — every new key bloats the cache
+// file. Pick metrics where the day-over-day signal is meaningful.
+const (
+	cacheKeyActivitySignIns        = "activity-signins-24h"
+	cacheKeyPostureFailedSignIns   = "posture-failed-signins-7d"
+	cacheKeyPostureSensitiveWrites = "posture-sensitive-writes-7d"
+)
+
 // cardState tracks per-card lifecycle independently — fetching,
 // last error, last successful observation. The View reads these to
 // paint the freshness stamp + spinner / error glyph.
@@ -323,6 +333,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			st.activity = msg.metrics
 			st.hasActivity = true
 			st.sampled = msg.sampled
+			// Roll today's 24h sign-in headline into the cache so
+			// next session paints a "+X ↑ vs 1d" delta. Only the
+			// 24h window goes in — 1h / 6h windows are exploratory.
+			if msg.window == "24h" && m.deps.Cache != nil {
+				_ = m.deps.Cache.Put(cacheKeyActivitySignIns, dashboard.Counts{
+					Total:      msg.metrics.SignIns,
+					ObservedAt: m.now(),
+				})
+			}
 		}
 		m.lastUpdated = m.now()
 		return m, nil
@@ -335,6 +354,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		st.loading = false
 		st.posture = msg.metrics
 		st.hasPosture = true
+		if m.deps.Cache != nil {
+			_ = m.deps.Cache.Put(cacheKeyPostureFailedSignIns, dashboard.Counts{
+				Total:      msg.metrics.FailedSignIns7d,
+				ObservedAt: m.now(),
+			})
+			_ = m.deps.Cache.Put(cacheKeyPostureSensitiveWrites, dashboard.Counts{
+				Total:      msg.metrics.SensitiveWrites7d,
+				ObservedAt: m.now(),
+			})
+		}
 		m.lastUpdated = m.now()
 		return m, nil
 	case UpdateHealthMsg:
@@ -750,6 +779,14 @@ func (m Model) renderActivityCard(tk shared.Tokens) string {
 		metricRow("App assign +",     a.AppAssignAdds,  nil),
 		metricRow("App assign −",     a.AppAssignRemoves, nil),
 	)
+	// Delta footer only kicks in for the 24h window — the 1h/6h
+	// windows are exploratory + we only roll the 24h sign-in total
+	// into cache history.
+	if winLabel == "24h" && m.deps.Cache != nil {
+		if footer := m.renderDeltaFooter(tk, cacheKeyActivitySignIns, "sign-ins"); footer != "" {
+			lines = append(lines, "", footer)
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -878,7 +915,58 @@ func (m Model) renderPostureCard(tk shared.Tokens) string {
 	if len(lines) == 2 {
 		lines = append(lines, tk.Muted.Render("· nothing to surface yet"))
 	}
+	if m.deps.Cache != nil {
+		if footer := m.renderDeltaFooter(tk, cacheKeyPostureFailedSignIns, "failed sign-ins"); footer != "" {
+			lines = append(lines, "", footer)
+		}
+	}
 	return strings.Join(lines, "\n")
+}
+
+// renderDeltaFooter renders a "Δ +X vs 1d / Δ −Y vs 7d" muted strip
+// based on the cache history for the given key. Returns empty when
+// there's nothing to compare against (fresh cache / first run) so
+// the card layout doesn't blow out with a permanent "uncompared"
+// placeholder.
+func (m Model) renderDeltaFooter(tk shared.Tokens, key, label string) string {
+	if m.deps.Cache == nil {
+		return ""
+	}
+	now := m.now()
+	d1 := dashboard.DeltaFor(m.deps.Cache, key, now, 1)
+	d7 := dashboard.DeltaFor(m.deps.Cache, key, now, 7)
+	if !d1.Compared && !d7.Compared {
+		return ""
+	}
+	cells := []string{tk.Muted.Render(label + " Δ ")}
+	if d1.Compared {
+		cells = append(cells, formatDeltaCell(d1.Diff, "1d", tk))
+	}
+	if d7.Compared {
+		cells = append(cells, formatDeltaCell(d7.Diff, "7d", tk))
+	}
+	return strings.Join(cells, "  ")
+}
+
+// formatDeltaCell stamps "+12 ↑ (1d)" / "−4 ↓ (7d)" / "  0 = (1d)"
+// with a severity-tinted glyph so the eye snaps to direction.
+func formatDeltaCell(diff int, window string, tk shared.Tokens) string {
+	glyph := "="
+	style := tk.Muted
+	sign := ""
+	val := diff
+	switch {
+	case diff > 0:
+		glyph = "↑"
+		style = tk.Warning
+		sign = "+"
+	case diff < 0:
+		glyph = "↓"
+		style = tk.Success
+		val = -diff
+		sign = "−"
+	}
+	return style.Render(sign+formatThousands(val)+" "+glyph) + tk.Muted.Render(" ("+window+")")
 }
 
 // percentOf returns hits / total as a 0..1 fraction. Returns 0 when
