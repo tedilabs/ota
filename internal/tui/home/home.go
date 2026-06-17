@@ -243,19 +243,19 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 			return activityLoadedMsg{window: win.label, metrics: am, sampled: sampled, err: err}
 		}
 	case CardPosture:
-		// Posture fans out across multiple ports inside countPosture;
-		// gate only on having SOMETHING wired so a partial deps
-		// still renders a partial card.
-		if m.deps.Administrators == nil && m.deps.APITokens == nil &&
-			m.deps.GroupRules == nil && m.deps.Authenticators == nil {
+		// Posture is derived from a single 7d /api/v1/logs walk —
+		// the dashboard never fans out across resource ports for
+		// this card. Logs is its own rate-limit category so the
+		// per-resource screens stay unaffected.
+		if m.deps.Logs == nil {
 			return nil
 		}
-		deps := m.deps
+		port := m.deps.Logs
 		now := m.now()
 		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			p := countPosture(ctx, deps, now)
+			p := countPosture(ctx, port, now)
 			return postureLoadedMsg{metrics: p}
 		}
 	case CardEvents:
@@ -775,70 +775,128 @@ func (m Model) renderPostureCard(tk shared.Tokens) string {
 		return header + "\n" + body
 	}
 	p := st.posture
-	row := func(icon, msg string, style any) string {
+	row := func(icon, msg, severity string) string {
 		s := tk.FG
-		switch ss := style.(type) {
-		case string:
-			switch ss {
-			case "ok":
-				s = tk.Success
-			case "warn":
-				s = tk.Warning
-			case "danger":
-				s = tk.Danger
-			case "muted":
-				s = tk.Muted
-			}
+		switch severity {
+		case "ok":
+			s = tk.Success
+		case "warn":
+			s = tk.Warning
+		case "danger":
+			s = tk.Danger
+		case "muted":
+			s = tk.Muted
 		}
 		return s.Render(icon) + " " + tk.FG.Render(msg)
 	}
+	prefix := ""
+	if p.Sampled {
+		prefix = "≈ "
+	}
 
 	lines := []string{header}
+	lines = append(lines, tk.Muted.Render("7-day window"))
 
-	// Super admins — > 5 is widely cited as a least-privilege smell.
+	// Failed sign-in pressure — absolute count + share of total.
 	switch {
-	case p.SuperAdmins == 0 && p.TotalAdmins > 0:
-		lines = append(lines, row("✓", "0 SUPER_ADMINs (least-privilege)", "ok"))
-	case p.SuperAdmins > 5:
-		lines = append(lines, row("⚠", formatThousands(p.SuperAdmins)+" SUPER_ADMINs (review)", "warn"))
-	case p.TotalAdmins > 0:
-		lines = append(lines, row("·", formatThousands(p.SuperAdmins)+" SUPER_ADMINs", "muted"))
-	}
-
-	// Expiring tokens.
-	switch {
-	case p.ExpiringTokens7d > 0:
-		lines = append(lines, row("⚠", formatThousands(p.ExpiringTokens7d)+" API tokens expire <7d", "warn"))
-	case p.TotalTokens > 0:
-		lines = append(lines, row("✓", "no tokens expiring this week", "ok"))
-	}
-
-	// Invalid group rules.
-	switch {
-	case p.InvalidGroupRules > 0:
-		lines = append(lines, row("✗", formatThousands(p.InvalidGroupRules)+" INVALID group rules", "danger"))
-	case p.TotalGroupRules > 0:
-		lines = append(lines, row("✓", "0 invalid group rules", "ok"))
-	}
-
-	// Inactive authenticators (read-only signal — operator decides).
-	if p.TotalAuthenticators > 0 {
-		if p.InactiveAuthenticators > 0 {
-			lines = append(lines, row("·",
-				formatThousands(p.InactiveAuthenticators)+" of "+formatThousands(p.TotalAuthenticators)+" authenticators INACTIVE",
-				"muted"))
+	case p.FailedSignIns7d == 0 && p.SignIns7d > 0:
+		lines = append(lines, row("✓", "no failed sign-ins (7d)", "ok"))
+	case p.FailedSignIns7d > 0 && p.SignIns7d > 0:
+		share := percentOf(p.FailedSignIns7d, p.SignIns7d)
+		sev := "warn"
+		if share >= 0.20 {
+			sev = "danger"
 		}
+		lines = append(lines, row("⚠",
+			prefix+formatThousands(p.FailedSignIns7d)+" failed sign-ins (7d) — "+formatPercent(share),
+			sev))
 	}
 
-	// Partial-fetch errors.
-	for _, e := range p.Errs {
-		lines = append(lines, tk.Warning.Render("· "+e))
+	// Account lockouts — anything > 0 is investigable.
+	if p.AccountLocks7d > 0 {
+		sev := "warn"
+		if p.AccountLocks7d > 25 {
+			sev = "danger"
+		}
+		lines = append(lines, row("⚠",
+			prefix+formatThousands(p.AccountLocks7d)+" account lockouts (7d)",
+			sev))
 	}
 
-	if len(lines) == 1 {
+	// MFA resets — destructive, but routine in small numbers.
+	if p.MFAResets7d > 0 {
+		sev := "muted"
+		if p.MFAResets7d > 10 {
+			sev = "warn"
+		}
+		lines = append(lines, row("·",
+			prefix+formatThousands(p.MFAResets7d)+" MFA factor resets (7d)",
+			sev))
+	}
+
+	// Admin sprawl + sensitive-write pressure.
+	if p.SensitiveWrites7d > 0 {
+		lines = append(lines, row("·",
+			prefix+formatThousands(p.SensitiveWrites7d)+" sensitive admin writes (7d)",
+			"muted"))
+	}
+	switch {
+	case p.DistinctAdminActors7d > 10:
+		lines = append(lines, row("⚠",
+			formatThousands(p.DistinctAdminActors7d)+" distinct admin actors (review sprawl)",
+			"warn"))
+	case p.DistinctAdminActors7d > 0:
+		lines = append(lines, row("·",
+			formatThousands(p.DistinctAdminActors7d)+" distinct admin actors",
+			"muted"))
+	}
+
+	// Offboarding / deletes — destructive lifecycle moves.
+	if p.UserDeletes7d > 0 {
+		sev := "warn"
+		if p.UserDeletes7d > 25 {
+			sev = "danger"
+		}
+		lines = append(lines, row("⚠",
+			prefix+formatThousands(p.UserDeletes7d)+" user deletes (7d)",
+			sev))
+	}
+	if p.AppRemoves7d > 0 {
+		lines = append(lines, row("·",
+			prefix+formatThousands(p.AppRemoves7d)+" app deactivations / deletes (7d)",
+			"muted"))
+	}
+	if p.UserSuspends7d > 0 {
+		lines = append(lines, row("·",
+			prefix+formatThousands(p.UserSuspends7d)+" user suspends (7d)",
+			"muted"))
+	}
+
+	if p.Err != "" {
+		lines = append(lines, tk.Warning.Render("· "+p.Err))
+	}
+	if len(lines) == 2 {
 		lines = append(lines, tk.Muted.Render("· nothing to surface yet"))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// percentOf returns hits / total as a 0..1 fraction. Returns 0 when
+// total == 0 so callers don't need to guard divide-by-zero.
+func percentOf(hits, total int) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(hits) / float64(total)
+}
+
+// formatPercent renders a 0..1 fraction as a "12%" string.
+func formatPercent(frac float64) string {
+	p := frac * 100
+	if p < 1 {
+		return "<1%"
+	}
+	return strconv.Itoa(int(p+0.5)) + "%"
 }
 
 // renderHealthCard shows live-system signals the App Shell already

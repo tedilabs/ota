@@ -147,23 +147,29 @@ func Test_Home_PostureCard_RendersAfterPostureLoadedMsg(t *testing.T) {
 	require.Contains(t, m.View(), "Tab to fetch",
 		"Posture card pre-msg renders the lazy-fetch hint (no auto-fetch on boot to preserve rate-limit budget)")
 
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	m = runMsg(t, m, home.PostureLoadedForTest(home.PostureMetrics{
-		SuperAdmins:       7,
-		TotalAdmins:       12,
-		ExpiringTokens7d:  2,
-		TotalTokens:       5,
-		InvalidGroupRules: 1,
-		TotalGroupRules:   30,
-		ObservedAt:        time.Now(),
+		WindowSince:           now.AddDate(0, 0, -7),
+		ObservedAt:            now,
+		SignIns7d:             1000,
+		FailedSignIns7d:       42,
+		AccountLocks7d:        3,
+		SensitiveWrites7d:     12,
+		DistinctAdminActors7d: 4,
+		UserDeletes7d:         2,
 	}))
 
 	view := m.View()
-	assert.Contains(t, view, "7 SUPER_ADMINs",
-		"posture card must surface the super-admin count")
-	assert.Contains(t, view, "2 API tokens expire <7d",
-		"posture card must surface expiring tokens row")
-	assert.Contains(t, view, "1 INVALID group rules",
-		"posture card must surface invalid group rules row")
+	assert.Contains(t, view, "42 failed sign-ins (7d)",
+		"posture card must surface 7d failed sign-ins")
+	assert.Contains(t, view, "3 account lockouts (7d)",
+		"posture card must surface 7d lockout count")
+	assert.Contains(t, view, "12 sensitive admin writes (7d)",
+		"posture card must surface 7d sensitive write count")
+	assert.Contains(t, view, "4 distinct admin actors",
+		"posture card must surface distinct-actor governance signal")
+	assert.Contains(t, view, "2 user deletes (7d)",
+		"posture card must surface 7d user-delete count")
 }
 
 func Test_Home_ActivityCard_RendersAfterActivityLoadedMsg(t *testing.T) {
