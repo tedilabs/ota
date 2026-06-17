@@ -16,6 +16,7 @@
 | v0.1.0-draft | 2026-04-24 | 초안 | developer |
 | v0.1.1-draft | 2026-04-24 | §13 테스트 섹션 확장 (파일 위치·testfx·Fail-First 로그·fake 템플릿 등) | test-engineer |
 | v1.0.0 | 2026-04-24 | §8.1 Screen Model Deps 생성자 추가 (SetXxx 테스트-only setter 금지). §10.1 Elm 원칙 재진술. domain.UsersPort/domain.UsersQuery 레퍼런스 통일. | developer |
+| v1.1.0 | 2026-06-17 | REQ-W01 통합: §10a 신설(Form Widget Pattern — FieldSpec/Form/ErrorMapper, dirty/validation/save lifecycle, discard-confirm). §3.3 Msg 명명에 `OpenUserEditMsg`/`UserUpdatedMsg`/`form.*Msg` 추가. §3.2/§3.7 새 도메인 명명: `UserProfilePatch`, `ErrEmptyPatch`, `UsersPort.UpdateProfile`. §12에 폼 PII 마스킹 통합 규약(Alt+m, focus auto-unmask). §17 동기화 표에 form 패턴 변경 시 영향 문서 추가. | developer |
 
 ---
 
@@ -48,13 +49,18 @@
 - 구조체 · 인터페이스 · alias: PascalCase.
 - 인터페이스는 **동사+er** (`Reader`, `Lister`) 또는 **명사 + Port** (`UsersPort`). 소비자가 정의.
 - enum: `type UserStatus string` + 상수 `UPPER_SNAKE_CASE`. 도메인 의미 타입이 값 혼용 방지.
+- **Patch / Mutation 입력 타입** (REQ-W01부터): `<Resource>Patch` 또는 `<Resource><Action>Input`. 모든 mutation-input은 partial-merge 시맨틱을 명시적으로 갖는다 — `*string` 포인터 패턴 (`nil` = unchanged, value = set). `IsEmpty()` 메서드 + `Err<Resource>EmptyPatch` 센티넬 함께 제공. 예: `UserProfilePatch`, `ErrEmptyPatch`. (ARCHITECTURE §6.1 참조)
 
 ### 3.3. 함수
 
 - PUblic: PascalCase. 동사로 시작.
 - private: camelCase. 동사로 시작.
-- Cmd 팩토리: `fetch<Noun>`, `refresh<Noun>`. 항상 `tea.Cmd` 반환.
+- Cmd 팩토리: `fetch<Noun>`, `refresh<Noun>`, `save<Noun>` (write 동사). 항상 `tea.Cmd` 반환.
 - Msg 생성: `<Noun>Msg` 구조체, `NewXxxMsg` 생성자는 만들지 말고 리터럴 사용.
+- **Mutation Msg 명명** (REQ-W01 패턴):
+  - 진입 요청: `Open<Resource>EditMsg{ID string}` — list/detail에서 e 키 시 발송. 예: `OpenUserEditMsg`.
+  - 결과 broadcast: `<Resource>UpdatedMsg{<Resource> domain.<Resource>}` — 저장 성공 시 발송. cache 갱신 트리거. 예: `UserUpdatedMsg{User domain.User}`.
+  - Form 위젯 내부 msg: `form.<Verb>Msg` (form 패키지 owned, 외부 screen이 수신). 예: `form.SaveRequestedMsg`, `form.DiscardRequestedMsg`, `form.PIIToggleMsg`. (CONVENTIONS §10a)
 
 ### 3.4. 변수
 
@@ -318,6 +324,199 @@ func fetchUsers(ctx context.Context, svc *service.UsersService, q domain.UsersQu
 
 ---
 
+## 10a. Form Widget Pattern (REQ-W01 v0.2)
+
+**위치:** `internal/tui/shared/form/` — 도메인-agnostic 재사용 가능한 다중 필드 입력 폼. 첫 사용처는 REQ-W01 Users Edit (`internal/tui/users/edit.go`). v0.2 lifecycle mutation에서도 재사용 기대 (OI-W5 Option C).
+
+**철학:** Form 위젯은 *상태와 검증을 owning* 하되 *사이드 이펙트는 owning screen에 위임*한다. 도메인 import 금지, tea.Cmd 발사 금지.
+
+### 10a.1. FieldSpec / Form / 매퍼 구조
+
+```go
+// internal/tui/shared/form/spec.go
+type FieldKind int
+const (
+    KindText FieldKind = iota
+    KindEmail        // *@*.* 클라이언트 hint (느슨)
+    KindPhone        // E.164 advisory only — 차단 없음
+    KindReadOnly     // 표시만, 입력 박스 없음 — 예: profile.login
+)
+
+type FieldSpec struct {
+    Key      string    // Okta API field 이름 (예: "firstName") — BadRequestError.FieldError.Field 와 1:1
+    Label    string    // 표시 라벨 (예: "First Name")
+    Kind     FieldKind
+    Required bool      // *  prefix + Validate에서 빈값 차단
+    PII      bool      // mask.* 라우팅 + Alt+m 토글
+    Section  string    // 섹션 헤더 (예: "Identity")
+    Hint     string    // 입력 박스 아래 advisory (info color)
+    MaxLen   int       // 0 = unbounded
+}
+
+// 폼 외부에서는 specs + initial map 으로 인스턴스화.
+form := form.New(specs, initial map[string]string,
+    form.WithLogger(log),
+    form.WithErrorMapper(form.DefaultErrorMapper()),  // 기본 BadRequestError 매퍼
+)
+```
+
+### 10a.2. dirty 추적 — snapshot vs current
+
+```go
+// 매 keystroke 시 form.Update가 호출 → fields[i].Current 갱신
+// dirty 비교는 lazy + O(N) per render (N=11). 11 fields × 60fps = 660 비교/s, 무시 가능.
+
+func (f *Field) Dirty() bool { return f.Current != f.Original }
+
+func (f Form) Dirty() int    { /* count fields with f.Dirty() */ }
+func (f Form) Diff() map[string]string { /* Spec.Key -> Current for dirty only */ }
+```
+
+- **same-as-snapshot 복원도 dirty=0로 인식**: 사용자가 변경했다가 원래대로 돌리면 dirty 마커가 사라진다. AC-9.1/9.2 명세.
+- **PII 마스킹 상태는 dirty와 무관**: focus auto-unmask가 Current를 변경하지는 않는다. 입력 자체가 dirty의 기준.
+
+### 10a.3. Validation lifecycle
+
+| 단계 | 트리거 | 동작 |
+|------|--------|------|
+| Field-level (focus-out) | focus 이동 시 | 해당 필드만 `Validate()` → `InlineError` 설정 또는 클리어 |
+| Form-level (Save attempt) | Ctrl+S | 모든 필드 `Validate()` → 실패하면 첫 invalid 필드로 focus, `form.SaveRequestedMsg` 발송 안 함 |
+| Server-level (Save 응답) | `form.ApplyServerErrors(causes)` | `Field.InlineError` 또는 `OtherErrors` 누적 (§9.5) |
+
+- **클라이언트 검증은 느슨** (AC-3.1~3.5): `Required` + KindEmail의 `*@*.*` 정도만. 길이·복잡한 형식은 서버에 위임 → 사용자가 빠르게 진행 가능, 클라이언트 잘못된 차단 회피.
+- inline error는 **사용자가 해당 필드를 수정하면 자동 클리어** (낙관적 UX, AC-6.2). Form.Update에서 keystroke 처리 후 `InlineError = ""`.
+
+### 10a.4. Save lifecycle (Form ↔ Screen 책임)
+
+```
+Form (재사용 위젯)                    Screen (예: tui/users/edit.go)
+─────────────────────                ────────────────────────
+1. user types … dirty++              -
+2. user presses Ctrl+S
+3. Validate() — pass                 -
+4. emit form.SaveRequestedMsg ──────► onSaveRequested():
+                                       - state = saving
+5. SetSaving(true) (called by screen)
+   - blur all inputs
+   - dim styling
+   - disable Esc                        - patch := buildPatch(form.Diff())
+                                        - return Cmd{saveUserProfile(ctx,...,patch)}
+6.                  (Cmd resolves)
+                                      onSucceeded(UserUpdateSucceededMsg):
+                                        - popNav()
+                                        - broadcast UserUpdatedMsg{user}
+                                        - toast "Updated <login>"
+                                      onFailed(UserUpdateFailedMsg):
+                                        - SetSaving(false)
+                                        - if BadRequestError:
+                                            form.ApplyServerErrors(causes)
+                                        - if Forbidden/TokenInvalid/OktaServer:
+                                            toast + form 유지
+                                        - if NotFound:
+                                            popNav + RefreshScreenMsg
+                                        - if RateLimited:
+                                            footer countdown + auto retry tick
+```
+
+### 10a.5. Discard-confirm 흐름 (Esc on dirty)
+
+```
+Form receives Esc:
+  if Dirty() == 0:    emit form.DiscardRequestedMsg{Confirmed: true}
+  else:               emit form.DiscardRequestedMsg{Confirmed: false}  // screen opens modal
+
+Screen.onDiscardRequested:
+  if msg.Confirmed:    popNav()  // immediate
+  else:                m.overlay = OverlayDiscardConfirm
+                       // modal renders Form.DirtyFields() labels
+
+OverlayDiscardConfirm:
+  y / Y:  popNav() — discard
+  n / N / Esc:  close overlay, return to editing
+```
+
+- Form은 모달을 자기 안에서 띄우지 않는다 (Overlay 등록은 App Shell 책임). 단 `DirtyFields() []string`을 expose하여 모달이 변경된 필드 라벨을 표시할 수 있게 한다.
+
+### 10a.6. ErrorMapper — `BadRequestError.Causes` → field-level inline
+
+```go
+// internal/tui/shared/form/errmap.go
+type ErrorMapper interface {
+    Apply(form *Form, err error)
+}
+
+// DefaultErrorMapper 가 표준 처리:
+//   - *domain.BadRequestError → causes 순회, FieldError.Field 가 FieldSpec.Key 와 매치되면
+//                              해당 Field.InlineError = cause.Summary. 미매칭 → OtherErrors.
+//   - 그 외 도메인 sentinel → screen 이 toast 로 처리 (Form 외부 책임)
+func DefaultErrorMapper() ErrorMapper
+```
+
+- ota는 새 parser를 만들지 않는다. `errormap.splitCause`가 이미 `<field>: <reason>` prefix를 파싱하여 `FieldError{Field, Summary}` 로 채워 준다 (도메인 §6.1). Form은 그 결과를 받기만 한다.
+- `FieldSpec.Key` ↔ `domain.FieldError.Field` 문자열 일치가 매핑의 단일 기준. Users edit의 11개 키는 **모두 Okta API field 이름과 동일** (예: `firstName`, `mobilePhone`).
+
+### 10a.7. PII 마스킹 + 폼 통합 규약
+
+`internal/mask/` 의 기존 함수를 form 컨텍스트에서 그대로 사용. 단 form-specific 동작 명시:
+
+| 상태 | 표시 | 비고 |
+|------|------|------|
+| 진입 시 (`PII=true`, not focused) | `mask.Phone(v)` / `mask.Email(v)` 적용된 값 | 기본 마스킹 ON (AC-7.1) |
+| 사용자 Tab/click으로 focus | **자동 unmask** — 입력 박스 안 값이 원본으로 교체 | AC-7.2. unmask 배지(`[M!]`) 표시하지 않음 (focus 자체가 의도 표명) |
+| focus out + 미수정 | 다시 마스킹 | AC-7.3 |
+| focus out + 수정됨 | 마스킹 안 함 (사용자가 입력한 값 그대로) + dirty marker `*` | AC-7.4 |
+| `Alt+m` (form context) | 모든 PII 필드 일괄 mask/unmask 토글 (`PIIToggleMsg` 발송) | AC-7.5. **글로벌 `m`은 form에서 의미 변경됨 — Alt+m으로 재배치** (TUI Design §3.3 DR-2). `m`은 영문자이므로 textinput이 입력으로 소비. |
+
+**Alt 키 호환성:** Bubbletea `tea.KeyMsg.Alt` 필드가 모든 주요 터미널(iTerm2, Alacritty, Kitty, Terminal.app, GNOME Terminal)에서 ESC prefix 시퀀스로 안정 동작. tmux 환경에서는 `set -g xterm-keys on` 권장. fallback 없음 (Ctrl+M = Enter 충돌).
+
+### 10a.8. 키 가로채기 (textinput 위에서)
+
+Form은 `bubbles/textinput` 위에 **얇은 key intercept** 레이어를 둔다:
+
+```go
+func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
+    if km, ok := msg.(tea.KeyMsg); ok {
+        // form-level keys — textinput 에 도달하기 전에 가로챔
+        switch {
+        case key.Matches(km, f.keys.Save):    // Ctrl+S
+            return f.handleSave()
+        case key.Matches(km, f.keys.Cancel):  // Esc
+            return f.handleCancel()
+        case key.Matches(km, f.keys.NextField):    // Tab
+            return f.focusNext()
+        case key.Matches(km, f.keys.PrevField):    // Shift+Tab
+            return f.focusPrev()
+        case km.Alt && km.Runes != nil && km.Runes[0] == 'm':  // Alt+m
+            return f.togglePII()
+        }
+    }
+    // 그 외는 active field 의 textinput.Update 로 위임
+    f.fields[f.focused].input, cmd = f.fields[f.focused].input.Update(msg)
+    f.recomputeDirty()
+    f.clearFieldErrorOnEdit()
+    return f, cmd
+}
+```
+
+- Form 내부에서 글로벌 `:` palette / `?` help / `/` search 는 **활성화하지 않음** (TUI Design §3.1 DR-3). textinput이 그대로 글자로 소비.
+- `Ctrl+C` 만 saving 상태에서 의미 있음 — screen 레이어에서 ctx cancel.
+
+### 10a.9. 금지 사항
+
+- **Form은 `domain.*` 타입을 import 하지 않는다.** screen이 `Form.Diff() map[string]string`을 받아 `domain.UserProfilePatch`로 조립한다. 이 가드가 form의 재사용성을 보장.
+  - 예외: `domain.FieldError`는 `BadRequestError`의 일부로 `ErrorMapper`가 받아 처리. 단 form은 이 타입의 *해석*만 하고 *생성*하지 않음.
+- **Form은 `tea.Cmd`를 발사하지 않는다.** 모든 사이드 이펙트는 screen이 트리거. Form은 메시지만 emit.
+- **Form은 `internal/okta`, `internal/service`를 import 하지 않는다.** depguard로 강제 (`.golangci.yml`).
+- **Form 내부 상태에 대한 외부 setter 금지** (§8.1 Elm 원칙). 초기 상태는 `form.New(specs, initial map)`로만.
+
+### 10a.10. 테스트 경계 (TESTING.md §6.7 / §8.7 참조)
+
+- Form 자체는 **순수 unit test** — Port fake 없이 keystroke 시퀀스만으로 동작 검증.
+- screen (예: `users.EditModel`)은 **teatest + UsersPortFake** — fetch / save / failure 시나리오 통합 검증.
+- 11 fields × 4 sections × dirty matrix는 **테이블 드리븐**으로 작성 (TESTING.md §8.7 참조).
+
+---
+
 ## 11. 키 바인딩 규약
 
 ### 11.1. Key ID 체계
@@ -355,6 +554,17 @@ func fetchUsers(ctx context.Context, svc *service.UsersService, q domain.UsersQu
 - View 렌더 직전에 `mask.Phone(user.MobilePhone)` 호출. Service/도메인은 원본 통과.
 - Clipboard 복사(`y`): 기본 마스킹된 값 복사. unmask 상태일 때만 원본.
 - 로거에는 `mask.Phone(v)` 대신 **값 자체를 넘기지 않기**. 필드 이름으로만 기록하고 value 생략.
+
+### 12.3. 폼 컨텍스트 마스킹 (REQ-W01)
+
+Form 위젯(`internal/tui/shared/form/`)에서의 PII 필드 동작은 §10a.7과 동일 — 요약:
+
+- 폼 진입 시 `PII=true` 필드는 **기본 마스킹 ON**.
+- 사용자 focus → 자동 unmask (focus가 의도 표명. 별도 `[M!]` 배지 없음).
+- focus out + 미수정 → 다시 마스킹.
+- focus out + 수정 → 사용자 입력값 그대로 표시(마스킹 안 함).
+- **토글 키는 form 컨텍스트에서 `Alt+m`** — 글로벌 `m`은 textinput이 글자로 소비하므로 충돌 회피 (TUI Design §3.3).
+- debug log에는 PII 필드의 raw 값을 **절대** 흘리지 않는다. form Update 경로에서 추가 로그를 남기지 말 것 (keystroke마다 PII가 흐를 수 있음).
 
 ---
 
@@ -537,6 +747,8 @@ feat(tui/users): add factors tab with phone masking
 | 새 라이브러리 | `docs/TECH_STACK.md` + 이 문서 §15 체크 |
 | 새 코드 규칙 | `docs/CONVENTIONS.md` (이 문서) |
 | 테스트 전략 변경 | `docs/TESTING.md` |
+| Form 위젯 인터페이스 변경 (`internal/tui/shared/form/`) | `docs/ARCHITECTURE.md` §6.8 + 이 문서 §10a + 사용 screen의 teatest 패턴 |
+| 새 mutation 표면 추가 (REQ-W##) | `docs/ARCHITECTURE.md` §7.4 mutation 경로 표 + §13.4 플레이북 + 이 문서 §3.2 Patch 타입 명명 |
 
 ---
 

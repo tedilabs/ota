@@ -15,6 +15,7 @@
 | v0.1.0-draft | 2026-04-24 | 초안 (Phase 4) | developer |
 | v1.0.0 | 2026-04-24 | D-A 합의 반영: Port 위치 `internal/domain/ports.go` 확정. depguard 린트 규칙 명시. TESTING v0.9.1 정합성 확보. | developer |
 | v1.0.1 | 2026-04-24 | Phase 6 결정 반영: MVP는 직접 `net/http`, SDK는 v0.2+ 옵션 (§6.5). team-lead 승인. | developer |
+| v1.1.0 | 2026-06-17 | REQ-W01 Users 프로필 편집 addendum 통합. §6.8 신설(`internal/tui/shared/form/` — 재사용 가능 폼 위젯 패키지, OI-W5 Option C). §6.1에 `UserProfilePatch` + UsersPort.UpdateProfile 추가. §7.4 신설(Edit/Form 데이터 흐름). §9.5 신설(폼 에러 매핑 — `BadRequestError.Causes` → field-level inline). §10.1 wiring에 form widget 미포함(stateless). §13.4(write surface 확장 플레이북) 추가. 기존 read-path 무영향. | developer |
 
 ---
 
@@ -225,7 +226,40 @@ var (
 - 어떤 SDK 타입도 여기 없다. 매핑은 `internal/okta/*`가 담당.
 - 파일 I/O·네트워크·시간·난수 직접 사용 금지. 필요하면 인터페이스로.
 
-**근거:** PRD §7.7 에러 매핑, REQ-R01~R05의 필드 명세.
+**Write Patch 타입 (REQ-W01, v0.2):**
+
+```go
+// internal/domain/user_patch.go — v0.2 REQ-W01
+//
+// UserProfilePatch는 partial-merge 시맨틱의 입력 타입이다.
+// nil 포인터 = "필드 미변경" (JSON body에서 omit).
+// 명시적 클리어(null 전송)는 MVP 제외 — D-W13/도메인 §1.2.
+// login 필드는 의도적으로 제외 (D-W2 read-only 잠금).
+type UserProfilePatch struct {
+    FirstName      *string
+    LastName       *string
+    DisplayName    *string
+    NickName       *string
+    Email          *string
+    Title          *string
+    Division       *string
+    Department     *string
+    EmployeeNumber *string
+    MobilePhone    *string
+    SecondEmail    *string
+}
+
+// IsEmpty reports whether every field is nil — D-W13 guard.
+// 서비스는 Empty patch에서 ErrEmptyPatch를 반환하여 API 호출을 차단한다.
+func (p UserProfilePatch) IsEmpty() bool { /* all fields nil */ }
+
+var ErrEmptyPatch = errors.New("empty patch: no fields to update")
+```
+
+- `*string` 포인터 패턴 선택 근거: nil/value 구분이 명시적이며 JSON marshal `omitempty`와 자연스럽게 정합. struct embedding 대비 검증·dirty 추적이 간결.
+- `ErrEmptyPatch`는 도메인 sentinel. 서비스 레이어가 0 변경 저장을 거부 (D-W13). TUI는 Save 버튼 자체를 disable하지만, 방어적 가드를 도메인에 둔다.
+
+**근거:** PRD §7.7 에러 매핑, REQ-R01~R05의 필드 명세, REQ-W01 AC-2/AC-4.2, 도메인 §1.2 (partial-merge semantics).
 
 ### 6.2. `internal/service` — 유스케이스
 
@@ -248,6 +282,29 @@ type UsersPort interface {
     Get(ctx context.Context, idOrLogin string) (User, error)
     ListGroups(ctx context.Context, userID string) ([]Group, error)
     ListFactors(ctx context.Context, userID string) ([]Factor, error)
+
+    // Lifecycle (write) operations (v0.1.x — issues #125, #187).
+    // ResetPassword, Unlock, ResetFactors, Activate, Deactivate,
+    // ExpirePassword, Delete — see internal/domain/ports.go.
+
+    // UpdateProfile (REQ-W01, v0.2) issues a partial-merge update via
+    // POST /api/v1/users/{userID}. Only non-nil fields in `patch` are
+    // emitted in the request body (omit-on-nil). Returns the updated
+    // domain.User from the response body so callers can refresh
+    // list/detail caches (compensates for last-write-wins races —
+    // 도메인 §5.2).
+    //
+    // When patch.IsEmpty(), returns ErrEmptyPatch without an API call
+    // (D-W13 — empty-patch guard).
+    //
+    // Errors are domain sentinels per ARCHITECTURE §9.2 + §9.5:
+    //   ErrBadRequest      (E0000001) — *BadRequestError with field-level Causes
+    //   ErrTokenInvalid    (E0000004 / E0000011) — token rotation needed
+    //   ErrForbidden       (E0000006) — 'Manage user profiles' missing
+    //   ErrNotFound        (E0000007) — user deleted between GET and POST
+    //   ErrFeatureDisabled (E0000038) — schema violation
+    //   ErrRateLimited     (E0000047 / 429) — *RateLimitedError with RetryAfter
+    UpdateProfile(ctx context.Context, userID string, patch UserProfilePatch) (User, error)
 }
 
 type GroupsPort interface { ... }
@@ -451,6 +508,111 @@ type Profile struct {
 | `internal/clock` | `Clock` 인터페이스 + `realClock` / `FakeClock`. tail 폴링·토큰 수명 추정 테스트용. |
 | `internal/version` | ldflags 주입 값. `:about` 노출. |
 
+### 6.8. `internal/tui/shared/form/` — 재사용 가능 폼 위젯 (REQ-W01 v0.2)
+
+**책임:** Bubbletea Screen 단위에서 사용하는 **다중 필드 입력 폼**의 도메인-agnostic 추상화. REQ-W01 Users Edit이 첫 사용처이며, v0.2 lifecycle write(activate / deactivate reason input 등)가 재사용한다.
+
+**OI-W5 결정 (Option C — 절충 추출):** TUI Design §10.1 권고를 그대로 채택. 패키지가 owning 하는 책임을 **명시적으로 한정**:
+
+| 추출 (재사용) | 비추출 (도메인 특화) |
+|--------------|------------------|
+| `FieldSpec` (필드 메타) | 각 mutation의 FieldSpec 카탈로그 (예: Users 11필드 목록은 `tui/users/`) |
+| `Form` 모델 (Model-Update-View) | fetch / save Cmd, navStack push 로직 |
+| dirty 추적 (snapshot vs current) | dirty UI 카피(`N changes` 문구는 form, 단축키 hint는 screen) |
+| client-side validation 엔진 (`Validate` 함수형 인터페이스) | 도메인 검증 규칙 자체 (이메일 정규식·필수 표시) |
+| `ErrorMapper` (BadRequestError → field-level inline + footer) | 도메인-특화 매핑(예: `secondEmail` ↔ `Secondary Email` 라벨) |
+| `DiscardConfirm` 보조 모달 렌더러 | OverlayKind 등록 (App Shell이 보유) |
+| key handling (Tab/Shift-Tab/Ctrl+S/Esc/Alt+m intercept) | screen 외부 전이 (popNav, UserUpdatedMsg 발송) |
+
+**핵심 인터페이스 (v0.2 초안):**
+
+```go
+// internal/tui/shared/form/spec.go
+package form
+
+// FieldKind controls input rendering and validation hooks.
+type FieldKind int
+
+const (
+    KindText FieldKind = iota
+    KindEmail        // loose *@*.* hint
+    KindPhone        // E.164 advisory only
+    KindReadOnly     // displayed but not editable (e.g., login)
+)
+
+// FieldSpec is the static description of one form input. Screens build
+// a slice of FieldSpec when they construct a Form.
+type FieldSpec struct {
+    Key       string    // canonical key — matches BadRequestError.FieldError.Field
+    Label     string    // display label, e.g., "First Name"
+    Kind      FieldKind
+    Required  bool      // adds "*" / required validator
+    PII       bool      // routes through mask.* + Alt+m toggle
+    Section   string    // group header text (e.g., "Identity")
+    Hint      string    // advisory text rendered under input (no error styling)
+    MaxLen    int       // 0 = unbounded (server-side enforcement)
+}
+
+// Field is the live state of one input in a running Form.
+type Field struct {
+    Spec        FieldSpec
+    Original    string  // snapshot at form load — drives dirty diff
+    Current     string  // editing buffer (bubbles/textinput Value())
+    InlineError string  // last server/client error attached to this field
+    Masked      bool    // PII mask state
+    // unexported textinput.Model lives behind a getter
+}
+
+// Form is the screen-agnostic tea.Model.
+type Form struct { /* fields, focus, errorMapper, ... */ }
+
+func New(specs []FieldSpec, initial map[string]string, opts ...Option) Form
+
+// Bubbletea contract — Update/View are pure Elm.
+func (f Form) Init() tea.Cmd                     { return nil }
+func (f Form) Update(msg tea.Msg) (Form, tea.Cmd)
+func (f Form) View() string
+
+// Inspection helpers used by the owning screen.
+func (f Form) Dirty() int                        // count of changed fields
+func (f Form) DirtyFields() []string             // ordered keys
+func (f Form) Validate() (ok bool, firstInvalid string)
+func (f Form) Snapshot() map[string]string       // current buffer per key
+func (f Form) Diff() map[string]string           // changed-only (for patch build)
+func (f Form) SetSaving(on bool) Form            // dim inputs, disable Esc
+func (f Form) ApplyServerErrors(causes []domain.FieldError) Form  // §9.5
+
+// Messages owned by Form (subset — full list in §10 tui/shared/form/msgs.go):
+//   form.FieldFocusedMsg / form.FieldBlurredMsg
+//   form.PIIToggleMsg (Alt+m)
+//   form.SaveRequestedMsg  // emitted on Ctrl+S when Dirty()>0 && validation passes
+//   form.DiscardRequestedMsg // emitted on Esc when Dirty()>0
+```
+
+**소유자 책임 분리:**
+
+- **Form (재사용 위젯)** — 입력 버퍼·dirty 추적·검증·inline error 렌더·키 가로채기. tea.Cmd 발사 안 함.
+- **Screen (예: `tui/users/edit.go`)** — Form을 *embed* 하고, `form.SaveRequestedMsg`/`form.DiscardRequestedMsg`를 자기 Update에서 받아 fetch/save tea.Cmd 발사, navStack pop, toast 발송.
+- **App Shell** — `ScreenUserEdit`/`OverlayDiscardConfirm` 등록 + 메시지 라우팅.
+
+**Bubble 컴포넌트 매핑 (구현 hint — TUI Design §2.8):**
+
+| Form 슬롯 | 구현 |
+|----------|------|
+| 각 Field 입력 박스 | `bubbles/textinput.Model` 인스턴스 (KindReadOnly는 plain text 렌더) |
+| 폼 본문 스크롤 | `bubbles/viewport` — H < 30일 때만 활성 |
+| Saving spinner | `bubbles/spinner` — Saving 상태에서만 활성 |
+| 섹션 헤더 + divider | `shared/styles.go`의 `tokens.Header` |
+| Discard 모달 | `shared/modal.go` 패턴 재사용 + Form의 `DirtyFields()` 표시 |
+
+**금지:**
+
+- Form은 도메인 타입(`domain.User`, `domain.UserProfilePatch`)을 **import 하지 않는다**. screen이 `Form.Diff()` 결과(`map[string]string`)를 받아 patch struct를 조립. 도메인-agnostic 유지의 핵심 가드.
+- Form은 `tea.Cmd`를 발사하지 않는다. 모든 사이드 이펙트(fetch/save)는 owning screen이 트리거.
+- Form은 `service.*` 또는 `internal/okta`를 import 하지 않는다.
+
+**근거:** REQ-W01 AC-1~AC-10, TUI Design §10.1 (OI-W5 Option C), 도메인 §1.2 (omit-on-nil).
+
 ---
 
 ## 7. 데이터 흐름
@@ -527,6 +689,114 @@ App.Model.Update → ProfileSwitchStartedMsg
    - screens 재생성
    - ProfileSwitchedMsg → App 갱신, 토스트 "Switched to prod"
 ```
+
+### 7.4. Edit/Form Mutation Flow — REQ-W01 (Users Profile Edit)
+
+ota의 첫 **profile-mutation** 데이터 흐름. v0.2 lifecycle write의 모범 구현체 역할.
+
+#### 7.4.1. Mutation 경로 표 (write surface)
+
+| Surface | Entry msg | Load Cmd | Save Cmd | Result msg | Adapter call |
+|---------|-----------|----------|----------|-----------|--------------|
+| **REQ-W01** Users Edit | `OpenUserEditMsg{ID}` | `fetchUserForEdit(ctx, svc, id)` (= `svc.Get`) | `saveUserProfile(ctx, svc, id, patch)` (= `svc.UpdateProfile`) | `UserUpdatedMsg{User}` (on 200) | `UsersPort.UpdateProfile` → `POST /api/v1/users/{id}` (partial-merge) |
+| _(future)_ Group Rule Activate-with-Reason | _TBD_ | (none) | `runRuleAction(...)` | `RuleActionDoneMsg` | `GroupRulesPort.Activate` |
+| _(future)_ Lifecycle Deactivate-with-Reason | _TBD_ | (none) | `runUserAction(...)` | `RefreshScreenMsg` | `UsersPort.Deactivate` |
+
+#### 7.4.2. REQ-W01 시퀀스 (성공 경로)
+
+```
+[User] e on UsersList row / UserDetail any tab
+   │
+   ▼
+List/Detail.Update(tea.KeyMsg{e}) → emit OpenUserEditMsg{ID: selectedID}
+                                            │
+                                            ▼
+                        App.Update → pushNav(ScreenUserEdit)
+                                            │
+                                            ▼
+                        editmodel.Init() → Cmd{fetchUserForEdit(ctx, svc, id)}
+                                            │
+┌────────────────────── tea.Cmd ────────────────────────────────┐
+│ user, err := svc.Get(ctx, id)                                 │
+│   └► port.Get → GET /api/v1/users/{id} (latest snapshot, AC-1.3)│
+│ return UserLoadedForEditMsg{User: user}   or ErrorMsg{...}    │
+└───────────────────────────────────────────────────────────────┘
+   │
+   ▼
+editmodel.onLoaded → state=editing,
+                     embedded form.New(specs, initial={...11 fields from user.Profile})
+                     snapshot 저장
+
+[User] 입력 (textinput keystrokes)
+   │
+   ▼
+form.Update(KeyMsg) → field.Current 변경 → dirty diff 갱신
+                     view 재렌더 (dirty marker `*`, footer "N changes")
+
+[User] Ctrl+S (Dirty > 0 && Validate ok)
+   │
+   ▼
+form emits form.SaveRequestedMsg
+   │
+editmodel.onSaveRequested → state=saving,
+                            patch := buildPatch(form.Diff())   // 7.4.3 참조
+                            Cmd{saveUserProfile(ctx, svc, id, patch)}
+   │
+┌────────────────────── tea.Cmd ────────────────────────────────┐
+│ updated, err := svc.UpdateProfile(ctx, id, patch)             │
+│   └► port.UpdateProfile → POST /api/v1/users/{id} (partial)   │
+│       └► JSON body 안에 nil이 아닌 필드만 포함                  │
+│       └► 응답 본문 → domain.User 재매핑                         │
+│       └► errormap.FromResponse → domain.Err* 또는 nil         │
+│ return UserUpdateSucceededMsg{User: updated}                   │
+│   or  UserUpdateFailedMsg{Err: err}                            │
+└───────────────────────────────────────────────────────────────┘
+   │
+   ▼
+editmodel.onSucceeded → popNav() + broadcast UserUpdatedMsg{User} + toast Success
+                        cache 갱신: UsersList/UserDetail이 UserUpdatedMsg 수신 시 자기 캐시 patch (AC-4.5)
+```
+
+#### 7.4.3. Patch 빌드 — `form.Diff()` → `domain.UserProfilePatch`
+
+```go
+// internal/tui/users/edit.go (개념적)
+func buildPatch(diff map[string]string) domain.UserProfilePatch {
+    p := domain.UserProfilePatch{}
+    if v, ok := diff["firstName"];      ok { p.FirstName      = &v }
+    if v, ok := diff["lastName"];       ok { p.LastName       = &v }
+    if v, ok := diff["displayName"];    ok { p.DisplayName    = &v }
+    if v, ok := diff["nickName"];       ok { p.NickName       = &v }
+    if v, ok := diff["email"];          ok { p.Email          = &v }
+    if v, ok := diff["title"];          ok { p.Title          = &v }
+    if v, ok := diff["division"];       ok { p.Division       = &v }
+    if v, ok := diff["department"];     ok { p.Department     = &v }
+    if v, ok := diff["employeeNumber"]; ok { p.EmployeeNumber = &v }
+    if v, ok := diff["mobilePhone"];    ok { p.MobilePhone    = &v }
+    if v, ok := diff["secondEmail"];    ok { p.SecondEmail    = &v }
+    return p
+}
+```
+
+키 문자열(`firstName` 등)은 **Okta API field 이름과 동일**하게 유지. `FieldSpec.Key` ↔ `BadRequestError.FieldError.Field`도 동일 문자열이라 §9.5의 매핑이 자동.
+
+#### 7.4.4. 실패 경로 (요약)
+
+| HTTP | 처리 | TUI 시각화 |
+|------|------|----------|
+| 400 `BadRequestError` | editmodel.onFailed → `form.ApplyServerErrors(causes)` | field-level inline error + footer fallback (§9.5) |
+| 401 `ErrTokenInvalid` | popNav 안 함, form 유지 + Draft 보존 | toast "Token invalid. Rotate and retry." |
+| 403 `ErrForbidden` | form 유지 + Draft 보존 | toast "Insufficient permissions: Manage user profiles" |
+| 404 `ErrNotFound` | popNav + `RefreshScreenMsg` 발송 | toast "User no longer exists. Refreshing list." (AC-6.4 — 유일한 close 사유) |
+| 429 `RateLimitedError` | form 유지, retry tick (REQ-E01 AC-2) | footer "Rate limited. Retrying in Ns…" |
+| 5xx `ErrOktaServer` | form 유지 | footer "Okta service error. Retry?" |
+| `ErrEmptyPatch` (방어) | Save trigger 자체를 차단 (TUI에서 Ctrl+S disable) — D-W13 | footer "No changes to save" |
+
+#### 7.4.5. 캐시 보정 (도메인 §5.2 race 대응)
+
+서버 응답의 `domain.User`를 `UserUpdatedMsg{User}`로 broadcast → UsersList / UserDetail이 받아 자기 캐시의 해당 entry를 **교체**한다. 이는 다른 admin이 동시에 변경한 필드가 응답에 반영되었을 때 그 결과를 자연스럽게 흡수하는 효과 (last-write-wins의 인지 가능 부분).
+
+> **재시도 금지:** Save Cmd는 멱등성이 보장되지 않으므로(partial-merge는 본질적으로 idempotent하지만 `email` 알림 메일 등 side effect는 멱등 아님) 5xx에서 자동 재시도하지 **않는다**. 사용자가 `Ctrl+S`로 명시적 재시도. 429만 REQ-E01 AC-2의 1회 자동 재시도 적용.
 
 ---
 
@@ -609,6 +879,61 @@ Okta SDK error ─► okta.mapErr(err) → domain.Err*
 
 - `cmd/ota/main.go`가 `defer recover()` 마지막 안전망. 크래시 로그에 상관ID + 버전.
 - Bubbletea 프로그램이 panic 시 터미널 상태 복원 후 친절한 메시지 출력.
+
+### 9.5. Form-level Server Error Mapping (REQ-W01)
+
+§9.1/§9.2의 도메인 매핑은 **상태바 토스트 / inline raw 표시**까지만 다룬다. REQ-W01의 폼은 한 단계 더 — `BadRequestError.Causes`의 **field별 메시지를 해당 입력칸 바로 아래에 inline 으로 표시**해야 한다(AC-6.1).
+
+#### 9.5.1. 매핑 계층
+
+```
+[Save Cmd 응답]
+   │
+   ▼
+errormap.FromResponse(resp) → error
+   │
+   ├─ *RateLimitedError → editmodel 자체에서 footer 카운트다운 (§7.4.4)
+   ├─ ErrForbidden / ErrTokenInvalid / ErrNotFound / ErrOktaServer
+   │    → editmodel.onFailed → toast + form 유지 (404은 popNav)
+   │
+   └─ *BadRequestError (E0000001)
+        │
+        ▼
+        form.ApplyServerErrors(badReq.Causes) — `internal/tui/shared/form/`
+        │
+        ├─ for each cause:
+        │     cause.Field 가 form 내 FieldSpec.Key 와 매치되면
+        │       → field.InlineError = cause.Summary
+        │     매치 실패하면
+        │       → form.OtherErrors = append(..., cause.Summary)
+        │
+        └─ View 렌더:
+              field.InlineError → 입력 박스 아래 `! <msg>`
+              form.OtherErrors → 폼 footer "Other errors: …" 누적
+```
+
+#### 9.5.2. Field Key 식별 규약
+
+- `FieldSpec.Key`는 **Okta API field 이름**과 동일한 문자열을 사용한다 (예: `firstName`, `lastName`, `mobilePhone`, `secondEmail`).
+- `errormap.splitCause`가 이미 `"<field>: <reason>"` 패턴에서 `<field>` prefix를 추출하여 `domain.FieldError.Field`에 저장한다. ota는 별도 파서를 추가하지 않는다.
+- 매핑 실패(Okta가 prefix 없이 보낸 경우, 또는 모르는 field) → `form.OtherErrors`에 누적. 운영자에게는 footer로 표시되어 정보 손실 없음.
+
+#### 9.5.3. inline error 라이프사이클
+
+| 발생 시점 | 클리어 시점 |
+|----------|-----------|
+| Save 실패 후 `ApplyServerErrors` | 사용자가 해당 field 를 다시 수정한 직후 (AC-6.2 낙관적 UX) — `form.Update`가 keystroke 받으면 자동 클리어 |
+| Client validation (focus-out / Ctrl+S) | 동일 — keystroke 시 클리어 |
+
+> Server-side error는 stale 가능성이 높으므로 (사용자가 값을 수정하면 의미가 사라짐) clear 정책을 단순하게: **해당 필드 keystroke 1회로 사라진다**. 다음 Save가 동일 오류를 다시 재현하면 또 표시.
+
+#### 9.5.4. 비-필드 에러 (`OtherErrors`)
+
+- prefix 매칭에 실패한 cause, `E0000038` (schema 위반) 같은 폼 외 오류 → `OtherErrors []string`에 누적.
+- 폼 footer 영역 아래 collapsible 영역에 렌더 (`! Other errors:` + 줄별 `· <msg>`).
+- Save Cmd 발사 직전 클리어 (새 시도에서 다시 채워질 수 있도록).
+
+**근거:** REQ-W01 AC-6.1~6.3, TUI Design §6.2/§6.3 (errorCauses 파싱 의사 코드), 도메인 §6.1.
 
 ---
 
@@ -721,6 +1046,21 @@ REQ-R04 AC-8: 타입 카탈로그는 설정 가능 구조.
 - `cmd/ota/main.go`의 wiring 함수만 교체. TUI 레이어 변경 없음.
 
 이 확장은 **v0.3+ 탐색**. 지금은 필요 인터페이스 모양을 비우지 않고 Okta에 맞게 좁게 둔다 (YAGNI). 단, **Port 경계는 유지**.
+
+### 13.4. 새 Write 표면 추가 (예: v0.2 Lifecycle Reason Input)
+
+REQ-W01의 form widget 패키지(`internal/tui/shared/form/`)를 재사용:
+
+1. 도메인에 Patch / Input 타입 정의 (`internal/domain/<resource>_patch.go` 등) — `*string` 패턴 + `IsEmpty()` + `ErrEmpty<X>Patch` 센티넬
+2. `internal/domain/ports.go`에 mutation 메서드 추가 (예: `GroupRulesPort.DeactivateWithReason(ctx, ruleID, reason string) error`)
+3. `internal/okta/<resource>.go`에 어댑터 구현 — 기존 `doPost` 재사용, errormap 매퍼 그대로
+4. `internal/service/<resource>.go`에 wrap (캐시 무효화 + Cmd 친화 시그니처)
+5. `internal/tui/<resource>/edit.go` (또는 reason input modal) — `form.New(specs, initial, ...)` 호출
+6. `internal/tui/shared/msgs.go`에 `<X>UpdatedMsg`/`Open<X>EditMsg` 추가
+7. App Shell에 ScreenKind 등록 (또는 OverlayKind로 modal 모드 선택)
+8. TESTING.md §12 매트릭스에 새 REQ-W## 행 추가, fakes에 메서드 추가
+
+**변경 반경 (REQ-W01 기준):** 신규 파일 ~5개, 수정 파일 ~6개 (Port, Adapter, Service, fakes, shared/msgs, App Shell router).
 
 ---
 

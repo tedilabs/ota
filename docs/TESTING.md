@@ -1,10 +1,10 @@
 # TESTING
 
-**Version:** v1.0.0
-**Status:** Final (Phase 4)
-**Last updated:** 2026-04-24
+**Version:** v1.1.0
+**Status:** Final (Phase 4 + REQ-W01 addendum)
+**Last updated:** 2026-06-17
 **Owner:** test-engineer (주 작성) · developer (adapter·TUI 섹션 공동 기여)
-**Sources:** `docs/PRD.md` v1.0.0 · `docs/TUI_DESIGN.md` v1.0.0 · `docs/ARCHITECTURE.md` v1.0.0 · `docs/PROJECT_STRUCTURE.md` v1.0.0 · `docs/CONVENTIONS.md` v1.0.0 · `docs/TECH_STACK.md` v1.0.0 · `_workspace/02_okta_domain_input.md`
+**Sources:** `docs/PRD.md` v1.1.0 · `docs/TUI_DESIGN.md` v1.3.0 · `docs/ARCHITECTURE.md` v1.1.0 · `docs/PROJECT_STRUCTURE.md` v1.1.0 · `docs/CONVENTIONS.md` v1.1.0 · `docs/TECH_STACK.md` v1.0.0 · `_workspace/02_okta_domain_input.md` · `_workspace/edit-form-users/02_okta_domain_input.md` · `_workspace/edit-form-users/02_pm_prd_draft.md` · `_workspace/edit-form-users/03_tui_design_draft.md`
 
 > 이 문서는 ota의 **테스트 단일 출처**다. 어떤 코드든 이 문서의 원칙·패턴·도구와 일치해야 한다. 새 테스트를 작성하기 전 본 문서를 읽고, 테스트 전략이 본 문서와 충돌하면 문서를 먼저 업데이트한다.
 
@@ -494,6 +494,205 @@ func TestMain(m *testing.M) {
 #### 결론
 teatest는 fake Port + FakeClock 조합에서 **결정론적이고 빠름**. Phase 6 TUI Flow 계층의 기반으로 안정.
 
+### 6.7. Form 화면 teatest 패턴 (REQ-W01)
+
+REQ-W01 Users Edit (SCR-012)은 ota의 첫 mutation 화면이자 `internal/tui/shared/form/` 위젯의 첫 사용처. 테스트 레이어가 셋으로 분리된다:
+
+| 레이어 | 위치 | 도구 | 검증 대상 |
+|--------|------|------|----------|
+| **Form 위젯 단위** | `internal/tui/shared/form/form_test.go` | 순수 unit | dirty 추적·검증·키 가로채기·focus 이동 — Port fake 없음 |
+| **Edit screen 통합** | `internal/tui/users/edit_*_test.go` | **teatest + UsersPortFake** | fetch/save Cmd·상태머신 전이·에러 매핑·navStack pop |
+| **계약/Port** | `internal/okta/users_test.go` + `internal/service/users_test.go` | httptest.Server + fake | `UpdateProfile` partial-merge body·errormap·재시도 정책 |
+
+#### 6.7.1. Form 위젯 unit 테스트 (예: dirty 추적)
+
+```go
+// internal/tui/shared/form/form_test.go
+func Test_Form_Dirty_TrackedPerKeystroke(t *testing.T) {
+    t.Parallel()
+
+    specs := []form.FieldSpec{
+        {Key: "firstName", Label: "First Name", Kind: form.KindText, Required: true},
+        {Key: "lastName",  Label: "Last Name",  Kind: form.KindText, Required: true},
+    }
+    initial := map[string]string{"firstName": "Alice", "lastName": "Smith"}
+
+    f := form.New(specs, initial)
+    require.Equal(t, 0, f.Dirty())
+
+    // type "Alicia" — append "ia" to firstName (assuming first field focused)
+    f, _ = f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ia")})
+    require.Equal(t, 1, f.Dirty())
+    require.Equal(t, "Aliceia", f.Snapshot()["firstName"])  // depends on impl
+
+    // revert by Ctrl+U (textinput clears) + type "Alice"
+    f, _ = f.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+    f, _ = f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Alice")})
+    assert.Equal(t, 0, f.Dirty(), "reverting to snapshot value clears dirty")
+}
+```
+
+핵심: Port fake가 없다. Form은 도메인을 모르므로 순수 메시지 → 상태 검증으로 충분.
+
+#### 6.7.2. Edit screen teatest (예: full save flow)
+
+```go
+// internal/tui/users/edit_save_test.go
+func Test_UserEdit_Save_PartialMergeBody_Success(t *testing.T) {
+    t.Parallel()
+
+    var capturedPatch domain.UserProfilePatch
+    port := fakes.NewUsersPort(t)
+    port.GetFunc = func(_ context.Context, id string) (domain.User, error) {
+        return domain.User{
+            ID: id,
+            Status: domain.UserStatusActive,
+            Profile: domain.UserProfile{
+                Login: "alice@acme.com", Email: "alice@acme.com",
+                FirstName: "Alice", LastName: "Smith",
+                Department: "Eng",
+                // ... 11 fields populated
+            },
+        }, nil
+    }
+    port.UpdateProfileFunc = func(_ context.Context, _ string, patch domain.UserProfilePatch) (domain.User, error) {
+        capturedPatch = patch
+        // simulate server echoing the updated user
+        return domain.User{ID: "00u1", Profile: domain.UserProfile{
+            Login: "alice@acme.com", Email: "alice@acme.com",
+            FirstName: *patch.FirstName, LastName: "Smith",
+            Department: "Eng",
+        }}, nil
+    }
+
+    svc := service.NewUsersService(port)
+    model := users.NewEditModel(users.EditDeps{Svc: svc, UserID: "00u1"})
+
+    tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(120, 30))
+
+    // wait for loaded
+    teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+        return bytes.Contains(b, []byte("Alice"))
+    }, teatest.WithDuration(2*time.Second))
+
+    // edit firstName: focus already on first field (Identity / First Name)
+    tm.Send(tea.KeyMsg{Type: tea.KeyEnd})               // cursor to end
+    tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ia")})  // Alice → Alicia
+    // wait dirty marker
+    teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+        return bytes.Contains(b, []byte("1 change"))
+    }, teatest.WithDuration(1*time.Second))
+
+    // Ctrl+S
+    tm.Send(tea.KeyMsg{Type: tea.KeyCtrlS})
+
+    // wait pop (e.g., toast "Updated alice")
+    teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+        return bytes.Contains(b, []byte("Updated"))
+    }, teatest.WithDuration(2*time.Second))
+
+    // AC-4.2: partial-merge body only contains firstName
+    require.NotNil(t, capturedPatch.FirstName)
+    assert.Equal(t, "Alicia", *capturedPatch.FirstName)
+    assert.Nil(t, capturedPatch.LastName, "unchanged fields must be omitted")
+    assert.Nil(t, capturedPatch.Email,    "unchanged fields must be omitted")
+    assert.Nil(t, capturedPatch.Department,"unchanged fields must be omitted")
+}
+```
+
+#### 6.7.3. Validation error 시나리오 (server-side)
+
+```go
+// internal/tui/users/edit_save_test.go
+func Test_UserEdit_Save_400Validation_InlineFieldErrors(t *testing.T) {
+    t.Parallel()
+
+    port := fakes.NewUsersPort(t)
+    // Get: same as success above
+    port.UpdateProfileFunc = func(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
+        return domain.User{}, &domain.BadRequestError{
+            Raw: "Api validation failed: profile",
+            Causes: []domain.FieldError{
+                {Field: "email",      Summary: "email: Email is not valid"},
+                {Field: "department", Summary: "department: Cannot exceed 100 characters"},
+            },
+        }
+    }
+    // ... wire model, tm, edit some field, send Ctrl+S ...
+
+    // wait field-level inline error attached to "Email" row
+    teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+        return bytes.Contains(b, []byte("! Email is not valid"))
+    }, teatest.WithDuration(2*time.Second))
+
+    // also for Department
+    out := string(takeFrame(tm))
+    assert.Contains(t, out, "! Cannot exceed 100 characters")
+
+    // AC-6: form must NOT close — Esc still goes to discard confirm
+    tm.Send(tea.KeyMsg{Type: tea.KeyEscape})
+    teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+        return bytes.Contains(b, []byte("Discard"))
+    }, teatest.WithDuration(1*time.Second))
+}
+```
+
+#### 6.7.4. 단축키 매트릭스
+
+| 단축키 | 시점 | 테스트 | 예상 동작 |
+|--------|------|--------|----------|
+| `e` | List/Detail 화면 | `Test_UsersList_eKey_EmitsOpenUserEditMsg`, `Test_UserDetail_eKey_EmitsOpenUserEditMsg` | `OpenUserEditMsg{ID}` 발송 |
+| `Tab` / `Shift+Tab` | editing | `Test_Form_TabCyclesFocus_SkipsReadOnly` | focus 이동 (read-only `login` skip) |
+| `Ctrl+S` (Dirty=0) | editing | `Test_Form_CtrlS_Empty_NoSaveCommand_FooterHint` | save Cmd 미발사, footer "No changes to save" |
+| `Ctrl+S` (Dirty>0, valid) | editing | `Test_UserEdit_Save_PartialMergeBody_Success` | save Cmd 발사 |
+| `Ctrl+S` (validation fail) | editing | `Test_UserEdit_Save_ClientValidationFails_FocusFirstInvalid` | save Cmd 미발사, focus 첫 invalid 필드 |
+| `Esc` (Dirty=0) | editing | `Test_UserEdit_Esc_Clean_PopsNav` | popNav, no modal |
+| `Esc` (Dirty>0) | editing | `Test_UserEdit_Esc_Dirty_OpensDiscardConfirm` | `OverlayDiscardConfirm` open |
+| `y` on DiscardConfirm | overlay | `Test_DiscardConfirm_Y_DiscardsAndPops` | popNav, changes lost |
+| `n` / `Esc` on DiscardConfirm | overlay | `Test_DiscardConfirm_N_ReturnsToEditing` | overlay close, form preserved |
+| `Alt+m` | editing | `Test_Form_AltM_TogglesAllPII` | mobilePhone + secondEmail mask/unmask 전환 |
+| `Ctrl+C` | saving | `Test_UserEdit_CtrlC_DuringSaving_CancelsAndPreservesInput` | ctx cancel, draft 보존 |
+| `Esc` | saving | `Test_UserEdit_Esc_DuringSaving_NoOp` | 무시, footer hint 표시 |
+
+각 행은 **teatest 시나리오 1개**로 구현. table-driven으로 묶기 어려운 이유: 각 시나리오의 초기 상태 / 키 시퀀스가 다름. 다만 §8.7의 11 fields × dirty matrix는 table-driven.
+
+#### 6.7.5. UsersPortFake에 UpdateProfile 추가 (Phase 5 시작 전 필수)
+
+```go
+// internal/service/fakes/users_port_fake.go — 확장
+type UsersPortFake struct {
+    t *testing.T
+
+    // ... 기존 필드 ...
+    UpdateProfileFunc func(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.User, error)
+}
+
+func (f *UsersPortFake) UpdateProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.User, error) {
+    f.t.Helper()
+    if f.UpdateProfileFunc == nil {
+        f.t.Fatalf("UsersPortFake.UpdateProfile called but UpdateProfileFunc is not set")
+    }
+    return f.UpdateProfileFunc(ctx, userID, patch)
+}
+```
+
+**검증 시뮬레이션 헬퍼 (UsersPortFake에 추가):**
+
+```go
+// ValidationErrorFake returns a UpdateProfileFunc that always rejects with
+// BadRequestError for the given (field → message) pairs. Used to drive
+// AC-6 server-side validation tests.
+func ValidationErrorFake(causes map[string]string) func(context.Context, string, domain.UserProfilePatch) (domain.User, error) {
+    fields := make([]domain.FieldError, 0, len(causes))
+    for k, v := range causes {
+        fields = append(fields, domain.FieldError{Field: k, Summary: k + ": " + v})
+    }
+    return func(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
+        return domain.User{}, &domain.BadRequestError{Causes: fields, Raw: "Api validation failed"}
+    }
+}
+```
+
 ---
 
 ## 7. Fail-First 프로세스
@@ -661,6 +860,274 @@ func Test_ErrorMap_RateLimit_ExposesRetryAfter(t *testing.T) {
 
 - **Rich 4종:** table-driven `Test_Policies_RichType_<TYPE>_ActionSummary` — OKTA_SIGN_ON, ACCESS_POLICY, PASSWORD, MFA_ENROLL
 - **Raw 3종:** `Test_Policies_RawOnlyType_ListColumns_UniformAcrossTypes`, `Test_Policies_RawOnlyType_DetailShowsRawJSON`, `Test_Policies_RawOnlyType_MenuShowsRawViewBadge`
+
+### 8.7. Users Profile Edit Form (REQ-W01)
+
+`internal/tui/shared/form/` 와 `internal/tui/users/edit*.go` 를 다층으로 검증. 핵심 매트릭스 3종:
+
+#### 8.7.1. AC 매트릭스 (전체)
+
+| AC | 테스트 함수 | 레이어 |
+|----|------------|-------|
+| AC-1.1 (e from list) | `Test_UsersList_eKey_EmitsOpenUserEditMsg` | TUI unit |
+| AC-1.2 (e from detail) | `Test_UserDetail_eKey_EmitsOpenUserEditMsg` (table — Pretty/JSON/YAML 탭 × 3) | TUI unit |
+| AC-1.3 (latest GET on entry) | `Test_UserEdit_OnEntry_CallsPortGet_Once` | TUI flow |
+| AC-1.4 (loading abort with Esc) | `Test_UserEdit_Loading_EscAborts` | TUI flow |
+| AC-1.5 (4xx blocks form open) | `Test_UserEdit_Loading_4xx_DoesNotOpenForm` (table — 401/403/404) | TUI flow |
+| AC-2 (11 fields × 4 sections) | `Test_UserEdit_FieldCatalog_HasAll11Fields_In4Sections` | Render |
+| AC-2 (login read-only) | `Test_UserEdit_LoginField_IsReadOnly_NotInDiff` | TUI unit |
+| AC-3.1 (required empty) | `Test_UserEdit_RequiredField_EmptyShowsInline` (table — firstName/lastName/email × 3) | Form unit |
+| AC-3.2 (email loose format) | `Test_UserEdit_EmailField_LooseValidation` (table — valid/invalid × 6) | Form unit |
+| AC-3.3 (phone E.164 hint) | `Test_UserEdit_MobilePhone_E164Hint_NoBlock` | Form unit |
+| AC-3.5 (no client uniqueness lookup) | `Test_UserEdit_NoPreSaveUniquenessGetCall` | TUI flow |
+| AC-4.1 (Ctrl+S triggers save) | `Test_UserEdit_Save_PartialMergeBody_Success` | TUI flow |
+| AC-4.2 (diff-only body, omit) | **§8.7.2 table-driven** | TUI flow + port assertion |
+| AC-4.3 (saving disables input + Esc) | `Test_UserEdit_Saving_InputDisabled_EscNoop` | TUI flow |
+| AC-4.4 (1s save guard) | `Test_UserEdit_Saving_PostSuccess_1sGuard_DisablesSave` (FakeClock) | TUI flow |
+| AC-4.5 (success cache patch + toast) | `Test_UserEdit_Save_Success_BroadcastsUserUpdatedMsg` + `Test_UsersList_ReceivesUserUpdatedMsg_PatchesRow` | TUI flow |
+| AC-5.1 (clean Esc) | `Test_UserEdit_Esc_Clean_PopsImmediately` | TUI flow |
+| AC-5.2 (dirty Esc → modal) | `Test_UserEdit_Esc_Dirty_OpensDiscardConfirm` + `Test_DiscardConfirm_Y_Discards` / `Test_DiscardConfirm_N_Preserves` | TUI flow |
+| AC-5.3 (saving Esc noop) | `Test_UserEdit_Esc_DuringSaving_NoOp` | TUI flow |
+| AC-6 (errorCauses inline) | **§8.7.3 table-driven** | TUI flow |
+| AC-6.1 (field prefix match) | `Test_Form_ApplyServerErrors_PrefixMatchesFieldSpecKey` | Form unit |
+| AC-6.2 (inline clears on edit) | `Test_Form_InlineError_ClearsOnKeystrokeInThatField` | Form unit |
+| AC-7.1~7.5 (PII mask lifecycle) | `Test_UserEdit_PII_DefaultMasked` + `Test_UserEdit_PII_FocusAutoUnmask` + `Test_UserEdit_PII_BlurRemasksUnmodified` + `Test_UserEdit_AltM_TogglesAllPII` | TUI flow |
+| AC-7.6 (no PII in debug log) | `Test_UserEdit_DebugLog_NoRawPII` (peek test, §11) | Unit |
+| AC-8.1 (keyboard only) | implicit — all teatest 시나리오가 키보드만 사용 | — |
+| AC-8.2 (NO_COLOR markers) | `Test_UserEdit_Render_NoColor_ShowsDirtyAsterisk_RequiredText_InlineExclam` | Render (visual golden §6.4a) |
+| AC-8.3 (80x24 viewport) | `Test_UserEdit_NarrowTerminal_LabelInputTwoLines_ViewportScroll` | Render |
+| AC-9 (dirty/diff tracking) | **§8.7.4 table-driven** | Form unit |
+| AC-10.1 (cache untainted on cancel) | `Test_UserEdit_Discard_DoesNotPatchListCache` | TUI flow |
+| AC-10.2 (background polls continue) | `Test_UserEdit_DoesNotPauseLogsTailPolling` | TUI flow (LogsModel + EditModel 동시) |
+| AC-10.3 (selected row restored on close) | `Test_UserEdit_AfterClose_RestoresSelectedRow` | TUI flow |
+
+#### 8.7.2. AC-4.2 Partial-Merge Body 테이블 (11 fields × dirty matrix)
+
+```go
+// internal/tui/users/edit_save_test.go
+func Test_UserEdit_Save_PartialMerge_OnlyDirtyFieldsInBody(t *testing.T) {
+    t.Parallel()
+
+    type fieldCase struct {
+        Key   string  // FieldSpec.Key — Okta API field name
+        Input string  // value typed by user
+        Read  func(domain.UserProfilePatch) *string  // accessor on patch
+    }
+
+    cases := []fieldCase{
+        {"firstName",      "Alicia",   func(p domain.UserProfilePatch) *string { return p.FirstName }},
+        {"lastName",       "Smyth",    func(p domain.UserProfilePatch) *string { return p.LastName }},
+        {"displayName",    "Ali S.",   func(p domain.UserProfilePatch) *string { return p.DisplayName }},
+        {"nickName",       "aly",      func(p domain.UserProfilePatch) *string { return p.NickName }},
+        {"email",          "x@y.com",  func(p domain.UserProfilePatch) *string { return p.Email }},
+        {"title",          "Lead",     func(p domain.UserProfilePatch) *string { return p.Title }},
+        {"division",       "RnD-2",    func(p domain.UserProfilePatch) *string { return p.Division }},
+        {"department",     "Platform", func(p domain.UserProfilePatch) *string { return p.Department }},
+        {"employeeNumber", "ENG-099",  func(p domain.UserProfilePatch) *string { return p.EmployeeNumber }},
+        {"mobilePhone",    "+14155551234", func(p domain.UserProfilePatch) *string { return p.MobilePhone }},
+        {"secondEmail",    "a@b.com",  func(p domain.UserProfilePatch) *string { return p.SecondEmail }},
+    }
+
+    for _, tc := range cases {
+        t.Run("only "+tc.Key, func(t *testing.T) {
+            t.Parallel()
+            var got domain.UserProfilePatch
+            port := newPortWithLoadedUser(t, loadedAlice)
+            port.UpdateProfileFunc = func(_ context.Context, _ string, p domain.UserProfilePatch) (domain.User, error) {
+                got = p
+                return loadedAlice, nil
+            }
+            tm := startEditFlow(t, port, "00u1")
+            focusField(tm, tc.Key)   // helper: Tab until labelMatches
+            tm.Send(tea.KeyMsg{Type: tea.KeyCtrlU})  // clear field
+            tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.Input)})
+            tm.Send(tea.KeyMsg{Type: tea.KeyCtrlS})
+            waitForSaveComplete(t, tm)
+
+            // Only this field set; all others nil
+            require.NotNil(t, tc.Read(got), "%s must be set in patch", tc.Key)
+            assert.Equal(t, tc.Input, *tc.Read(got))
+            for _, other := range cases {
+                if other.Key == tc.Key {
+                    continue
+                }
+                assert.Nil(t, other.Read(got), "%s must be nil (omit) when not edited", other.Key)
+            }
+        })
+    }
+}
+```
+
+#### 8.7.3. AC-6 errorCauses 매핑 테이블
+
+```go
+// internal/tui/users/edit_save_test.go
+func Test_UserEdit_Save_BadRequestError_InlineFieldErrors(t *testing.T) {
+    t.Parallel()
+    cases := []struct {
+        name        string
+        causes      map[string]string  // field -> reason
+        wantInline  map[string]string  // expected substring per field in rendered output
+        wantOther   []string           // non-field causes shown in footer "Other errors:"
+    }{
+        {
+            name: "single field validation",
+            causes: map[string]string{"email": "Email is not valid"},
+            wantInline: map[string]string{"Email": "! Email is not valid"},
+        },
+        {
+            name: "two field validations",
+            causes: map[string]string{
+                "email": "Email is not valid",
+                "department": "Cannot exceed 100 characters",
+            },
+            wantInline: map[string]string{
+                "Email": "! Email is not valid",
+                "Department": "! Cannot exceed 100 characters",
+            },
+        },
+        {
+            name: "unknown field prefix → other errors",
+            causes: map[string]string{"customField_x": "Forbidden"},
+            wantOther: []string{"customField_x"},
+        },
+    }
+    for _, tc := range cases {
+        t.Run(tc.name, func(t *testing.T) {
+            t.Parallel()
+            port := newPortWithLoadedUser(t, loadedAlice)
+            port.UpdateProfileFunc = fakes.ValidationErrorFake(tc.causes)
+            tm := startEditFlow(t, port, "00u1")
+            editAnyField(tm)             // force dirty so Ctrl+S triggers save
+            tm.Send(tea.KeyMsg{Type: tea.KeyCtrlS})
+            frame := waitForFrame(t, tm)
+            for label, want := range tc.wantInline {
+                assert.Contains(t, frame, want, "%s inline error", label)
+            }
+            for _, other := range tc.wantOther {
+                assert.Contains(t, frame, other, "other error must appear in footer")
+            }
+            assert.NotContains(t, frame, "popNav called", "form must NOT close on 400")
+        })
+    }
+}
+```
+
+#### 8.7.4. AC-9 Dirty Tracking Matrix
+
+```go
+// internal/tui/shared/form/form_test.go
+func Test_Form_DirtyMatrix_AllSections(t *testing.T) {
+    t.Parallel()
+    specs := usersedit.FieldSpecs()   // production catalog — exported test helper or testfx
+
+    type op struct {
+        field string
+        value string  // empty = no edit; non-empty = SetValue
+    }
+    cases := []struct {
+        name     string
+        ops      []op
+        wantDirty int
+        wantKeys []string
+    }{
+        {"no edit", nil, 0, nil},
+        {"one identity field", []op{{"firstName", "Alicia"}}, 1, []string{"firstName"}},
+        {"one contact field PII", []op{{"mobilePhone", "+1..."}}, 1, []string{"mobilePhone"}},
+        {"cross-section",
+            []op{{"firstName", "Alicia"}, {"department", "Eng-2"}, {"secondEmail", "x@y"}},
+            3, []string{"firstName", "department", "secondEmail"}},
+        {"revert restores clean",
+            []op{{"firstName", "Alicia"}, {"firstName", "Alice"}},
+            0, nil},
+        {"all 11 dirty",
+            []op{ /* 11 ops */ },
+            11, /* all keys */},
+    }
+    for _, tc := range cases {
+        t.Run(tc.name, func(t *testing.T) {
+            t.Parallel()
+            f := form.New(specs, loadedAliceProfile)
+            for _, o := range tc.ops {
+                f = applyEdit(f, o.field, o.value)
+            }
+            assert.Equal(t, tc.wantDirty, f.Dirty())
+            assert.ElementsMatch(t, tc.wantKeys, f.DirtyFields())
+        })
+    }
+}
+```
+
+#### 8.7.5. UsersPortFake에 UpdateProfile 추가 패턴
+
+§6.7.5 참조. Phase 5 진입 직전 `internal/service/fakes/users_port_fake.go` 에 `UpdateProfileFunc` 필드와 `UpdateProfile` 메서드 추가 + 검증 헬퍼 (`ValidationErrorFake`) 추가.
+
+#### 8.7.6. Adapter integration (httptest)
+
+```go
+// internal/okta/users_test.go
+func Test_OktaUsersAdapter_UpdateProfile_PartialMerge_BodyShape(t *testing.T) {
+    t.Parallel()
+    var capturedBody []byte
+    srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        require.Equal(t, "POST", r.Method)
+        require.Equal(t, "/api/v1/users/00u1", r.URL.Path)
+        capturedBody, _ = io.ReadAll(r.Body)
+        w.Header().Set("Content-Type", "application/json")
+        _, _ = w.Write([]byte(`{"id":"00u1","profile":{"login":"a@x","firstName":"Alicia","lastName":"Smith"}}`))
+    }))
+    defer srv.Close()
+
+    client := okta.NewTestClient(t, srv.URL, "token")
+    a := okta.NewUsersAdapter(client)
+
+    first := "Alicia"
+    patch := domain.UserProfilePatch{FirstName: &first}
+    user, err := a.UpdateProfile(context.Background(), "00u1", patch)
+    require.NoError(t, err)
+    assert.Equal(t, "Alicia", user.Profile.FirstName)
+
+    var sent struct {
+        Profile map[string]any `json:"profile"`
+    }
+    require.NoError(t, json.Unmarshal(capturedBody, &sent))
+    assert.Equal(t, "Alicia", sent.Profile["firstName"])
+    assert.NotContains(t, sent.Profile, "lastName",  "unchanged fields must be omitted")
+    assert.NotContains(t, sent.Profile, "email",     "unchanged fields must be omitted")
+    // ... 9 more assertNotContains for the other 9 fields
+}
+
+func Test_OktaUsersAdapter_UpdateProfile_ErrorMapping(t *testing.T) {
+    t.Parallel()
+    cases := []struct {
+        name    string
+        fixture string
+        wantErr error
+    }{
+        {"400 validation", "errors/E0000001_validation.json", new(domain.BadRequestError)},
+        {"403 forbidden",  "errors/E0000006_forbidden.json",  domain.ErrForbidden},
+        {"404 not found",  "errors/E0000007_not_found.json",  domain.ErrNotFound},
+        {"429 rate limited","errors/E0000047_rate_limit.json",new(domain.RateLimitedError)},
+    }
+    for _, tc := range cases {
+        t.Run(tc.name, func(t *testing.T) { /* serve fixture, assert errors.As/Is */ })
+    }
+}
+
+// EMPTY PATCH GUARD — service-level only, but adapter should also panic-guard
+func Test_OktaUsersAdapter_UpdateProfile_EmptyPatch_ReturnsErrEmptyPatch_NoHTTPCall(t *testing.T) {
+    t.Parallel()
+    called := false
+    srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+        called = true
+    }))
+    defer srv.Close()
+    a := okta.NewUsersAdapter(okta.NewTestClient(t, srv.URL, "tok"))
+    _, err := a.UpdateProfile(context.Background(), "00u1", domain.UserProfilePatch{})
+    assert.ErrorIs(t, err, domain.ErrEmptyPatch)
+    assert.False(t, called, "no HTTP call must be made for empty patch (D-W13)")
+}
+```
 
 ---
 
@@ -916,6 +1383,7 @@ func Test_Secrets_NeverLeakToGoldenFiles(t *testing.T) {
 | REQ-E02 | AC-1~3 | `internal/tui/shared/toast_test.go` | `Test_Toast_3SecondAutoDismiss` · `Test_Toast_DuplicateShowsCounter` · `Test_ErrorsCommand_ShowsHistory` | TUI flow |
 | REQ-E03 | AC-1~3 | `internal/tui/shared/offline_test.go` | `Test_Offline_StatusBarIndicator` · `Test_Offline_CachedDataStillReadable` · `Test_Offline_AutoRefreshOnRecovery` | TUI flow |
 | REQ-O01 | AC-1~4 | `internal/logger/debuglog_test.go` | `Test_DebugLog_DisabledByDefault` · `Test_DebugLog_CapturesHTTPAndState` · `Test_DebugLog_RotatesAt10MB` · `Test_DebugLog_TailCommand` | Unit |
+| **REQ-W01** | **AC-1~10** | **§8.7 전부 (`edit_flow_test.go` / `edit_save_test.go` / `edit_pii_test.go` / `form_test.go` / `errmap_test.go` / `users_test.go`)** | **§8.7 매트릭스 — 11 fields × 4 sections × dirty matrix table-driven + 6 HTTP 에러 시나리오** | **Mixed (Form unit + TUI flow + Adapter integration)** |
 
 **Phase 5 선행 과제:** 위 매트릭스의 모든 테스트 함수명을 `_test.go`에 `t.Skip("not yet implemented — REQ-XXX AC-Y")`로 예약. 이로써 REQ → 테스트 → 구현 추적 경로가 Phase 5 시작 시점에 이미 성립한다.
 
@@ -1006,6 +1474,7 @@ func Test_InMemUsersPort_Contract(t *testing.T) {
 | 2026-04-24 | v0.9.1 | developer 리뷰 B1~B5 반영: Contract 레이어 → Adapter Integration 병합(§2.1), View 스냅샷 예시 SetUsers 제거(§6.2), Coverage `okta` 75% 통일(§9.2), teatest 실측 Phase 5 초반으로 연기(§6.6), Appendix A 업데이트. | test-engineer |
 | 2026-04-24 | v1.0.0 | developer 교차 리뷰 통과. ARCHITECTURE/PROJECT_STRUCTURE/CONVENTIONS/TECH_STACK v1.0.0 정합성 확인 (Port 위치·testdata 분리·fakes 경로·go-cmp 추가 전부 반영). Appendix A의 teatest/goleak/Makefile 항목은 Phase 5 초반 실측 후 본문 업데이트. | test-engineer |
 | 2026-04-24 | v1.0.1 | Phase 6 Users list teatest 첫 Green 실측 반영: §6.6 타이밍·ANSI·Cmd 순서 구체 기록, §9.3 goleak은 현 시점 allowlist 불필요 확인. Appendix A의 B4/goleak 이월 항목 해소. | test-engineer |
+| 2026-06-17 | v1.1.0 | REQ-W01 (Users Profile Edit) addendum: §6.7 Form 화면 teatest 패턴 신설 (Form unit / Edit screen / Adapter integration 3층 분리, UsersPortFake.UpdateProfile 확장 가이드 + ValidationErrorFake 헬퍼). §8.7 REQ-W01 AC 매트릭스 (11 fields × dirty matrix table-driven, errorCauses 매핑 table, partial-merge body assertion table). §12 매트릭스에 REQ-W01 행 추가. Sources에 REQ-W01 PRD/TUI Design addendum 포함. | test-engineer |
 
 ---
 

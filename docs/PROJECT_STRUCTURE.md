@@ -13,6 +13,7 @@
 |------|------|------|-------|
 | v0.1.0-draft | 2026-04-24 | 초안 | developer |
 | v1.0.0 | 2026-04-24 | D-A 반영: `internal/domain/ports.go` + `queries.go`. testdata 분리(루트 공유 vs 패키지-로컬 golden). testfx 패키지 명시. service/fakes 경로 확정. | developer |
+| v1.1.0 | 2026-06-17 | REQ-W01 통합: `internal/tui/shared/form/` 패키지 신설(FieldSpec / Form / ErrorMapper / DiscardConfirm). `internal/tui/users/edit.go` 추가. `internal/domain/user_patch.go` (`UserProfilePatch`, `ErrEmptyPatch`). testdata/oktaapi/users/ 에 update_success / update_400_validation / update_403 / update_404 / update_429 시나리오 추가. `.golangci.yml` depguard 규칙: `internal/tui/shared/form/` 는 `domain` / `service` / `okta` import 금지. | developer |
 
 ---
 
@@ -48,13 +49,31 @@ ota/
 │   │   │   ├── styles.go        # Lip Gloss 토큰 1차 정의 (TUI_DESIGN §6.1)
 │   │   │   ├── breadcrumb.go
 │   │   │   ├── toast.go
-│   │   │   └── keymap.go        # 화면 공통 키 렌더 helper
-│   │   ├── users/               # SCR-010, SCR-011
-│   │   │   ├── list.go          # UsersListModel
-│   │   │   ├── detail.go        # UserDetailModel (+ tabs)
+│   │   │   ├── msgs.go          # OpenUserDetailMsg, OpenUserEditMsg(W01), UserUpdatedMsg(W01) ...
+│   │   │   ├── keymap.go        # 화면 공통 키 렌더 helper
+│   │   │   └── form/            # REQ-W01 v0.2 — 재사용 가능 폼 위젯 (ARCHITECTURE §6.8 / CONVENTIONS §10a)
+│   │   │       ├── doc.go
+│   │   │       ├── spec.go      # FieldSpec, FieldKind
+│   │   │       ├── form.go      # Form tea.Model — Init/Update/View, dirty/diff/validate
+│   │   │       ├── keys.go      # Tab/Shift-Tab/Ctrl+S/Esc/Alt+m intercept 정의
+│   │   │       ├── errmap.go    # ErrorMapper interface + DefaultErrorMapper (BadRequestError → field-level inline)
+│   │   │       ├── msgs.go      # form.SaveRequestedMsg, form.DiscardRequestedMsg, form.PIIToggleMsg, form.FieldFocusedMsg
+│   │   │       ├── discard.go   # DiscardConfirm 모달 helper (OverlayDiscardConfirm)
+│   │   │       ├── view.go      # 섹션/필드/inline error 렌더
+│   │   │       ├── form_test.go
+│   │   │       └── errmap_test.go
+│   │   ├── users/               # SCR-010, SCR-011, SCR-012(W01)
+│   │   │   ├── list.go          # UsersListModel — `e` 키 → OpenUserEditMsg{ID} 발송
+│   │   │   ├── detail.go        # UserDetailModel — 모든 탭에서 `e` 키 → OpenUserEditMsg{ID}
+│   │   │   ├── edit.go          # EditModel (SCR-012, REQ-W01) — form.New 호출 + fetch/save Cmd + 에러 핸들링
+│   │   │   ├── edit_spec.go     # 11개 FieldSpec 카탈로그 (Identity/Contact/Organization/Status 4 섹션)
+│   │   │   ├── edit_patch.go    # form.Diff() → domain.UserProfilePatch 변환
 │   │   │   ├── factors.go       # Factors 탭 렌더러 (REQ-R01 AC-6)
 │   │   │   ├── msg.go
-│   │   │   └── list_test.go
+│   │   │   ├── list_test.go
+│   │   │   ├── edit_flow_test.go        # teatest — 11 field × 4 section × dirty matrix
+│   │   │   ├── edit_save_test.go        # 200/400/403/404/429/5xx
+│   │   │   └── edit_pii_test.go         # Alt+m, focus auto-unmask, 마스킹 라이프사이클
 │   │   ├── groups/              # SCR-020, SCR-021
 │   │   │   ├── list.go
 │   │   │   ├── detail.go
@@ -100,6 +119,7 @@ ota/
 │   │
 │   ├── domain/                  # 순수 도메인 (외부 import 금지)
 │   │   ├── user.go              # User, UserStatus, UserProfile, Factor
+│   │   ├── user_patch.go        # UserProfilePatch + ErrEmptyPatch (REQ-W01, v0.2 — ARCHITECTURE §6.1)
 │   │   ├── group.go
 │   │   ├── rule.go              # Rule, RuleStatus (ACTIVE/INACTIVE/INVALID)
 │   │   ├── policy.go            # Policy, PolicyType, PolicyRule
@@ -254,10 +274,11 @@ ota/
 
 | 패키지 | 수용 (import OK) | 금지 (import 금지) |
 |--------|-----------------|-------------------|
-| `internal/domain` | stdlib만 (Port 인터페이스·Query 타입 포함) | 모든 외부 패키지, 다른 internal |
+| `internal/domain` | stdlib만 (Port 인터페이스·Query 타입·Patch 타입 포함) | 모든 외부 패키지, 다른 internal |
 | `internal/service` | `domain`, stdlib, `clock`, `mask` | `okta`, `tui`, `app`, SDK |
 | `internal/okta` | `domain`, SDK, stdlib, `clock`, `logger` | `service`, `tui`, `app` |
-| `internal/tui/*` | `service`, `domain`, `keys`, `mask`, `shared`, Bubbletea 생태 | SDK, `okta` |
+| `internal/tui/*` | `service`, `domain`, `keys`, `mask`, `shared`, `shared/form`, Bubbletea 생태 | SDK, `okta` |
+| `internal/tui/shared/form` | stdlib, `mask`, Bubbletea (`bubbles/textinput`, `bubbles/viewport`, `bubbles/spinner`, `bubbles/key`), `lipgloss` | `domain`, `service`, `okta`, `app`, `tui/<resource>` — **도메인-agnostic 가드** (`.golangci.yml` depguard) |
 | `internal/app` | `tui/*`, `service`, `domain`, `keys`, `mask`, `logger`, Bubbletea | SDK, `okta` |
 | `internal/config` | stdlib, koanf | domain 외 internal (설정은 cmd가 도메인으로 변환해 주입) |
 | `internal/keys` | stdlib | 그 외 internal |
@@ -398,6 +419,28 @@ testdata/oktaapi/users/
 1. `internal/domain/policy.go`의 `policyTypeCatalog` map에 타입 상수 추가
 2. 만약 rich renderer 만들려면 `internal/tui/policies/renderers/continuous_access.go`
 3. 없으면 자동 raw view로 fallback (REQ-R04 AC-8)
+
+### 8.3. 신규 Write 표면 / 폼 화면 (예: REQ-W01 Users Edit — v0.2)
+
+`internal/tui/shared/form/` 패키지를 재사용하여 새 mutation 화면을 만든다. ARCHITECTURE §13.4 플레이북과 1:1 대응.
+
+순서:
+
+1. `internal/domain/<resource>_patch.go` — `<Resource>Patch` struct + `IsEmpty()` + `ErrEmpty<X>Patch` 센티넬 (`*string` 포인터 패턴)
+2. `internal/domain/ports.go` — Port 메서드 추가 (예: `UsersPort.UpdateProfile(ctx, id, patch) (User, error)`)
+3. `internal/service/fakes/<port>_port_fake.go` — Func 필드 추가 (`UpdateProfileFunc`)
+4. `internal/okta/<resource>.go` — `doPost`로 어댑터 구현 (partial-merge 보장: nil 필드 omit). PUT 경로 절대 노출 금지 (도메인 §1.3 / D-W15)
+5. `internal/service/<resource>.go` — wrap + 캐시 무효화/갱신 hook
+6. `internal/tui/<resource>/edit_spec.go` — `[]form.FieldSpec` 정의 (라벨/Kind/Required/PII/Section)
+7. `internal/tui/<resource>/edit_patch.go` — `form.Diff() map[string]string` → `domain.<X>Patch` 변환
+8. `internal/tui/<resource>/edit.go` — EditModel: form.New + fetch Cmd + save Cmd + 에러 핸들링
+9. `internal/tui/shared/msgs.go` — `Open<X>EditMsg{ID}` + `<X>UpdatedMsg{<X>}` 추가
+10. `internal/app/app.go` — ScreenKind 등록 (`Screen<X>Edit`) + 라우터 분기
+11. `testdata/oktaapi/<resource>/` — `update_success.json` + `update_400_validation.meta.json` 등 시나리오 fixture
+12. `internal/tui/<resource>/edit_*_test.go` — teatest 플로우 + 11/N field × dirty matrix + 6개 HTTP 에러 시나리오 (TESTING.md §8.7)
+13. `docs/` 업데이트 (ARCHITECTURE §7.4 mutation 표 행 추가, TESTING §12 매트릭스 REQ-W## 행, PRD REQ-W##)
+
+**변경 반경 (REQ-W01 기준 예상):** 신규 파일 ~12개, 수정 파일 ~6개.
 
 ---
 
