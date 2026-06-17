@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tedilabs/ota/internal/clock"
+	"github.com/tedilabs/ota/internal/dashboard"
 	"github.com/tedilabs/ota/internal/tui/home"
 	"github.com/tedilabs/ota/internal/tui/shared"
 )
@@ -202,3 +204,43 @@ func Test_Home_ActivityCard_RendersAfterActivityLoadedMsg(t *testing.T) {
 	assert.Contains(t, view, "App assign",
 		"Activity card must surface the app-assignment lifecycle rows")
 }
+
+func Test_Home_ActivityCard_24hWindow_RendersDeltaFooterWhenCacheHasYesterday(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	cache, err := dashboard.New(cacheDir, "https://acme.okta.com")
+	require.NoError(t, err)
+
+	// Seed yesterday's roll directly so the delta render path has
+	// something to compare against. The cache key must match the
+	// constant the home package writes today under (the test reads
+	// it back via the Δ footer when today's activityLoadedMsg lands).
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	yesterday := now.AddDate(0, 0, -1)
+	require.NoError(t, cache.Put("activity-signins-24h", dashboard.Counts{
+		Total:      1000,
+		ObservedAt: yesterday,
+	}))
+
+	m := home.New(home.Deps{Width: 200, Height: 60, OrgURL: "https://acme.okta.com",
+		Cache: cache, Clock: clock.NewFake(now)})
+
+	// Cycle to 24h window — default is 1h.
+	m = runKey(t, m, 't')
+	m = runKey(t, m, 't')
+
+	// Fire today's activity msg — value above yesterday's roll.
+	m = runMsg(t, m, home.ActivityLoadedForTest("24h", home.ActivityMetrics{
+		WindowLabel: "24h",
+		WindowSince: now.Add(-24 * time.Hour),
+		SignIns:     1042,
+	}, false))
+
+	view := m.View()
+	assert.Contains(t, view, "+42",
+		"24h Activity card must render a +42 Δ vs 1d footer when cache has yesterday's roll")
+	assert.Contains(t, view, "(1d)",
+		"delta footer must label the 1d window cell")
+}
+
+
