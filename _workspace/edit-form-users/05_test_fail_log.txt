@@ -1,0 +1,313 @@
+# Phase 5 RED Fail Log — REQ-W01 (Users Profile Edit Form)
+# Date: 2026-06-17
+# Author: go-test-engineer
+# Command: go test -count=1 -timeout=120s -short ./...
+#
+# RED summary:
+#   - 32 NEW tests FAIL (all REQ-W01)
+#   - 0 existing tests regressed (all non-W01 packages pass)
+#
+# Distribution by layer:
+#   internal/domain          → 1 FAIL (UserProfilePatch.IsEmpty stub returns false)
+#   internal/okta            → 6 FAIL (UsersAdapter.UpdateProfile stub returns sentinel)
+#   internal/service         → 4 FAIL (UsersService.UpdateProfile stub)
+#   internal/tui/shared/form → 9 FAIL (Form widget stubs)
+#   internal/tui/users       → 10 FAIL (EditModel teatest scenarios)
+#   internal/app             → 2 FAIL (OpenUserEditMsg routing, e key on Users list)
+#
+# Phase 6 action: implement the stubs in the order documented in
+# 05_dev_stub_log.md so each layer's tests flip to GREEN.
+# ============================================================
+
+ok  	github.com/tedilabs/ota/cmd/ota	0.235s
+ok  	github.com/tedilabs/ota/internal/apilog	0.427s
+--- FAIL: Test_AppModel_OpenUserEditMsg_PushesUserEditScreen (0.00s)
+    user_edit_entry_test.go:107: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/user_edit_entry_test.go:107
+        	Error:      	Not equal: 
+        	            	expected: "user-edit"
+        	            	actual  : "users"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-user-edit
+        	            	+users
+        	Test:       	Test_AppModel_OpenUserEditMsg_PushesUserEditScreen
+        	Messages:   	REQ-W01 AC-1.1: OpenUserEditMsg must result in ScreenUserEdit being the active screen
+--- FAIL: Test_AppModel_EKey_OnUsersList_OpensUserEditScreen (0.00s)
+    user_edit_entry_test.go:148: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/app/user_edit_entry_test.go:148
+        	Error:      	Not equal: 
+        	            	expected: "user-edit"
+        	            	actual  : "users"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-user-edit
+        	            	+users
+        	Test:       	Test_AppModel_EKey_OnUsersList_OpensUserEditScreen
+        	Messages:   	REQ-W01 AC-1.1: `e` on Users list must drive the App Shell into ScreenUserEdit
+FAIL
+FAIL	github.com/tedilabs/ota/internal/app	0.984s
+?   	github.com/tedilabs/ota/internal/clock	[no test files]
+ok  	github.com/tedilabs/ota/internal/config	0.603s
+--- FAIL: Test_UserProfilePatch_IsEmpty_AllNil_IsTrue (0.00s)
+    user_patch_test.go:29: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/domain/user_patch_test.go:29
+        	Error:      	Should be true
+        	Test:       	Test_UserProfilePatch_IsEmpty_AllNil_IsTrue
+        	Messages:   	REQ-W01 D-T4 / D-T5: a zero-value patch must report IsEmpty()=true so the adapter short-circuits with ErrEmptyPatch (no HTTP call)
+FAIL
+FAIL	github.com/tedilabs/ota/internal/domain	0.990s
+ok  	github.com/tedilabs/ota/internal/keys	1.167s
+ok  	github.com/tedilabs/ota/internal/logger	1.344s
+ok  	github.com/tedilabs/ota/internal/mask	1.494s
+--- FAIL: Test_OktaUsersAdapter_UpdateProfile_EmptyPatch_ReturnsErrEmptyPatch_NoHTTPCall (0.00s)
+    users_update_test.go:188: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/okta/users_update_test.go:188
+        	Error:      	Target error should be in err chain:
+        	            	expected: "empty patch: no fields to update"
+        	            	in chain: "okta: UsersAdapter.UpdateProfile not implemented (Phase 5 stub)"
+        	Test:       	Test_OktaUsersAdapter_UpdateProfile_EmptyPatch_ReturnsErrEmptyPatch_NoHTTPCall
+        	Messages:   	REQ-W01 D-T5 / D-W13: IsEmpty() patch must return ErrEmptyPatch
+--- FAIL: Test_OktaUsersAdapter_UpdateProfile_PartialMerge_MultiField_BodyShape (0.00s)
+    users_update_test.go:126: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/okta/users_update_test.go:126
+        	Error:      	Received unexpected error:
+        	            	okta: UsersAdapter.UpdateProfile not implemented (Phase 5 stub)
+        	Test:       	Test_OktaUsersAdapter_UpdateProfile_PartialMerge_MultiField_BodyShape
+--- FAIL: Test_OktaUsersAdapter_UpdateProfile_PartialMerge_SingleField_BodyShape (0.00s)
+    users_update_test.go:68: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/okta/users_update_test.go:68
+        	Error:      	Received unexpected error:
+        	            	okta: UsersAdapter.UpdateProfile not implemented (Phase 5 stub)
+        	Test:       	Test_OktaUsersAdapter_UpdateProfile_PartialMerge_SingleField_BodyShape
+        	Messages:   	REQ-W01 AC-4.2: single-field partial merge must succeed
+--- FAIL: Test_OktaUsersAdapter_UpdateProfile_403Forbidden_ReturnsErrForbidden (0.00s)
+    users_update_test.go:251: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/okta/users_update_test.go:251
+        	Error:      	Target error should be in err chain:
+        	            	expected: "forbidden"
+        	            	in chain: "okta: UsersAdapter.UpdateProfile not implemented (Phase 5 stub)"
+        	Test:       	Test_OktaUsersAdapter_UpdateProfile_403Forbidden_ReturnsErrForbidden
+        	Messages:   	REQ-W01 AC-6 403: must map to ErrForbidden sentinel
+--- FAIL: Test_OktaUsersAdapter_UpdateProfile_400Validation_PropagatesCauses (0.00s)
+    users_update_test.go:228: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/okta/users_update_test.go:228
+        	Error:      	Should be in error chain:
+        	            	expected: *domain.BadRequestError
+        	            	in chain: "okta: UsersAdapter.UpdateProfile not implemented (Phase 5 stub)" (*errors.errorString)
+        	Test:       	Test_OktaUsersAdapter_UpdateProfile_400Validation_PropagatesCauses
+        	Messages:   	REQ-W01 AC-6: 400 must yield *BadRequestError so the form maps causes inline
+--- FAIL: Test_OktaUsersAdapter_UpdateProfile_404NotFound_ReturnsErrNotFound (0.00s)
+    users_update_test.go:274: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/okta/users_update_test.go:274
+        	Error:      	Target error should be in err chain:
+        	            	expected: "not found"
+        	            	in chain: "okta: UsersAdapter.UpdateProfile not implemented (Phase 5 stub)"
+        	Test:       	Test_OktaUsersAdapter_UpdateProfile_404NotFound_ReturnsErrNotFound
+        	Messages:   	REQ-W01 AC-6.4: 404 must map to ErrNotFound sentinel
+FAIL
+FAIL	github.com/tedilabs/ota/internal/okta	3.665s
+ok  	github.com/tedilabs/ota/internal/okta/errormap	1.835s
+ok  	github.com/tedilabs/ota/internal/okta/pagination	2.071s
+ok  	github.com/tedilabs/ota/internal/okta/ratelimit	2.251s
+?   	github.com/tedilabs/ota/internal/okta/testfx	[no test files]
+ok  	github.com/tedilabs/ota/internal/oktastatus	2.432s
+ok  	github.com/tedilabs/ota/internal/security	2.621s
+--- FAIL: Test_UsersService_UpdateProfile_EmptyPatch_PropagatesErrEmptyPatch (0.00s)
+    users_update_test.go:118: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/service/users_update_test.go:118
+        	Error:      	Target error should be in err chain:
+        	            	expected: "empty patch: no fields to update"
+        	            	in chain: "service: UsersService.UpdateProfile not implemented (Phase 5 stub)"
+        	Test:       	Test_UsersService_UpdateProfile_EmptyPatch_PropagatesErrEmptyPatch
+        	Messages:   	REQ-W01 D-T5: empty patch must surface ErrEmptyPatch through the service
+--- FAIL: Test_UsersService_UpdateProfile_PropagatesBadRequestError (0.00s)
+    users_update_test.go:79: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/service/users_update_test.go:79
+        	Error:      	Should be in error chain:
+        	            	expected: *domain.BadRequestError
+        	            	in chain: "service: UsersService.UpdateProfile not implemented (Phase 5 stub)" (*errors.errorString)
+        	Test:       	Test_UsersService_UpdateProfile_PropagatesBadRequestError
+        	Messages:   	REQ-W01 AC-6: service must propagate *BadRequestError unchanged so the form can map Causes inline
+--- FAIL: Test_UsersService_UpdateProfile_DelegatesToPort_VerbatimPatch (0.00s)
+    users_update_test.go:51: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/service/users_update_test.go:51
+        	Error:      	Received unexpected error:
+        	            	service: UsersService.UpdateProfile not implemented (Phase 5 stub)
+        	Test:       	Test_UsersService_UpdateProfile_DelegatesToPort_VerbatimPatch
+        	Messages:   	REQ-W01 D-T3: service must propagate success verbatim
+--- FAIL: Test_UsersService_UpdateProfile_PropagatesRateLimitedError (0.00s)
+    users_update_test.go:100: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/service/users_update_test.go:100
+        	Error:      	Should be in error chain:
+        	            	expected: *domain.RateLimitedError
+        	            	in chain: "service: UsersService.UpdateProfile not implemented (Phase 5 stub)" (*errors.errorString)
+        	Test:       	Test_UsersService_UpdateProfile_PropagatesRateLimitedError
+        	Messages:   	REQ-W01 AC-6 429: service must propagate *RateLimitedError so EditModel renders the countdown
+FAIL
+FAIL	github.com/tedilabs/ota/internal/service	2.798s
+?   	github.com/tedilabs/ota/internal/service/fakes	[no test files]
+ok  	github.com/tedilabs/ota/internal/testfx	2.968s
+?   	github.com/tedilabs/ota/internal/tui/admins	[no test files]
+?   	github.com/tedilabs/ota/internal/tui/apitokens	[no test files]
+ok  	github.com/tedilabs/ota/internal/tui/apps	3.076s
+?   	github.com/tedilabs/ota/internal/tui/authenticators	[no test files]
+?   	github.com/tedilabs/ota/internal/tui/authservers	[no test files]
+ok  	github.com/tedilabs/ota/internal/tui/groups	3.121s
+ok  	github.com/tedilabs/ota/internal/tui/logs	3.045s
+ok  	github.com/tedilabs/ota/internal/tui/overlay	2.824s
+ok  	github.com/tedilabs/ota/internal/tui/policies	3.047s
+ok  	github.com/tedilabs/ota/internal/tui/rules	3.098s
+ok  	github.com/tedilabs/ota/internal/tui/shared	3.070s
+--- FAIL: Test_Form_Validate_InvalidEmail_Fails (0.00s)
+    form_test.go:159: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:159
+        	Error:      	Should be false
+        	Test:       	Test_Form_Validate_InvalidEmail_Fails
+        	Messages:   	REQ-W01 AC-3.2: invalid email shape must fail loose client validation
+--- FAIL: Test_Form_Revert_ClearsDirty (0.00s)
+    form_test.go:111: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:111
+        	Error:      	Not equal: 
+        	            	expected: 1
+        	            	actual  : -1
+        	Test:       	Test_Form_Revert_ClearsDirty
+        	Messages:   	precondition: dirty=1 after edit
+--- FAIL: Test_Form_ApplyServerErrors_PrefixMatchesFieldSpecKey (0.00s)
+    form_test.go:176: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:176
+        	Error:      	"" does not contain "Email is not valid"
+        	Test:       	Test_Form_ApplyServerErrors_PrefixMatchesFieldSpecKey
+        	Messages:   	REQ-W01 AC-6.1: server error for 'email' must render inline near the Email field
+    form_test.go:178: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:178
+        	Error:      	"" does not contain "Cannot exceed 100 characters"
+        	Test:       	Test_Form_ApplyServerErrors_PrefixMatchesFieldSpecKey
+        	Messages:   	REQ-W01 AC-6.1: server error for 'department' must render inline near the Department field
+--- FAIL: Test_Form_Dirty_TrackedPerKeystroke (0.00s)
+    form_test.go:98: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:98
+        	Error:      	Not equal: 
+        	            	expected: 1
+        	            	actual  : -1
+        	Test:       	Test_Form_Dirty_TrackedPerKeystroke
+        	Messages:   	REQ-W01 AC-9.1: a keystroke on a focused field flips Dirty to 1
+--- FAIL: Test_Form_Diff_ReturnsOnlyDirtyFields (0.00s)
+    form_test.go:129: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:129
+        	Error:      	"map[]" should have 1 item(s), but has 0
+        	Test:       	Test_Form_Diff_ReturnsOnlyDirtyFields
+        	Messages:   	REQ-W01 AC-4.2: Diff() must contain exactly the dirty field(s)
+--- FAIL: Test_Form_Validate_RequiredEmpty_FailsAtFirstInvalid (0.00s)
+    form_test.go:145: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:145
+        	Error:      	Should be false
+        	Test:       	Test_Form_Validate_RequiredEmpty_FailsAtFirstInvalid
+        	Messages:   	REQ-W01 AC-3.1: empty required field must fail Validate()
+    form_test.go:146: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:146
+        	Error:      	Not equal: 
+        	            	expected: "firstName"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-firstName
+        	            	+
+        	Test:       	Test_Form_Validate_RequiredEmpty_FailsAtFirstInvalid
+        	Messages:   	REQ-W01 AC-3.1: Validate must return the key of the first invalid field for focus jumping
+--- FAIL: Test_Form_New_EmptyInitial_NoDirty (0.00s)
+    form_test.go:84: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:84
+        	Error:      	Not equal: 
+        	            	expected: 0
+        	            	actual  : -1
+        	Test:       	Test_Form_New_EmptyInitial_NoDirty
+        	Messages:   	REQ-W01 AC-9.1: missing initial values default to empty string — dirty still 0
+--- FAIL: Test_Form_New_NoDirty (0.00s)
+    form_test.go:71: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:71
+        	Error:      	Not equal: 
+        	            	expected: 0
+        	            	actual  : -1
+        	Test:       	Test_Form_New_NoDirty
+        	Messages:   	REQ-W01 AC-9.1: a fresh form must report Dirty()=0 (snapshot == current)
+    form_test.go:75: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:75
+        	Error:      	Not equal: 
+        	            	expected: map[string]string{"department":"Eng", "displayName":"Alice Smith", "division":"R&D", "email":"alice@acme.com", "employeeNumber":"ENG-042", "firstName":"Alice", "lastName":"Smith", "login":"alice@acme.com", "mobilePhone":"+1-555-123-4567", "nickName":"ali", "secondEmail":"alice.b@personal.com", "title":"SWE"}
+        	            	actual  : map[string]string(nil)
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1,15 +1,2 @@
+        	            	-(map[string]string) (len=12) {
+        	            	- (string) (len=10) "department": (string) (len=3) "Eng",
+        	            	- (string) (len=11) "displayName": (string) (len=11) "Alice Smith",
+        	            	- (string) (len=8) "division": (string) (len=3) "R&D",
+        	            	- (string) (len=5) "email": (string) (len=14) "alice@acme.com",
+        	            	- (string) (len=14) "employeeNumber": (string) (len=7) "ENG-042",
+        	            	- (string) (len=9) "firstName": (string) (len=5) "Alice",
+        	            	- (string) (len=8) "lastName": (string) (len=5) "Smith",
+        	            	- (string) (len=5) "login": (string) (len=14) "alice@acme.com",
+        	            	- (string) (len=11) "mobilePhone": (string) (len=15) "+1-555-123-4567",
+        	            	- (string) (len=8) "nickName": (string) (len=3) "ali",
+        	            	- (string) (len=11) "secondEmail": (string) (len=20) "alice.b@personal.com",
+        	            	- (string) (len=5) "title": (string) (len=3) "SWE"
+        	            	-}
+        	            	+(map[string]string) <nil>
+        	            	 
+        	Test:       	Test_Form_New_NoDirty
+        	Messages:   	REQ-W01: Snapshot() must echo the initial values
+--- FAIL: Test_Form_SetSaving_RendersSavingFooter (0.00s)
+    form_test.go:199: 
+        	Error Trace:	/Users/austin/workspace/tedilabs/ota/internal/tui/shared/form/form_test.go:199
+        	Error:      	"" does not contain "Saving"
+        	Test:       	Test_Form_SetSaving_RendersSavingFooter
+        	Messages:   	REQ-W01 AC-4.3: SetSaving(true) must surface a saving footer (Phase 6 wires spinner)
+FAIL
+FAIL	github.com/tedilabs/ota/internal/tui/shared/form	3.070s
+?   	github.com/tedilabs/ota/internal/tui/simpleres	[no test files]
+--- FAIL: Test_UserEdit_Dirty_Counter_RendersInFooter (2.03s)
+    edit_test.go:302: WaitFor: condition not met after 2s. Last output:
+        [?25l[?2004h [K
+--- FAIL: Test_UserEdit_Save_PartialMergeBody_Success (2.03s)
+    edit_test.go:150: WaitFor: condition not met after 2s. Last output:
+        [?25l[?2004h [K
+--- FAIL: Test_UserEdit_Render_Has11FieldLabels_4Sections (2.03s)
+    edit_test.go:329: WaitFor: condition not met after 2s. Last output:
+        [?25l[?2004h [K
+--- FAIL: Test_UserEdit_Esc_Clean_NoDiscardConfirm (2.03s)
+    edit_test.go:253: WaitFor: condition not met after 2s. Last output:
+        [?25l[?2004h [K
+--- FAIL: Test_UserEdit_Save_400Validation_InlineFieldErrors (2.03s)
+    edit_test.go:222: WaitFor: condition not met after 2s. Last output:
+        [?25l[?2004h [K
+--- FAIL: Test_UserEdit_OnEntry_CallsPortGet_Once (2.03s)
+    edit_test.go:96: WaitFor: condition not met after 2s. Last output:
+        [?25l[?2004h [K
+--- FAIL: Test_UserEdit_Esc_Dirty_OpensDiscardConfirm (2.03s)
+    edit_test.go:276: WaitFor: condition not met after 2s. Last output:
+        [?25l[?2004h [K
+--- FAIL: Test_UserEdit_LoginField_RendersReadOnly (2.03s)
+    edit_test.go:359: WaitFor: condition not met after 2s. Last output:
+        [?25l[?2004h [K
+--- FAIL: Test_UserEdit_Save_Success_RendersUpdatedToast (2.03s)
+    edit_test.go:191: WaitFor: condition not met after 2s. Last output:
+        [?25l[?2004h [K
+--- FAIL: Test_UserEdit_Loading_403_DoesNotOpenForm (2.30s)
+    teatest.go:175: timeout after 2s
+FAIL
+FAIL	github.com/tedilabs/ota/internal/tui/users	5.207s
+?   	github.com/tedilabs/ota/internal/tui/zones	[no test files]
+?   	github.com/tedilabs/ota/internal/version	[no test files]
+FAIL

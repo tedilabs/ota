@@ -1254,3 +1254,147 @@ users/groups/rules/logs와 동일한 반응형 정책 — 5/5 list parity 달성
 **END OF Cycle 5 Addendum**
 
 **END OF QA REPORT — v0.1.0 ship-ready GO**
+
+---
+
+# Addendum — v0.2.0 REQ-W01 (Users Profile Edit Form, SCR-012)
+
+**Date:** 2026-06-17
+**Cycle:** Phase 7 QA — Cycle 1 of REQ-W01
+**Reviewer:** qa-inspector
+**Scope:** PRD §5.6 REQ-W01 (AC-1 … AC-10, D-W1 … D-W16) ↔ TUI_DESIGN §SCR-012, §11.2a, §3.4, §3.6, §3.7, §10.1, §13 ↔ implementation under `internal/domain`, `internal/okta`, `internal/service`, `internal/tui/shared/form`, `internal/tui/users`, `internal/app`.
+**Internal detail:** `_workspace/edit-form-users/07_qa_findings.md`.
+
+## W.1 Ship-readiness: **BLOCKED**
+
+A single Critical finding — **QA-W01-01** — causes silent unsaved-data loss on the most common cancel gesture (`Esc` on a dirty edit form). Two additional High findings (QA-W01-02 / QA-W01-03) violate primary PRD ACs (saving-state Esc behavior, `:edit` palette resolution). The fix surface is small (App Shell Esc precedence + palette routing), but until these land the form cannot ship.
+
+The implementation otherwise meets adapter / service / domain contracts cleanly; the Phase 6 implementation report's 32 GREEN tests stay GREEN. The gap is purely at the App Shell boundary — Phase 6 / Phase 5 tests exercise `EditModel` in isolation via `teatest.NewTestModel(m)` which bypasses `app.handleKey`'s Esc precedence and palette router. The 4 new regression tests added in `internal/app/user_edit_qa_regression_test.go` close that gap and FAIL until the fixes land.
+
+## W.2 Findings table
+
+| ID | Severity | Title | AC / D | Files |
+|----|----------|-------|--------|-------|
+| QA-W01-01 | **Critical** | `Esc` on dirty edit form silently discards unsaved changes (App Shell pops nav before EditModel sees Esc) | AC-5.2, D-W4, D-W16 | `internal/app/app.go:2113-2122`, `internal/app/app.go:1411-1432` |
+| QA-W01-02 | High | `Esc` during EditStateSaving pops nav while save POST is in flight; Ctrl+C also wrong (fires QuitConfirm not abort) | AC-4.3, AC-5.3 | `internal/app/app.go:2113-2122`, `internal/tui/users/edit.go:121-123,402-422` |
+| QA-W01-03 | High | `:edit` / `:e` palette commands do not resolve to ScreenUserEdit | AC-1.2, §3.4 | `internal/app/app.go:792-841,2307-2343` |
+| QA-W01-04 | High | `e` key in Logs screen collides with REQ-W01's reserved single meaning (24h history shortcut) | §3.6:418, §12.1:2610, §12.3:2623 | `internal/tui/logs/logs.go:925` |
+| QA-W01-05 | High | `*` glyph overloaded: same suffix for required and dirty (AC-8 vs AC-9 conflated; required misses `[required]` / `!`) | AC-8.2, AC-9.2 | `internal/tui/shared/form/form.go:262-281,205-260` |
+| QA-W01-06 | High | OverlayDiscardConfirm + DiscardRequestedMsg + FieldFocusedMsg + FieldBlurredMsg + SaveRequestedMsg declared but never wired (dead spec scaffolding) | D-W16, AC-7.2/7.3/7.4 | `internal/app/app.go:186`, `internal/tui/shared/form/form.go:526-549` |
+| QA-W01-07 | Medium | `:edit` palette's "no user selected" toast not implemented | §3.4:335 | `internal/app/actions.go` (helper exists; not invoked from palette path) |
+| QA-W01-08 | Medium | `e` on empty Users list pushes a stuck "Loading user profile…" form | AC-1.1, impl §2.4 | `internal/tui/users/list.go:833-839`, `internal/tui/users/edit.go:107-112` |
+| QA-W01-09 | Medium | Save success: ScreenUsers has no `UserUpdatedMsg` handler — cache patch bypassed by full refetch (extra GET, RL impact) | AC-4.5, D-T3, impl §2.5 | `internal/app/app.go:714-732`, `internal/tui/users/list.go` |
+| QA-W01-10 | Medium | `EditModel.form.snapshot` not refreshed on save success — Dirty() reports stale diff if the form is ever seen post-save | AC-4.5, AC-9.4, D-T7 | `internal/tui/users/edit.go:134-141` |
+| QA-W01-11 | Medium | `fetchUserForEditCmd` / `saveProfileCmd` use `context.Background()` — Esc / Ctrl+C cannot cancel in-flight HTTP | AC-1.4, AC-4.3, PRD §6.3 | `internal/tui/users/edit.go:402-410,414-422` |
+| QA-W01-12 | Medium | PII focus blur + modified should keep value unmasked (AC-7.4), but current code re-masks unconditionally | AC-7.4 | `internal/tui/shared/form/form.go:284-293` |
+| QA-W01-13 | Low | `fieldState.piiMask` field declared and set but never read (dead code) | — | `internal/tui/shared/form/form.go:52,91` |
+| QA-W01-14 | Low | `Form.Dirty()` has a per-iteration nil-guard that should be a pre-loop check | — | `internal/tui/shared/form/form.go:309-311` |
+| QA-W01-15 | Low | Saving footer omits the wireframe's `POST /api/v1/users/{id}` URL hint + `Ctrl+C abort` text | §SCR-012 Saving block | `internal/tui/shared/form/form.go:246-247` |
+| QA-W01-16 | Low | Section header rendered as `── X ──` (short divider) vs wireframe's long `─ X ───…────` | §SCR-012 wireframe | `internal/tui/shared/form/form.go:212-219` |
+
+**Totals:** Critical 1 / High 5 / Medium 6 / Low 4 = **16**.
+
+## W.3 AC coverage matrix
+
+| AC | Status | Note |
+|----|--------|------|
+| AC-1.1 (e on list) | PASS | |
+| AC-1.2 (e on detail) | PASS | |
+| AC-1.2 (`:edit` palette) | **FAIL** | QA-W01-03 |
+| AC-1.3 (single GET) | PASS | |
+| AC-1.4 (Loading Esc abort) | PARTIAL | QA-W01-11 (ctx not cancelled; pop works) |
+| AC-1.5 (4xx blocks form) | PASS | |
+| AC-2 (11 fields + login RO) | PASS | |
+| AC-3.1 (required-empty) | PASS | |
+| AC-3.2 (email shape) | PASS | |
+| AC-3.3 (phone hint) | NOT IMPL | impl §4 #7 follow-up |
+| AC-3.4/3.5 | PASS | |
+| AC-4.1 (Ctrl+S) | PASS | |
+| AC-4.2 (partial-merge body) | PASS | |
+| AC-4.3 (saving disable) | **FAIL** (Esc/Ctrl+C) | QA-W01-02 |
+| AC-4.4 (1s post-save guard) | NOT IMPL | impl §4 #6 follow-up |
+| AC-4.5 (success: popNav + toast + cache) | PARTIAL | QA-W01-09, QA-W01-10 |
+| AC-5.1 (clean Esc) | PASS | (works via nav pop) |
+| AC-5.2 (dirty Esc → confirm) | **FAIL — Critical** | **QA-W01-01** |
+| AC-5.3 (saving Esc no-op) | **FAIL** | QA-W01-02 |
+| AC-6 (error mapping) | PASS adapter; partial TUI golden | — |
+| AC-7.1/7.2/7.5/7.6 | PASS | |
+| AC-7.3 (blur unchanged re-mask) | PASS | |
+| AC-7.4 (blur modified stay-unmasked) | **FAIL** | QA-W01-12 |
+| AC-8.1 (keyboard only) | PASS | |
+| AC-8.2 (NO_COLOR markers) | **FAIL** | QA-W01-05 |
+| AC-8.3 (80×24) | NOT TESTED | golden backlog |
+| AC-8.4 (focus visual) | PARTIAL | `▸` only |
+| AC-9.1/9.3/9.4 | PASS | |
+| AC-9.2 (per-label `*` marker) | **FAIL** | QA-W01-05 |
+| AC-10.1 (cache untainted on cancel) | NOT TESTED | impl §4 #2 follow-up |
+| AC-10.3 (scroll/select restored) | PASS | (navStack) |
+
+**Score: 7 / 10 AC top-level rows fully met. AC-5.2 / AC-4.3 / AC-7.4 / AC-8.2 / AC-9.2 broken in production. AC-1.4 / AC-4.5 partial.**
+
+## W.4 Decision matrix coverage
+
+D-W1 / D-W2 / D-W3 / D-W5 / D-W6 / D-W7 / D-W8 / D-W11 / D-W12 / D-W13 / D-W14 / D-W15 — all PASS.
+
+- **D-W4 (dirty Esc L1 confirm) — FAIL** (QA-W01-01).
+- **D-W9** — PARTIAL (status section omitted from the FieldSpec catalog; acceptable as MVP-omitted but mark for v0.2.1).
+- **D-W10** — PARTIAL (footer counter PASS; per-label `*` FAIL → QA-W01-05).
+- **D-W16** — PASS for nav stack push; FAIL for the modal Esc semantic (QA-W01-01 root).
+
+**Score: 12 / 16 fully met.**
+
+## W.5 Gates & verification
+
+```bash
+go build ./...                         # PASS
+go vet ./...                           # PASS
+go test ./... -count=1 -timeout 180s   # PASS *except* the 4 new QA regression tests (intentional FAIL-FIRST)
+```
+
+The 4 new tests in `internal/app/user_edit_qa_regression_test.go` MUST flip to GREEN as part of the QA fix pass:
+
+- `Test_AppShell_Esc_OnDirtyEditForm_OpensDiscardConfirm`
+- `Test_AppShell_Esc_DuringSaving_DoesNotPopNav`
+- `Test_AppShell_PaletteEdit_ResolvesScreenUserEdit`
+- `Test_AppShell_PaletteE_ResolvesScreenUserEdit`
+
+## W.6 Recommended fix order
+
+1. **QA-W01-01 (Critical, ship blocker)** — recommended Option B: promote dirty Esc to App Shell `OverlayDiscardConfirm` (the constant exists; the message `RequestDiscardConfirmMsg` can be added; reuse existing overlay router). This single change also fixes QA-W01-02 (saving Esc) and partially QA-W01-06 (wires the dead overlay constant).
+2. **QA-W01-03** — add `case "edit", "e":` to `screenFromName`; add `edit` to `paletteCommandPool`; route palette dispatch to infer user from active screen or toast "no user selected" (subsumes QA-W01-07).
+3. **QA-W01-04** — drop `e` from Logs `setRange` switch; add global App-Shell `e` toast fallback (`"no edit action for <resource>"`).
+4. **QA-W01-05** — refactor `form.renderRow` to distinguish required (`[required]` prefix) from dirty (`*` prefix) markers.
+5. **QA-W01-09 / QA-W01-10** — add `UserUpdatedMsg` handler to `users.list.Model.Update`; rebuild form snapshot on save success in EditModel.
+6. **QA-W01-11** — propagate cancellable ctx through Cmd factories.
+7. **QA-W01-12** — extend `shouldShowPII` with "modified" branch.
+8. Low items — backlog.
+
+## W.7 PM decisions requested
+
+- **QA-W01-01 fix path:** Option A (extend `escIsCritical`) vs Option B (promote to overlay). Recommend Option B.
+- **QA-W01-03 palette behaviour:** `:edit` from non-Users screen → toast or pivot? Recommend toast (verbatim §3.4).
+- **QA-W01-04 Logs 24h reassignment key:** which key to use instead of `e`?
+- **QA-W01-08 empty list `e`:** toast vs stuck-form? Recommend toast.
+- **AC-7.6 debug logging:** wire EditModel slog with masking handler? Recommend yes.
+
+## W.8 Known limitations carrying into v0.2.0 release notes
+
+The following items are out-of-scope for the QA fix pass but must surface in CHANGELOG:
+
+- AC-3.3 phone E.164 hint not implemented (deferred).
+- AC-4.4 1s post-save guard not implemented (clock injection deferred).
+- AC-8.3 80×24 golden snapshot pending (visual review only).
+- AC-10.1 cache-untainted-on-cancel regression test pending.
+- ASCII-only input (no IME / wide-rune) — explicit trade-off per impl §2.1.
+- AC-7.6 PII masking in debug log not exercised.
+
+## W.9 Handoff
+
+- **`go-tui-developer`:** Critical/High patches per §W.6. Critical (QA-W01-01) is the blocker.
+- **`go-test-engineer`:** turn the 4 regression FAIL-FIRST tests GREEN as fixes land; add T-W01-E … T-W01-M from `_workspace/edit-form-users/07_qa_findings.md` §10.
+- **`tui-designer`:** OI-W3 (audit-log toast hint) and OI-W5 (form package extraction) decisions stand; the form package extraction landed at `internal/tui/shared/form/` per recommendation.
+- **`product-manager`:** decisions §W.7.
+
+---
+
+**END OF REQ-W01 Phase 7 QA Addendum — ship BLOCKED until QA-W01-01..QA-W01-03 land.**
