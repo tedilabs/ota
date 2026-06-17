@@ -24,6 +24,8 @@ type UsersPortFake struct {
 	DeactivateFunc     func(ctx context.Context, userID string, sendEmail bool) error
 	ExpirePasswordFunc func(ctx context.Context, userID string) error
 	DeleteFunc         func(ctx context.Context, userID string) error
+	// REQ-W01 — profile mutation Func. When nil, calls fail t.Fatalf.
+	UpdateProfileFunc func(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.User, error)
 }
 
 // NewUsersPort returns a fake UsersPort wired to t so unexpected calls fail
@@ -133,4 +135,29 @@ func (f *UsersPortFake) Delete(ctx context.Context, userID string) error {
 		return nil
 	}
 	return f.DeleteFunc(ctx, userID)
+}
+
+// UpdateProfile satisfies the REQ-W01 mutation surface on
+// domain.UsersPort. When UpdateProfileFunc is nil the fake fails the
+// test loudly — REQ-W01 tests must always wire it explicitly.
+func (f *UsersPortFake) UpdateProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.User, error) {
+	f.t.Helper()
+	if f.UpdateProfileFunc == nil {
+		f.t.Fatalf("UsersPortFake.UpdateProfile called but UpdateProfileFunc is not set")
+	}
+	return f.UpdateProfileFunc(ctx, userID, patch)
+}
+
+// ValidationErrorFake returns a stub UpdateProfileFunc that always
+// rejects with *domain.BadRequestError carrying the supplied
+// (field → reason) causes. Used to drive AC-6 server-side validation
+// scenarios from the TUI layer.
+func ValidationErrorFake(causes map[string]string) func(context.Context, string, domain.UserProfilePatch) (domain.User, error) {
+	fields := make([]domain.FieldError, 0, len(causes))
+	for k, v := range causes {
+		fields = append(fields, domain.FieldError{Field: k, Summary: k + ": " + v})
+	}
+	return func(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
+		return domain.User{}, &domain.BadRequestError{Causes: fields, Raw: "Api validation failed"}
+	}
 }

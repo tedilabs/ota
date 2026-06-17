@@ -55,6 +55,11 @@ const (
 	ScreenRuleDetail
 	ScreenPolicyDetail
 	ScreenLogDetail
+	// ScreenUserEdit hosts SCR-012 — Users Profile Edit Form
+	// (REQ-W01). Pushed onto navStack by `e` from list/detail or by
+	// `:edit` palette. Pops on save success / clean-Esc / discard
+	// confirm.
+	ScreenUserEdit
 )
 
 // String returns the screen's `:command` form (or a detail-view label).
@@ -92,6 +97,8 @@ func (s Screen) String() string {
 		return "policy-detail"
 	case ScreenLogDetail:
 		return "log-detail"
+	case ScreenUserEdit:
+		return "user-edit"
 	}
 	return "unknown"
 }
@@ -170,6 +177,13 @@ const (
 	// to `~`. Reads from the apilog.Recorder snapshot the App Shell
 	// holds in m.deps.APIRecorder.
 	OverlayAPIRecorder
+	// OverlayDiscardConfirm — soft (L1) confirm shown when the
+	// operator presses Esc on a dirty Users Edit Form (REQ-W01
+	// AC-5.2 / D-W4). Default action is "keep editing"; only an
+	// explicit y/Y discards the in-flight changes. Distinct from
+	// OverlayActionConfirm because the pendingAction structure
+	// can't host a Form snapshot.
+	OverlayDiscardConfirm
 )
 
 // Actioner is implemented by screens that publish a list of
@@ -387,6 +401,12 @@ type Model struct {
 	// (no WindowSizeMsg yet) falls back to shared.ChromeWidth.
 	width  int
 	height int
+
+	// editTargetID is the userID the next ScreenUserEdit instance must
+	// fetch on Init (REQ-W01 AC-1.1 / D-W16). Set by the OpenUserEditMsg
+	// handler immediately before pushNav(ScreenUserEdit) so buildScreen
+	// has the right ID. Cleared after the EditModel is built.
+	editTargetID string
 }
 
 // New constructs the App Shell. The initial screen is materialized eagerly
@@ -679,6 +699,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, fwd := child.Update(users.OpenDetailByIDMsg{ID: msg.ID})
 		m.screens[ScreenUsers] = updated
 		return m, tea.Batch(cmd, fwd)
+	case shared.OpenUserEditMsg:
+		// REQ-W01 AC-1.1 / D-W16 — push SCR-012 onto the nav stack,
+		// rebuilding the EditModel so each entry fires a fresh GET
+		// (AC-1.3 — cache distrust). Existing entries are discarded so
+		// the operator never lands on a stale form when re-entering.
+		delete(m.screens, ScreenUserEdit)
+		m.editTargetID = msg.ID
+		m.pushNav(ScreenUserEdit)
+		m.overlay = OverlayNone
+		var cmd tea.Cmd
+		m, cmd = m.ensureScreen(ScreenUserEdit)
+		return m, cmd
+	case shared.UserUpdatedMsg:
+		// REQ-W01 AC-4.5 — broadcast the post-save snapshot so the
+		// Users list / detail patches its cache with the server-echoed
+		// User without an extra GET. v0.2.5+ surfaces also opt in by
+		// implementing a UserUpdatedMsg handler. EditModel emits this
+		// from its save-success branch.
+		if child, ok := m.screens[ScreenUsers]; ok {
+			updated, _ := child.Update(msg)
+			m.screens[ScreenUsers] = updated
+		}
+		// Pop the edit frame so the operator lands back on the
+		// previous surface (list or detail) with the patched row
+		// rendered. canPopNav() guards the root case.
+		if m.canPopNav() {
+			prev, _ := m.popNav()
+			updated, cmd := m.ensureScreen(prev)
+			return updated, tea.Batch(cmd, refreshScreenCmd())
+		}
+		return m, refreshScreenCmd()
 	case shared.OpenLogsMsg:
 		// #F2 / #F4 v0.2.5 — `l` shortcut from any resource. Switch
 		// to Logs and forward an OpenForFilterMsg so the screen
@@ -782,6 +833,16 @@ func screenFromName(name string) (Screen, bool) {
 	case "administrator", "administrators",
 		"admin", "admins":
 		return ScreenAdministrators, true
+	case "user-edit", "user_edit", "useredit",
+		"edit-user", "edit_user", "edituser",
+		// REQ-W01 / TUI_DESIGN §3.4 row 335: `:edit` and `:e` are the
+		// canonical palette aliases for SCR-012 (QA-W01-03). The App
+		// Shell resolves them to ScreenUserEdit; the target user is
+		// inferred from the active screen by the palette dispatcher
+		// (Users list cursor row or Detail's user; otherwise the
+		// "no user selected" toast fires).
+		"edit", "e":
+		return ScreenUserEdit, true
 	}
 	return 0, false
 }
@@ -1374,7 +1435,23 @@ func (m Model) escIsCritical() bool {
 	if st, ok := child.(visualActiveStater); ok && st.DetailVisualActive() {
 		return true
 	}
+	// Write-surface screens (REQ-W01) can block nav-pop on Esc while
+	// they hold unsaved state — either a dirty form (need to surface
+	// the discard confirm before destroying edits) or an in-flight
+	// save (AC-4.3 / AC-5.3 — Esc must be inert until the POST
+	// resolves; Ctrl+C is the only abort path).
+	if st, ok := child.(escapeBlocksPopStater); ok && st.EscapeBlocksPop() {
+		return true
+	}
 	return false
+}
+
+// escapeBlocksPopStater is implemented by write-surface screens that
+// own state Esc must not destroy by popping the nav frame. Distinct
+// from EscapeOpStater (which gates the post-pop quit confirm) —
+// EscapeBlocksPop runs BEFORE pop and short-circuits it entirely.
+type escapeBlocksPopStater interface {
+	EscapeBlocksPop() bool
 }
 
 // visualActiveStater is implemented by detail surfaces that own a
@@ -1972,9 +2049,45 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			RefreshInterval: m.deps.DefaultRefreshInterval,
 		})
 		return mdl, mdl.Init()
+	case ScreenUserEdit:
+		// REQ-W01 SCR-012 — the Users Edit Form is built once per
+		// entry so each open fires its own GET (AC-1.3). The
+		// OpenUserEditMsg handler clears any cached instance before
+		// calling ensureScreen.
+		svc := m.userEditService()
+		if svc == nil {
+			return nil, nil
+		}
+		mdl := users.NewEditModel(users.EditDeps{
+			Svc:    svc,
+			UserID: m.editTargetID,
+			Clock:  m.deps.Clock,
+			Logger: m.deps.Logger,
+			Width:  m.width,
+			Height: m.height,
+		})
+		return mdl, mdl.Init()
 	}
 	// Detail views are populated by drill-down handlers; not auto-built.
 	return nil, nil
+}
+
+// userEditService returns the UsersService the EditModel saves through.
+// Prefers the pre-built service.Bundle (production wiring) but falls
+// back to a port-only constructor so tests that only inject UsersPort
+// still get a working save path.
+func (m Model) userEditService() *service.UsersService {
+	if m.deps.Services != nil && m.deps.Services.Users != nil {
+		return m.deps.Services.Users
+	}
+	if m.deps.UsersPort == nil {
+		return nil
+	}
+	var opts []service.ServiceOption
+	if m.deps.Clock != nil {
+		opts = append(opts, service.WithClock(m.deps.Clock))
+	}
+	return service.NewUsersService(m.deps.UsersPort, opts...)
 }
 
 // --- Key handling --------------------------------------------------------
@@ -2248,6 +2361,10 @@ func paletteCommandPool() []string {
 		"administrator",
 		"unmask", "mask",
 		"reset-password", "unlock", "reset-mfa",
+		// REQ-W01: `:edit` is the canonical SCR-012 palette entry
+		// (TUI_DESIGN §3.4 / §11.2a). Surfaced in autocomplete so
+		// operators discover it via Tab.
+		"edit",
 		"apilog",
 		"help", "quit",
 	}

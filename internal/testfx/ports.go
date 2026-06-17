@@ -59,6 +59,13 @@ func (p *seededUsersPort) Deactivate(_ context.Context, _ string, _ bool) error 
 func (p *seededUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
 func (p *seededUsersPort) Delete(_ context.Context, _ string) error         { return nil }
 
+// UpdateProfile is a no-op stub for chrome / palette / badge tests
+// that don't exercise REQ-W01. Tests asserting mutation behaviour
+// should use UsersPortFake with UpdateProfileFunc instead.
+func (p *seededUsersPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
+	return domain.User{}, nil
+}
+
 // --- Groups ------------------------------------------------------------
 
 // SeededGroupsPort returns a GroupsPort whose List() iterator hands

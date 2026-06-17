@@ -57,6 +57,22 @@ type UsersPort interface {
 	// the account already be deactivated, so callers should chain
 	// Deactivate first when the operator confirms a hard delete.
 	Delete(ctx context.Context, userID string) error
+
+	// UpdateProfile applies a partial-merge profile patch
+	// (REQ-W01 / D-T4). Returns the updated User (server echo) so
+	// the caller can patch its list/detail cache with the last-write
+	// snapshot. When patch.IsEmpty() is true, MUST return
+	// ErrEmptyPatch without making an HTTP call (D-T5 / D-W13).
+	//
+	// Error mapping (PRD §5.6 AC-6):
+	//   - *BadRequestError (E0000001) — Causes []FieldError for inline display
+	//   - ErrTokenInvalid (E0000004 / E0000011)
+	//   - ErrForbidden (E0000006)
+	//   - ErrNotFound (E0000007)
+	//   - ErrFeatureDisabled (E0000038)
+	//   - *RateLimitedError (E0000047 / 429)
+	//   - ErrEmptyPatch (IsEmpty short-circuit)
+	UpdateProfile(ctx context.Context, userID string, patch UserProfilePatch) (User, error)
 }
 
 // GroupsPort is the outbound boundary for Okta Groups.

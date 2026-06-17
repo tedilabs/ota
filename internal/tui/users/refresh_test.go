@@ -149,6 +149,9 @@ func (p *refreshTickPort) Activate(_ context.Context, _ string, _ bool) error { 
 func (p *refreshTickPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *refreshTickPort) ExpirePassword(_ context.Context, _ string) error { return nil }
 func (p *refreshTickPort) Delete(_ context.Context, _ string) error { return nil }
+func (p *refreshTickPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
+	return domain.User{}, nil
+}
 
 type refreshTickIter struct{}
 

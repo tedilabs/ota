@@ -602,6 +602,13 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, openLogsForCmd(userFilterExpr(id))
 				}
 				return m, nil
+			case "e":
+				// REQ-W01 AC-1.2 — `e` from User Detail opens the
+				// Profile Edit Form (SCR-012) for the open user.
+				if id := m.detailUser.ID; id != "" {
+					return m, openUserEditCmd(id)
+				}
+				return m, nil
 			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 				m.detailLine = 0
@@ -814,6 +821,21 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, openLogsForCmd(userFilterExpr(u.ID))
 		}
 		return m, nil
+	}
+	// REQ-W01 AC-1.1 — `e` on a list row opens the Profile Edit
+	// Form (SCR-012). Emits a shared.OpenUserEditMsg the App Shell
+	// turns into a ScreenUserEdit push (D-W16). The ID falls back
+	// to the empty string when no cursor user is available — the
+	// EditModel surfaces the error state in that case, which keeps
+	// the routing contract uniform (the screen always switches on
+	// `e` so operators see the failure on the form chrome, not as
+	// a silent no-op).
+	if msg.Type == tea.KeyRunes && string(msg.Runes) == "e" {
+		var id string
+		if u := m.cursorUser(); u != nil {
+			id = u.ID
+		}
+		return m, openUserEditCmd(id)
 	}
 
 	// Vim navigation: `gg` jumps to top, `G` to bottom. Detected here

@@ -63,6 +63,9 @@ func (p *principalUsersPort) Activate(_ context.Context, _ string, _ bool) error
 func (p *principalUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *principalUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
 func (p *principalUsersPort) Delete(_ context.Context, _ string) error { return nil }
+func (p *principalUsersPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
+	return domain.User{}, nil
+}
 
 type emptyUsersIter struct{}
 

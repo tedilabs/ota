@@ -74,6 +74,9 @@ func (p *recordingUsersPort) Activate(_ context.Context, _ string, _ bool) error
 func (p *recordingUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *recordingUsersPort) ExpirePassword(_ context.Context, _ string) error     { return nil }
 func (p *recordingUsersPort) Delete(_ context.Context, _ string) error             { return nil }
+func (p *recordingUsersPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
+	return domain.User{}, nil
+}
 
 type recordingIter struct{ remaining []domain.User }
 

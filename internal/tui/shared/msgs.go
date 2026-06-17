@@ -1,6 +1,10 @@
 package shared
 
-import "time"
+import (
+	"time"
+
+	"github.com/tedilabs/ota/internal/domain"
+)
 
 // UnmaskFieldMsg asks the active Detail screen to reveal a specific PII
 // field. Sent by the App Shell when the operator types :unmask <field>
@@ -28,6 +32,23 @@ type OpenAppDetailMsg struct{ ID string }
 // userID or a login (Okta APIs accept either). Used by Group Detail
 // Members box drill-down and Log Detail actor drill-down.
 type OpenUserDetailMsg struct{ ID string }
+
+// OpenUserEditMsg is the entry-point message for REQ-W01 (SCR-012
+// Users Edit Form). Emitted by the Users list / detail when the
+// operator presses `e`, by the `:edit` palette command, or by any
+// surface that wants to drill into the Edit screen. The App Shell
+// pushes ScreenUserEdit onto the nav stack and forwards the ID to
+// the new EditModel which fires `GET /api/v1/users/{id}` (AC-1.3).
+// ID may be a userID or login (Okta accepts either, same as
+// OpenUserDetailMsg).
+type OpenUserEditMsg struct{ ID string }
+
+// UserUpdatedMsg is broadcast by EditModel after a successful save
+// (REQ-W01 AC-4.5). The User is the server-echoed snapshot — list
+// and detail screens use it to patch their cache with the last
+// authoritative profile so the next render reflects the change
+// without an extra fetch.
+type UserUpdatedMsg struct{ User domain.User }
 
 // OpenLogsMsg switches the active screen to Logs and pre-fills the
 // server-side `filter=` parameter with `Filter` (an Okta System Log
