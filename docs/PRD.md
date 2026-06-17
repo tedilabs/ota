@@ -1,10 +1,10 @@
 # ota (Okta TUI) — Product Requirements Document
 
-**상태:** FINAL (도메인 리뷰 반영 완료)
-**버전:** 1.0.0
-**작성일:** 2026-04-24
+**상태:** FINAL (도메인 리뷰 반영 완료, v1.1.0 addendum 통합)
+**버전:** 1.1.0
+**작성일:** 2026-04-24 (v1.0) / 2026-06-17 (v1.1 addendum)
 **작성자:** pm (ota-prd-team)
-**도메인 레퍼런스:** `_workspace/02_okta_domain_input.md` (okta-expert, 2026-04-24)
+**도메인 레퍼런스:** `_workspace/02_okta_domain_input.md` (okta-expert, 2026-04-24), `_workspace/edit-form-users/02_okta_domain_input.md` (okta-expert, 2026-06-17)
 **도메인 리뷰:** `_workspace/02_okta_prd_review.md` (okta-expert, 2026-04-24, APPROVE WITH CHANGES)
 
 ---
@@ -18,6 +18,7 @@
 | 2026-04-24 | 1.0.0 | okta-expert 도메인 리뷰 Must-fix 3건(M1/M2/M5) + Should-fix 3건(M3/M4/M6) + Minor 6건(m1/m3/m4/m5/m6/m7/m8) 전면 반영. Minor m2(User→Apps 탭)는 §11.3 결정 필요로 이관. v1.0으로 승격. | pm |
 | 2026-04-24 | 1.0.0 | §11.3을 "결정 필요"에서 **"리더 결정 v1.0.0 확정"**으로 교체 (D-1~D-6). team-lead 승인 내역 반영: k9s+Vim 기본, 다크테마, tail 7초, Applications/User-Apps v0.2 연기, Write v0.2 리스크 오름차순. | pm |
 | 2026-04-25 | 1.0.1 | Phase 7 QA Cycle 1~2 결과 반영: REQ-C04 AC-1 step 3 **interactive token prompt v0.2 deferred** (QA-005). REQ-C02 AC-3 **runtime `:profile` 전환 v0.2 deferred** (QA-009). REQ-C03 AC-2 **users/list 화면 일부 사용자 매핑 미적용 → v0.1.x 패치** (QA-010 closed). REQ-E01 AC-1/AC-4 **Rate N/M 숫자 + `:ratelimit` 모달 v0.1.x 패치** (QA-013). REQ-O01 health endpoint production 구현 v0.2 (QA-016). v0.1.0 출시 차단 사유 0건 — 모두 known limitations 또는 패치로 흡수. | pm |
+| 2026-06-17 | 1.1.0 | **REQ-W01 (Users 프로필 편집 폼) addendum 추가.** 첫 mutation 표면 도입, Write/Workflow(REQ-W) 네임스페이스 신설. `login`은 MVP read-only(D-W2, 도메인 §4.3 권고). 도메인 §9 결정 매트릭스 D1~D10 전건 채택. 영향 위치: §4.1/4.2(범위), §5.6(신규 섹션), §8 v0.2(릴리즈 순서), §9(매트릭스), §11.3(D-7), §11.6(REQ-W Open Issues). 기존 REQ-R/C/E/O 본문 변경 없음 — 하위 호환 100%. 도메인 인풋: `_workspace/edit-form-users/02_okta_domain_input.md`. | pm |
 
 ---
 
@@ -133,7 +134,9 @@
 
 ## 4. 범위 (Scope)
 
-### 4.1. MVP In-Scope (v0.1)
+### 4.1. MVP In-Scope (v0.1 + v0.2 Write 1차)
+
+> **v1.1.0 변경**: v0.2부터 **REQ-W01 Users 프로필 편집 폼** (§5.6 참조)이 Write 1차로 In-Scope에 포함된다. v0.1.x는 Read-Only를 유지한다.
 
 **리소스 (Read-Only):**
 - Users: 리스트, 상세, 검색, **등록된 MFA Factors 읽기(상세 탭)** — §7 도메인 권고에 따라 MVP 포함. 운영자의 가장 빈번한 요청 중 하나.
@@ -161,17 +164,22 @@
 - 에러/상태 토스트
 - 컬러 테마 (기본 + high-contrast)
 
-### 4.2. Explicit Out-of-Scope (MVP)
+### 4.2. Explicit Out-of-Scope (v0.1 MVP — Read-Only)
 
-**Write 작업 전체 (모든 mutative 액션):**
-- User/Group/Rule/Policy의 생성·수정·삭제
-- User lifecycle 전이 (activate/deactivate/suspend/unsuspend/unlock/reset_password)
-- 그룹 멤버 추가/제거
+> **v1.1.0 변경**: v0.2부터 **REQ-W01 Users 프로필 편집**이 본 OOS에서 빠진다. 그 외 mutative 작업은 v0.2 이후로 계속 유지.
+
+**v0.1 MVP에서 모두 제외 (Write 작업 전체):**
+- ~~User profile 수정~~ → **v0.2 REQ-W01로 승격 (in-scope)**
+- User/Group/Rule/Policy의 생성·삭제
+- User lifecycle 전이 (activate/deactivate/suspend/unsuspend/unlock/reset_password) — **v0.2 후속**
+- 그룹 멤버 추가/제거 — **v0.2 후속**
 - Group Rule 활성화/비활성화 (비활성화가 멤버십 제거 부작용이 있어 위험)
 - MFA Factor 리셋/제거/활성화
 - Policy Rule 추가/순서 변경/활성화
+- `login` (username) 변경 — v0.2 dedicated 워크플로 `:change-login` (REQ-W01 D-W2 참조, 도메인 §4.3)
 
-> MVP는 **Read-Only Administrator** 발급 토큰으로 동작함을 가정. 모든 쓰기 호출은 도메인 제약상 403이 반환되며, UX는 이를 명확히 표시한다 (REQ-C04 참조).
+> v0.1 MVP는 **Read-Only Administrator** 발급 토큰으로 동작함을 가정. 모든 쓰기 호출은 도메인 제약상 403이 반환되며, UX는 이를 명확히 표시한다 (REQ-C04 참조).
+> v0.2의 REQ-W01은 **User Admin 이상** 권한 토큰을 가정. 권한 부족 시 동일하게 403을 폼 위에 inline 표시 (REQ-W01 AC-6).
 
 **고급/대규모 기능:**
 - 조직 간 Bulk 작업 (CSV 임포트 등)
@@ -444,6 +452,164 @@
   - AC-3: 로그 로테이션 (10MB × 3) — 표준 라이브러리 수준으로 충분
   - AC-4: TUI 내 `:debug open`으로 tail 가능 (별도 창 대신 설명 메시지 OK)
 
+### 5.6. Write 액션 (v0.2 Profile-Edit 선행) — REQ-W*
+
+> **v1.1.0 신설.** Write/Workflow 네임스페이스. 모든 REQ-W*는 mutative API 호출을 동반한다. 본 섹션의 REQ-W01은 ota의 **첫 mutation 표면**으로, 후속 lifecycle write가 재사용할 인프라(에러 매핑·dirty 추적·confirm 모달·partial-merge·PII 통합)의 모범 구현체다.
+>
+> **메타 필드 규칙:** 각 REQ-W는 본문에 `Mutation Endpoint`, `Required Permission`, `Side Effects`, `Rollback Strategy`를 명시한다.
+> **도메인 레퍼런스:** `_workspace/edit-form-users/02_okta_domain_input.md` (okta-expert, 2026-06-17).
+
+#### REQ-W01: Users 프로필 편집 폼
+
+- **우선순위:** P0 (v0.2 출시 차단)
+- **Mutation Endpoint:** `POST /api/v1/users/{userId}` (partial-merge semantics — 요청 body에 없는 필드는 유지, `null`은 삭제). PUT(strict replace) 경로는 ota 어댑터가 노출하지 않는다 (D-W15, 도메인 §1.3).
+- **Required Permission:** Super Admin / Org Admin / User Admin / Group Admin(자신 관리 그룹의 멤버 한정), 또는 `okta.users.userprofile.manage` permission 보유 custom role (도메인 §2.1). Read-Only Administrator는 저장 시 403.
+- **Side Effects:**
+  - `email` 변경 → 조직 설정에 따른 알림 메일 발송 가능
+  - `mobilePhone` 변경 → SMS MFA factor 재인증 영향 가능
+  - `department`/`division` 변경 → Group Rule 재평가 → 그룹 멤버십 자동 변동 가능
+  - SAML/OIDC claim 갱신 → 대상 사용자 재로그인 시 반영
+  - 감사 로그 `user.account.update_profile` 이벤트 발생 (REQ-R05로 조회)
+- **Rollback Strategy:** 저장 전 단계는 ESC + confirm 모달(AC-5)로 즉시 복귀(drift 없음). 저장 후 후회는 동일 폼에서 이전 값으로 재편집 — Okta는 ETag/undo 미지원 (last-write-wins). 본질적 race 보호 불가, 진입 시 latest GET(AC-1.3)으로 인지도만 향상.
+- **설명:** Users 리스트 또는 User 상세에서 `e` 키로 진입하는 inline 편집 폼. Standard profile 11개 필드를 편집한다. `login`은 표시하되 read-only. 저장은 변경된 필드만 partial-merge로 전송. 폼은 navigation stack(commit `a68426b` 도입)에 push되어 ESC로 pop, k9s 스타일 modal/overlay full-screen take-over로 mount.
+
+##### AC-1: 진입점 및 최신 로딩
+- **AC-1.1**: Users 리스트 뷰의 선택된 행에서 `e` 키 입력 시 폼 진입.
+- **AC-1.2**: User 상세 뷰의 모든 탭(Profile/Credentials/Timestamps/Groups/Factors/Recent Logs)에서 `e` 키 입력 시 동일 폼 진입.
+- **AC-1.3**: 진입 시 `GET /api/v1/users/{id}` 1회 호출로 **최신 스냅샷** 로드. 리스트/detail 캐시는 신뢰하지 않는다 (D-W7, 도메인 §5.2-1).
+- **AC-1.4**: 로딩 중 폼은 placeholder 입력칸 + 상단 "Loading…" indicator. `ESC`로 진입 취소 가능.
+- **AC-1.5**: 진입 GET 실패 처리: 4xx → 폼 미진입, 토스트로 사유 표시 + 직전 화면 유지. 5xx/네트워크 → 토스트 + 재시도 hint, 폼 진입 차단.
+
+##### AC-2: 편집 가능 필드 (Decision D-W1 확정)
+폼은 다음 **11개 필드**를 편집 가능하게 표시한다:
+
+| TUI Label | API field | Required (default schema) | PII | 진입 시 마스킹 |
+|----------|-----------|---------------------------|-----|---------------|
+| First Name | `profile.firstName` | YES | - | - |
+| Last Name | `profile.lastName` | YES | - | - |
+| Display Name | `profile.displayName` | NO | - | - |
+| Nickname | `profile.nickName` | NO | - | - |
+| Email | `profile.email` | YES | △ | - |
+| Title | `profile.title` | NO | - | - |
+| Division | `profile.division` | NO | - | - |
+| Department | `profile.department` | NO | - | - |
+| Employee Number | `profile.employeeNumber` | NO | △ | - |
+| Mobile Phone | `profile.mobilePhone` | NO | **YES** | **YES** (§6.2 PII 정책) |
+| Secondary Email | `profile.secondEmail` | NO | **YES** | **YES** |
+
+추가 read-only 표시:
+- `profile.login` — read-only 입력칸 + inline hint "Login changes are blocked in MVP. Use `:change-login` (v0.2)." (D-W2, 도메인 §4.3 권고)
+- `status` 배지 — header read-only + "Use `:activate`/`:deactivate` to change" hint (D-W9, REQ-R01 AC-2 색상 매핑 재사용)
+- `id`, `created`, `lastUpdated`, `passwordChanged` 등 메타 — header 또는 footer read-only
+
+**Custom Profile (Extras) 필드는 폼에 표시하지 않는다.** Detail 뷰에서만 read-only 노출 (REQ-R01 AC-3 유지). 사유: 도메인 §3.3 schema 다양성.
+
+##### AC-3: 클라이언트 검증 (느슨, 도메인 §8.1)
+- **AC-3.1 (필수)**: `firstName`, `lastName`, `email` 빈 문자열 시 저장 버튼 disable + inline 에러. (login은 read-only이므로 검증 대상 아님)
+- **AC-3.2 (이메일 형식)**: `email`, `secondEmail`에 느슨한 정규식 `*@*.*` 적용. 미통과 시 inline 에러 "Invalid email format". 엄격 검증은 서버 책임.
+- **AC-3.3 (전화번호 hint)**: `mobilePhone`은 형식 강제하지 않음. focus-out 시 E.164 권장 hint inline ("Recommended: +<country><number>, e.g., +821012345678"). 저장은 가능.
+- **AC-3.4 (길이)**: 클라이언트는 truncate/차단 없음. 서버 응답 길이 위반(`E0000001`)을 inline 에러로 표시.
+- **AC-3.5 (중복 사전 lookup 금지)**: `email` 등 중복 여부의 사전 GET 호출 없음 (rate-limit 낭비 회피, 도메인 §8.1). 서버 응답에서만 판단.
+
+##### AC-4: 저장 동작
+- **AC-4.1 (저장 키)**: `Ctrl+S` (전역) **또는** footer "Save" 버튼 포커스 상태에서 `Enter` (D-W5).
+- **AC-4.2 (Partial-merge body)**: 진입 시 snapshot vs 현재 입력의 **diff에 포함된 필드만** body에 넣어 `POST /api/v1/users/{id}` 호출. 미변경 필드는 omit (도메인 §1.2). 빈 문자열 명시 전송 회피.
+- **AC-4.3 (저장 중 UI)**: footer에 spinner + "Saving…" 표시. 폼 입력 disable. ESC도 비활성화 (race 방지). `Ctrl+C`만 강제 abort 허용 (요청 cancel + 폼 입력 보존).
+- **AC-4.4 (연속 저장 가드)**: 200 응답 후 1초간 Save disable (도메인 §1.5 per-admin 40 req/user/10s 가드).
+- **AC-4.5 (성공 처리, HTTP 200)**:
+  - 응답 body의 `User` 객체로 detail/list 캐시 갱신 (다른 admin의 동시 변경 부분 반영, 도메인 §5.2-2)
+  - 폼 닫고 진입 직전 화면으로 복귀 (navigation stack pop)
+  - 상태바 토스트 "Updated `<login>`" (3초, REQ-E02 정책)
+  - 리스트 진입이었으면 해당 행 selected 유지
+- **AC-4.6 (빈 패치)**: 변경 0 상태에서는 Save 버튼 disable + footer "No changes to save". API 호출 자체 전송 금지 (D-W13).
+- **AC-4.7 (mutative 자동 재시도 금지)**: 저장 POST는 §6.3의 idempotent GET 재시도 정책 적용 대상이 아니다. 단 429만 REQ-E01 AC-2의 자동 1회 재시도 적용 (Retry-After 준수).
+
+##### AC-5: 취소 동작
+- **AC-5.1 (clean)**: dirty=false에서 `ESC` → 즉시 폼 닫고 진입 직전 화면 복귀.
+- **AC-5.2 (dirty)**: dirty=true에서 `ESC` → **1단계 confirm 모달** "Discard N changes? `y/N`" (기본 No). `y`/`Y`/`Enter`(Yes 포커스)로 확정 시 변경 폐기 + 폼 닫기 (D-W4).
+- **AC-5.3 (저장 중 ESC)**: 비활성. footer hint "Saving… use Ctrl+C to abort".
+
+##### AC-6: 에러 처리 (도메인 §6 매핑 통합, §7.7 에러 테이블 확장)
+저장 실패 시 폼은 **닫지 않는다** (변경값 보존, D-W6). 예외는 404(AC-6.4)만.
+
+| HTTP | Okta errorCode | 처리 |
+|------|----------------|------|
+| **400** | `E0000001` (validation) | `errorCauses` 파싱. `<field>: <msg>` prefix 매칭 → 해당 입력칸 위 inline error. 매칭 실패 cause는 footer "Other errors: …" 영역에 누적. |
+| **400** | `E0000038` (schema 위반) | footer에 "Schema constraint failed: <errorSummary>". MVP는 standard 필드라 발생 가능성 낮음. |
+| **401** | `E0000011`/`E0000004` | 폼 유지 + draft 보존. 토스트 "Token invalid/expired. Rotate and retry." (REQ-C04 AC-4 일관). |
+| **403** | `E0000006` | 폼 유지 + 토스트 "Insufficient permissions: 'Manage user profiles' required." 변경값 보존. 사용자가 토큰 교체 후 재시도 가능. |
+| **404** | `E0000007` | 폼 **닫고** 직전 화면 복귀 + 리스트 refresh 트리거. 토스트 "User no longer exists. Refreshing list." |
+| **409** | — | 발생하지 않음 (도메인 §5.3). UI 분기 미보유. |
+| **429** | `E0000047` | REQ-E01 공통 백오프. `Retry-After` 카운트다운 footer "Rate limited. Retrying in Ns…" 표시. 카운트 0 시 자동 1회 재시도. 변경값 보존. |
+| **5xx** | 다양 | 폼 유지. footer "Okta service error. Retry?" + 변경값 보존. |
+
+- **AC-6.1**: `errorCauses` 파싱은 `<fieldName>:` prefix 정확 매칭 (도메인 §6.1). 미매칭은 footer.
+- **AC-6.2**: 동일 필드 에러는 사용자가 해당 필드를 수정하면 즉시 클리어 (낙관적 UX).
+- **AC-6.3**: 에러 토스트는 REQ-E02 정책 준수 (3초 자동, `Esc` 즉시). inline error는 사용자 수정 시까지 유지.
+
+##### AC-7: PII 필드 마스킹 (§6.2 정책 통합)
+- **AC-7.1**: `mobilePhone`, `secondEmail`은 진입 시 **기본 마스킹** (`+1-***-***-1234`, `a***@example.com`) — §6.2 PII 정책 준수.
+- **AC-7.2**: 사용자가 해당 필드에 포커스(Tab/클릭/숏컷) → **자동 언마스킹** → 전체 값 편집 가능 (도메인 §8.4).
+- **AC-7.3**: focus out + 미수정 → 다시 마스킹.
+- **AC-7.4**: focus out + 수정 → 마스킹 없이 계속 표시 + dirty 마커.
+- **AC-7.5 (전체 토글)**: `m` 키 (form-wide). 기존 REQ-R01 AC-6 / §6.2 토글 키와 일관. 모든 PII 필드 일괄 mask/unmask.
+- **AC-7.6 (로깅)**: debug.log(REQ-O01)에는 PII 필드는 마스킹된 값만 기록.
+
+##### AC-8: 접근성 (§6.4 정책 통합)
+- **AC-8.1 (키보드 only)**: `Tab`/`Shift+Tab` 필드 이동, `Ctrl+S` 저장, `ESC` 취소, `m` 마스킹 토글, `Ctrl+C` abort. 마우스 의존 없음.
+- **AC-8.2 (NO_COLOR)**: 색 없이도 식별 가능 표기:
+  - dirty 마커: 라벨 좌측 `*`
+  - required 필드: 라벨 좌측 `[required]` 또는 `!`
+  - inline error: 필드 아래 `! <message>`
+  - read-only 필드: 라벨 우측 `(read-only)`
+- **AC-8.3 (최소 터미널 크기)**: 80×24에서 폼 정상 표시. 더 좁으면 세로 단일열 + truncate 경고 footer.
+- **AC-8.4 (포커스 표시)**: 색 + 굵은 테두리 + 라벨 prefix `▸` 셋 모두 사용 (§6.4 색맹 대응 일관).
+
+##### AC-9: Dirty 추적 / Diff 표시 (D-W10, 도메인 §8.3)
+- **AC-9.1**: 진입 시 snapshot 저장. 매 keystroke마다 snapshot vs current 비교.
+- **AC-9.2**: 변경 필드는 라벨에 `*` 마커.
+- **AC-9.3**: footer에 `N changes` 카운터 (0이면 표기 생략).
+- **AC-9.4**: 저장 body 구성 시 dirty 필드만 포함 (AC-4.2).
+
+##### AC-10: 폼 외 상태 미오염
+- **AC-10.1**: 저장 성공 시에만 list/detail 캐시 갱신. 진행 중 다른 폴링/리스트 영향 없음.
+- **AC-10.2**: 폼 오픈 중에도 logs tail의 `since` 폴링, rate-limit 헤더 갱신은 백그라운드 계속 (사용자 인지 없음).
+- **AC-10.3**: 폼 진입 직전 화면의 스크롤 위치/선택 행은 종료 시 복원 (navigation stack 의미 일관).
+
+##### Out of Scope (REQ-W01 명시 제외)
+폼에 **포함하지 않는다** (도메인 §3.3/§4/§7):
+1. **`login` 편집** — read-only 표시. 별도 `:change-login`은 v0.2 (OI-W2).
+2. **Custom profile fields (Extras)** — schema 다양성. v0.2 schema-driven form (OI-W1).
+3. **Credentials**: `password` 직접 변경 → v0.2 `:reset-password`. `recovery_question` → 보안 영역, MVP 제외.
+4. **Status 변경** — 기존 lifecycle 명령 영역. 폼은 read-only badge만.
+5. **MFA Factor reset/delete** — v0.2 Write 백로그.
+6. **Group 멤버십 변경** — 별도 워크플로 (v0.2).
+7. **User type 변경** (`profile.userType`) — schema 마이그레이션 효과, 제외.
+8. **PUT (strict replace) 경로** — ota 어댑터에서 코드 레벨 차단 (D-W15).
+9. **Optimistic concurrency (If-Match)** — Okta 미지원. v0.2 "사전 GET → diff conflict" UX 검토 (OI-W4).
+
+##### REQ-W01 결정 매트릭스 (D-W1~D-W16)
+도메인 §9 권고를 우선 채택. PM 추가 결정은 사유 명시.
+
+| # | 결정 사항 | 확정 | 근거 |
+|---|----------|------|------|
+| D-W1 | 편집 가능 필드 (final) | **11개** (AC-2 표) | 도메인 §3.1 / §9 D1 권고 |
+| D-W2 | `login` 편집 허용 | **No — read-only.** 별도 `:change-login` v0.2 | 도메인 §4.3 강한 권고. 전사 SSO 단절 위험. |
+| D-W3 | `email` 변경 시 confirm 모달 | **No.** inline hint만 | 도메인 §9 D3. Okta 자체 알림이 발송됨 |
+| D-W4 | dirty 상태 ESC | **1단계 confirm 모달 (`y/N`, default N)** | 도메인 §9 D4 |
+| D-W5 | 저장 키 | **`Ctrl+S`** 또는 Save 포커스 시 `Enter` | 도메인 §9 D5 |
+| D-W6 | 저장 실패 시 폼 동작 | **닫지 않음, 변경값 보존** (404 예외) | 도메인 §6.2 / §9 D6 |
+| D-W7 | 진입 시 latest GET | **1회 (진입 시점)** | 도메인 §5.2-1 / §9 D7 |
+| D-W8 | Custom fields, recovery question | **MVP 제외** | §9 D8 |
+| D-W9 | Status 표시 | read-only header badge + lifecycle hint | §9 D9 / REQ-R01 일관 |
+| D-W10 | dirty diff 표시 | footer `N changes` + 라벨 `*` 마커 | §9 D10 |
+| D-W11 | 동시 편집 대응 | **last-write-wins + 진입 시 GET + 저장 응답 보정**. 사전 conflict 모달은 v0.2 (OI-W4) | 도메인 §5. ETag 미지원 |
+| D-W12 | 권한 사전 검증 | **No.** 저장 시도 → 403 → 친화적 메시지 + 폼 유지 | 도메인 §2.2. custom role 매트릭스 다양 |
+| D-W13 | 빈 패치 저장 | Save disable + footer 안내. API 호출 미전송 | 도메인 §12. 무의미 호출 차단 |
+| D-W14 | `email` 변경 시 login 자동 동기화 | **No.** login은 read-only — 동기화 부담 없음. v0.2 dedicated에서 처리 | OI-W7 |
+| D-W15 | PUT/strict-mode 표면화 | **금지.** ota 어댑터에서 PUT 미노출 | 도메인 §1.3. 데이터 손실 위험 |
+| D-W16 | 폼 mount 모드 | **modal/overlay full-screen take-over.** navigation stack push (commit a68426b) | TUI 일관성. ESC로 pop |
+
 ---
 
 ## 6. 비기능 요구사항
@@ -610,12 +776,21 @@ PRD에 반영된 완화책:
 - Rate Limit 대응
 - 문서: README, 설정 예제, 단축키 치트시트
 
-### v0.2.0 — 목표: 운영 편의 및 Write 초기
-- Applications 리소스 추가
+### v0.2.0 — 목표: 운영 편의 및 Write 1차 (Profile-Edit 선행)
+- **REQ-W01: Users 프로필 편집 폼 (P0, 신규)** — Write 인프라(에러 매핑·dirty 추적·confirm 모달·partial-merge·PII 통합)의 모범 구현체. 후속 lifecycle write가 재사용.
+- (이후) Group 멤버 추가/제거 — Write 인프라 재사용
+- (이후) User lifecycle: `unlock`/`activate`/`deactivate`/`reset-password`/`reset-factors` (도메인 §11.3 D-6 순서 유지)
+- (이후) `:change-login` dedicated 워크플로 — 영향 범위 preflight + 2단계 확인 (OI-W2)
+- Applications 리소스 추가 (read)
 - 북마크·최근 목록
 - OAuth 2.0 서비스 앱 인증 추가
-- Write 초기: 그룹 멤버 추가/제거
 - Windows (WSL 외) 테스트
+
+#### v0.2.0 Profile-Edit 출시 게이트 (REQ-W01 한정)
+- AC-1 ~ AC-10 통과 (회귀 테스트 포함)
+- 도메인 권고 위반 0건 (특히 D-W2 login 잠금, D-W15 PUT 차단)
+- HTTP mock 통합 테스트 케이스 통과: 200 / 400(`E0000001`) / 400(`E0000038`) / 401 / 403 / 404 / 429 / 5xx
+- 수동 QA: §1.3 측정 지표 (≤10초 / ≤15 keystroke / 변경값 보존 100%) 충족
 
 ### v0.3.0 — 목표: 고급 감사/분석
 - 필터 프리셋·저장된 뷰
@@ -651,6 +826,7 @@ PRD에 반영된 완화책:
 | REQ-E02 | 에러 UX | P0 | 3 | N |
 | REQ-E03 | 오프라인 | P1 | 3 | N |
 | REQ-O01 | 디버그 로그 | P1 | 4 | N |
+| REQ-W01 | Users 프로필 편집 폼 (v0.2 Write 1차) | P0 | 10 (AC-1~AC-10) | 해소됨 (`_workspace/edit-form-users/02_okta_domain_input.md`) |
 
 ---
 
@@ -734,8 +910,9 @@ PRD에 반영된 완화책:
 | D-4 | Applications 독립 뷰 v0.2 승격 | **No — v0.2 유지** | 초기 사용자 요구에 Apps 미포함. MVP 집중. Group 상세의 "할당 앱 카운트"(REQ-R02)만 MVP 유지. |
 | D-5 | User 상세 "Apps" 탭 MVP 포함 | **No — v0.2 연기** | Applications 리소스와 함께 묶어 제공. MVP는 User→Groups→(Group의) 앱 카운트 경로로 대체. |
 | D-6 | Write v0.2 로드맵 순서 | **도메인 리스크 오름차순 채택** | (1) Group 멤버 추가/삭제 (MVP는 읽기만; v0.2에서 쓰기 확장) → (2) User lifecycle: `unlock`/`activate`/`deactivate` → (3) Group Rule 생성/수정/삭제. **각 단계 명시적 확인 다이얼로그 필수** (비활성화 시 멤버십 제거 부작용 등 도메인 §1.4 경고 포함). |
+| D-7 *(v1.1.0)* | Users 프로필 편집 MVP 포함? | **Yes — REQ-W01로 v0.2 P0 채택.** Write 1차 표면으로 진입. `login`은 MVP read-only(D-W2 잠금). | 사용자 요청(2026-06-17). 도메인 위험이 가장 낮은 mutation 표면. Write 인프라(에러 매핑·dirty·confirm·partial-merge·PII 통합)의 모범 구현체로 후속 lifecycle write가 재사용. `login` 잠금은 SSO 단절 위험 회피(도메인 `_workspace/edit-form-users/02_okta_domain_input.md` §4.3). 본 결정으로 D-6 순서는 **REQ-W01(profile-edit) → Group 멤버 → User lifecycle → Group Rule**로 갱신. |
 
-> 본 표가 v1.0.0 확정 결정이다. 이후 변경은 변경 이력 + 영향받는 REQ 명시 후 진행.
+> 본 표가 v1.0.0 확정 결정이다(D-7은 v1.1.0 추가). 이후 변경은 변경 이력 + 영향받는 REQ 명시 후 진행.
 
 ### 11.3.1. v0.1.0 Known Limitations (PRD v1.0.1, 2026-04-25)
 
@@ -775,7 +952,20 @@ Phase 7 QA Cycle 1~2 결과 출시 차단 0건 확인 후, 다음 항목을 v0.1
 
 - Custom Policy 편집, MFA reset, OAuth 앱 관리, SAML/OIDC 설정 에디터, Directory 통합 설정, API Token 발급 — 모두 MVP 제외 유지.
 - Applications 독립 뷰는 v0.2.
-- Write 액션 일괄은 v0.2+.
+- Write 액션 일괄은 v0.2+ (REQ-W01 Users 프로필 편집은 v0.2 P0로 승격, §11.3 D-7).
+
+### 11.6. REQ-W* (Write) Open Issues (v1.1.0 신설)
+
+| OI-ID | 항목 | 처리 | 결정 시점 |
+|-------|------|------|----------|
+| OI-W1 | Custom Profile (Extras) schema-driven form | v0.2 후반 또는 v0.3. `/api/v1/meta/schemas/user/default` 기반 동적 form generator | v0.2 종료 후 |
+| OI-W2 | `:change-login` dedicated 워크플로 (preflight + 2단계 확인) | **v0.2.** 도메인 §4.4 가드 사양 반영 | v0.2 진입 |
+| OI-W3 | 저장 성공 토스트의 "`l` 키로 audit log 점프" | v0.1.x 패치 후보. REQ-R05 검색 문법 재사용 | TUI Design Phase 3 |
+| OI-W4 | 사전 conflict 모달 (저장 직전 GET → diff) | v0.2 검토. 도메인 §5.2 Advanced. race 자체는 불가 — UX 만족도 vs 추가 호출 trade-off | v0.2 후반 |
+| OI-W5 | 폼 인프라 재사용 패턴 추상화 (confirm/error/toast component) | TUI Design Phase 3 산출물에 component 설계 포함 | Phase 3 산출물 |
+| OI-W6 | SDK v5의 `UpdateUser` strict 옵션 노출 차단 (lint 또는 wrapper) | 개발자에게 위임. 도메인 §1.3, §12 권고. 코드 리뷰 가드 | Phase 4 Architecture |
+| OI-W7 | `email` 변경 + `login == email` 조직에서의 분기 처리 | D-W14로 일단 분리. v0.2 `:change-login` 통합 시 검토 | v0.2 |
+| OI-W8 | 폼 진입 권한 사전 힌트 (best-effort) | MVP 미도입 (D-W12). v0.2 `/api/v1/iam/me/...` 등 권한 introspection 재조사 | v0.2 |
 
 ---
 
@@ -788,6 +978,8 @@ Phase 7 QA Cycle 1~2 결과 출시 차단 0건 확인 후, 다음 항목을 v0.1
 
 ---
 
-**END OF PRD v1.0.0 (FINAL, 도메인 리뷰 반영 완료)**
+**END OF PRD v1.1.0 (FINAL — v1.0.1 + REQ-W01 Profile-Edit addendum 통합)**
 
-*다음 단계: 본 문서를 `docs/PRD.md`로 복사하여 확정. Phase 3 (TUI Design)로 이관.*
+*v1.0.0 / v1.0.1 → v1.1.0 변경: REQ-W01 (Users 프로필 편집 폼) 추가. 첫 mutation 표면. Write/Workflow(REQ-W) 네임스페이스 신설. 하위 호환 100% (REQ-R/C/E/O 본문 무변경).*
+
+*다음 단계: Phase 3 (TUI Design) — REQ-W01 폼 화면/단축키/상태머신 설계. `_workspace/edit-form-users/03_tui_design_addendum.md` → `docs/TUI_DESIGN.md` 패치.*
