@@ -12,7 +12,6 @@ package home
 import (
 	"context"
 	"log/slog"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -62,13 +61,21 @@ type Deps struct {
 // CardID enumerates the focusable cards on the dashboard. Tab /
 // Shift-Tab + j/k cycle through them; Enter drills to the matching
 // resource screen.
+//
+// 2026-06-17 — the dashboard pivoted off Okta-enumeration counts
+// (the per-resource Total Users / Groups / Apps cards consistently
+// tripped the management-category rate limit on real tenants
+// because Okta deliberately doesn't ship a "count only" endpoint).
+// Activity / Posture now derive from System Log queries, which:
+//   - live in their own rate-limit bucket (no interference with
+//     :users / :groups / :apps navigation),
+//   - cost ONE API call per card regardless of tenant size, and
+//   - surface what operators actually look at every morning ("what
+//     changed overnight?") rather than absolute totals.
 type CardID int
 
 const (
-	CardUsers CardID = iota
-	CardGroups
-	CardApps
-	CardActivity
+	CardActivity CardID = iota
 	CardPosture
 	CardHealth
 	CardEvents
@@ -76,42 +83,31 @@ const (
 
 // cardOrder is the tab focus cycle. Driven by Tab / Shift-Tab.
 var cardOrder = []CardID{
-	CardUsers, CardGroups, CardApps,
-	CardActivity,
-	CardPosture, CardHealth,
-	CardEvents,
+	CardActivity, CardPosture, CardHealth, CardEvents,
 }
 
-// cardState tracks per-card lifecycle independently — fetching, last
-// error, last successful observation. The View reads these to paint
-// the freshness stamp + spinner / error glyph.
+// cardState tracks per-card lifecycle independently — fetching,
+// last error, last successful observation. The View reads these to
+// paint the freshness stamp + spinner / error glyph.
 //
 // requested flips true once a fetch for this card has been
 // dispatched in the current session — the home screen uses it to
 // avoid re-firing fetches on every Tab cycle. The operator can
 // always force a refresh with R.
-//
-// The sampled flag indicates the count came from a single-page
-// sample rather than a full enumeration; the card renders an "≈"
-// prefix in that case so the operator knows the number is a lower
-// bound, not a precise total.
 type cardState struct {
 	loading   bool
 	requested bool
 	err       error
-	counts    dashboard.Counts
-	sampled   bool
-	hasCounts bool
 
-	// Activity-specific state. The Activity card fans out TWO
-	// fetches (one short + one longer window) so we accumulate
-	// them as they land.
-	activity24h    ActivityMetrics
-	activity7d     ActivityMetrics
-	hasActivity24h bool
-	hasActivity7d  bool
+	// Activity card payload — single window summary derived from
+	// one /api/v1/logs query; sampled flips when the response hit
+	// logsSampleSize and there are likely more events.
+	activity    ActivityMetrics
+	hasActivity bool
+	sampled     bool
 
-	// Posture-specific state.
+	// Posture-specific state — derived from System Log too (7d
+	// admin-role / token / policy / rule mutation counts).
 	posture    PostureMetrics
 	hasPosture bool
 
@@ -159,7 +155,7 @@ func New(deps Deps) Model {
 		deps:            deps,
 		width:           deps.Width,
 		height:          deps.Height,
-		focus:           CardUsers,
+		focus:           CardActivity,
 		cards:           map[CardID]*cardState{},
 		secondaryWindow: 1 * time.Hour, // start cheap; `t` widens
 	}
@@ -170,28 +166,12 @@ func New(deps Deps) Model {
 	return m
 }
 
-// seedFromCache populates each card with the last persisted counts
-// so the first paint isn't empty. Network fetches in Init override
-// these once they land.
-func (m *Model) seedFromCache() {
-	if m.deps.Cache == nil {
-		return
-	}
-	for _, pair := range []struct {
-		card CardID
-		key  string
-	}{
-		{CardUsers, dashboard.CardUsers},
-		{CardGroups, dashboard.CardGroups},
-		{CardApps, dashboard.CardApps},
-	} {
-		if c, ok := m.deps.Cache.Get(pair.key); ok {
-			s := m.cards[pair.card]
-			s.counts = c
-			s.hasCounts = true
-		}
-	}
-}
+// seedFromCache is a no-op today — the previous count-card seeding
+// went away with the count cards themselves. Kept as a hook so the
+// Activity card's "rolling daily Δ" feature can re-attach to the
+// dashboard.Cache snapshot later without churning the constructor
+// signature.
+func (m *Model) seedFromCache() {}
 
 // Init kicks ONE fetch — the focused card. The rest fire lazily on
 // first focus to keep Okta rate-limit budget intact (the previous
@@ -233,44 +213,13 @@ func (m Model) ensureFetch(c CardID) (tea.Cmd, bool) {
 }
 
 // fetchCmdFor returns the cmd that loads `c`'s data, or nil when
-// the card isn't fetchable. Each card costs exactly one API call
-// against its category — single-page sampling keeps Okta rate-
-// limit budget intact even when the operator R-spams.
+// the card isn't fetchable. Activity / Posture / Events each cost
+// exactly one /api/v1/logs call against the logs rate-limit bucket
+// — Workforce tenants get ~120 req/min on that bucket alone so the
+// dashboard runs comfortably even with R-spam. Health is pushed
+// from the App Shell (zero API cost).
 func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 	switch c {
-	case CardUsers:
-		if m.deps.Users == nil {
-			return nil
-		}
-		port := m.deps.Users
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			counts, sampled, err := countUsers(ctx, port, m.now())
-			return cardLoadedMsg{card: CardUsers, counts: counts, sampled: sampled, err: err}
-		}
-	case CardGroups:
-		if m.deps.Groups == nil {
-			return nil
-		}
-		port := m.deps.Groups
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			counts, sampled, err := countGroups(ctx, port, m.now())
-			return cardLoadedMsg{card: CardGroups, counts: counts, sampled: sampled, err: err}
-		}
-	case CardApps:
-		if m.deps.Apps == nil {
-			return nil
-		}
-		port := m.deps.Apps
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			counts, sampled, err := countApps(ctx, port, m.now())
-			return cardLoadedMsg{card: CardApps, counts: counts, sampled: sampled, err: err}
-		}
 	case CardActivity:
 		// Activity now uses a SINGLE window — Phase 6's two-window
 		// design fired two log fetches concurrently which doubled
@@ -325,17 +274,6 @@ func (m Model) fetchCmdFor(c CardID) tea.Cmd {
 	return nil
 }
 
-// cardLoadedMsg is the result one count-card fetcher delivers back
-// to Update. Activity / Posture use their own msg types with
-// per-card payload shapes — keeps the type switch in Update
-// reading as documentation.
-type cardLoadedMsg struct {
-	card    CardID
-	counts  dashboard.Counts
-	sampled bool
-	err     error
-}
-
 // activityLoadedMsg is the per-window result from countActivity.
 // Two of these land per Activity refresh (24h + 7d) and Update
 // folds each into m.cards[CardActivity] without blocking the other
@@ -373,22 +311,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-	case cardLoadedMsg:
-		st := m.cards[msg.card]
-		if st == nil {
-			st = &cardState{}
-			m.cards[msg.card] = st
-		}
-		st.loading = false
-		st.err = msg.err
-		if msg.err == nil {
-			st.counts = msg.counts
-			st.sampled = msg.sampled
-			st.hasCounts = true
-			m.persist(msg.card, msg.counts)
-		}
-		m.lastUpdated = m.now()
-		return m, nil
 	case activityLoadedMsg:
 		st := m.cards[CardActivity]
 		if st == nil {
@@ -398,8 +320,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		st.loading = false
 		st.err = msg.err
 		if msg.err == nil {
-			st.activity24h = msg.metrics
-			st.hasActivity24h = true
+			st.activity = msg.metrics
+			st.hasActivity = true
 			st.sampled = msg.sampled
 		}
 		m.lastUpdated = m.now()
@@ -484,33 +406,6 @@ func (m *Model) refreshAllCmd() tea.Cmd {
 }
 
 // persist writes a card's latest counts to the cache so the next
-// session boots with fresh-feeling data.
-func (m Model) persist(card CardID, counts dashboard.Counts) {
-	if m.deps.Cache == nil {
-		return
-	}
-	key, ok := cacheKeyFor(card)
-	if !ok {
-		return
-	}
-	_ = m.deps.Cache.Put(key, counts)
-}
-
-// cacheKeyFor maps the CardID to the stable string key the cache
-// persists under. Cards without a cache key (Activity / Posture /
-// Health / Events — those wire later) return false.
-func cacheKeyFor(c CardID) (string, bool) {
-	switch c {
-	case CardUsers:
-		return dashboard.CardUsers, true
-	case CardGroups:
-		return dashboard.CardGroups, true
-	case CardApps:
-		return dashboard.CardApps, true
-	}
-	return "", false
-}
-
 func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	km = shared.NormalizeArrowKey(km)
 	switch km.Type {
@@ -597,7 +492,7 @@ func (m Model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.secondaryWindow = 1 * time.Hour
 			}
 			if st := m.cards[CardActivity]; st != nil {
-				st.hasActivity24h = false
+				st.hasActivity = false
 				st.loading = true
 			}
 			return m, m.fetchCmdFor(CardActivity)
@@ -665,17 +560,14 @@ func (m *Model) advanceFocus(d int) tea.Cmd {
 }
 
 // drillTargetFor maps a card to the resource screen name the App
-// Shell understands (forwarded via shared.OpenScreenMsg). Cards
-// without a drill target return false.
+// Shell understands (forwarded via shared.OpenScreenMsg). Activity
+// drills into Logs scoped to the active window; Events handles its
+// own row-level drill in drillEventCmd. Posture / Health don't
+// have a single drill target — operator uses `:users`, `:logs`,
+// `:administrators` to navigate from there.
 func drillTargetFor(c CardID) (string, bool) {
 	switch c {
-	case CardUsers:
-		return "users", true
-	case CardGroups:
-		return "groups", true
-	case CardApps:
-		return "apps", true
-	case CardEvents:
+	case CardActivity, CardEvents:
 		return "logs", true
 	}
 	return "", false
@@ -730,22 +622,13 @@ func (m Model) renderHeader(width int, tk shared.Tokens) string {
 }
 
 func (m Model) renderGrid(width int, tk shared.Tokens) string {
-	row1 := m.renderRow(width, tk,
-		m.renderCountCard(CardUsers, "Users", []string{"ACTIVE", "PROVISIONED", "SUSPENDED", "LOCKED_OUT", "DEPROVISIONED"}),
-		m.renderCountCard(CardGroups, "Groups", []string{"OKTA_GROUP", "APP_GROUP", "BUILT_IN"}),
-		m.renderCountCard(CardApps, "Apps", []string{"ACTIVE", "INACTIVE"}),
-	)
-	row2 := m.renderRow(width, tk,
-		m.renderActivityCard(tk),
-	)
-	row3 := m.renderRow(width, tk,
-		m.renderPostureCard(tk),
-		m.renderHealthCard(tk),
-	)
-	row4 := m.renderRow(width, tk,
-		m.renderEventsCard(tk),
-	)
-	return row1 + "\n\n" + row2 + "\n\n" + row3 + "\n\n" + row4
+	// 3 rows: Activity on top (the headline), Posture + Health
+	// side-by-side, Events anchoring the bottom. Activity gets the
+	// full chrome width because it carries the most data.
+	row1 := m.renderRow(width, tk, m.renderActivityCard(tk))
+	row2 := m.renderRow(width, tk, m.renderPostureCard(tk), m.renderHealthCard(tk))
+	row3 := m.renderRow(width, tk, m.renderEventsCard(tk))
+	return row1 + "\n\n" + row2 + "\n\n" + row3
 }
 
 // renderEventsCard surfaces the last N high-severity System Log
@@ -817,7 +700,7 @@ func (m Model) renderActivityCard(tk shared.Tokens) string {
 	if focused {
 		header = header + tk.Muted.Render("   (t cycles 1h/6h/24h)")
 	}
-	if st == nil || !st.hasActivity24h {
+	if st == nil || !st.hasActivity {
 		body := tk.Muted.Render("press Tab to fetch · or R to load now")
 		if st != nil && st.loading {
 			body = tk.Muted.Render("loading…")
@@ -840,19 +723,33 @@ func (m Model) renderActivityCard(tk shared.Tokens) string {
 		}
 		return left + style.Render(val)
 	}
-	lines := []string{
-		header,
-		metricRow("Sign-ins",        st.activity24h.SignIns,       nil),
-		metricRow("Failed sign-ins", st.activity24h.FailedSignIns, func(n int) bool { return n > 100 }),
-		metricRow("Account lockouts", st.activity24h.AccountLocks, func(n int) bool { return n > 0 }),
-		metricRow("MFA resets",       st.activity24h.MFAResets,    nil),
-		metricRow("Admin actions",    st.activity24h.AdminActions, nil),
-		metricRow("User creates",     st.activity24h.UserCreates,  nil),
+	sectionHeader := func(s string) string {
+		return tk.Accent.Render(s)
 	}
-	if len(st.activity24h.HourlyBuckets) > 0 {
-		spark := dashboard.NormalizeSparkline(st.activity24h.HourlyBuckets)
-		lines = append(lines, "", tk.Muted.Render("hourly sign-ins ")+tk.Accent.Render(dashboard.RenderSparkline(spark)))
+	a := st.activity
+	lines := []string{header}
+	if len(a.HourlyBuckets) > 0 {
+		spark := dashboard.NormalizeSparkline(a.HourlyBuckets)
+		lines = append(lines, tk.Muted.Render("hourly sign-ins ")+tk.Accent.Render(dashboard.RenderSparkline(spark)))
 	}
+	lines = append(lines,
+		sectionHeader("identity"),
+		metricRow("Sign-ins",         a.SignIns,        nil),
+		metricRow("Failed sign-ins",  a.FailedSignIns,  func(n int) bool { return n > 100 }),
+		metricRow("Account lockouts", a.AccountLocks,   func(n int) bool { return n > 0 }),
+		metricRow("MFA resets",       a.MFAResets,      nil),
+		sectionHeader("admin"),
+		metricRow("Admin actions",    a.AdminActions,   nil),
+		metricRow("Role changes",     a.RoleChanges,    nil),
+		metricRow("API token writes", a.APITokenWrites, func(n int) bool { return n > 0 }),
+		metricRow("Policy mutations", a.PolicyMutations, nil),
+		sectionHeader("lifecycle"),
+		metricRow("User creates",     a.UserCreates,    nil),
+		metricRow("User deletes",     a.UserDeletes,    func(n int) bool { return n > 0 }),
+		metricRow("User suspends",    a.UserSuspends,   nil),
+		metricRow("App assign +",     a.AppAssignAdds,  nil),
+		metricRow("App assign −",     a.AppAssignRemoves, nil),
+	)
 	return strings.Join(lines, "\n")
 }
 
@@ -1012,170 +909,6 @@ func formatPct(p float64) string {
 	return strconv.Itoa(int(p+0.5)) + "%"
 }
 
-// renderCountCard renders one Users/Groups/Apps card with the big
-// number, freshness stamp, Δ-vs-1d / Δ-vs-7d row, per-status
-// breakdown rows, and a 14-day sparkline trend line. statusKeys
-// dictates the order of the breakdown — keeping it explicit means
-// "ACTIVE" always sits above "DEPROVISIONED" regardless of map
-// iteration order.
-func (m Model) renderCountCard(id CardID, title string, statusKeys []string) string {
-	tk := activeTokens()
-	st := m.cards[id]
-	focused := id == m.focus
-
-	titleStyle := tk.Muted.Bold(true)
-	if focused {
-		titleStyle = tk.Accent.Bold(true)
-	}
-	header := titleStyle.Render(title)
-
-	if st == nil || !st.hasCounts {
-		body := tk.Muted.Render("Tab to fetch · R to refresh")
-		if st != nil && st.loading {
-			body = tk.Muted.Render("loading…")
-		}
-		if st != nil && st.err != nil {
-			body = tk.Danger.Render("err: " + truncate(st.err.Error(), 40))
-		}
-		return header + "\n" + body
-	}
-
-	bigStyle := tk.FG.Bold(true)
-	if focused {
-		bigStyle = tk.Accent.Bold(true)
-	}
-	totalText := formatThousands(st.counts.Total)
-	if st.sampled {
-		// Single-page sample — Total is a lower bound. The "≈"
-		// prefix signals "more than this" so the operator doesn't
-		// read 200 as "exactly 200" on a 50k-user tenant.
-		totalText = "≈ " + totalText + "+"
-	}
-	big := bigStyle.Render(totalText)
-
-	age := tk.Muted.Render(relativeAge(m.now(), st.counts.ObservedAt))
-	if st.loading {
-		age = tk.Muted.Render("refreshing…")
-	}
-
-	lines := []string{header, big + "  " + age}
-
-	// Δ row — both 1d and 7d windows so the operator sees daily
-	// churn next to weekly trend. Hidden when neither window has
-	// a comparable historical roll yet.
-	if cacheKey, ok := cacheKeyFor(id); ok {
-		deltaLine := m.renderDeltaRow(cacheKey, tk)
-		if deltaLine != "" {
-			lines = append(lines, deltaLine)
-		}
-		// Trend sparkline — 14-day series for the 7d window.
-		spark := m.renderTrendSparkline(cacheKey, tk)
-		if spark != "" {
-			lines = append(lines, spark)
-		}
-	}
-
-	lines = append(lines, "")
-
-	// Sort breakdown: explicit-order keys first, then any extras
-	// observed but not enumerated.
-	seen := map[string]struct{}{}
-	for _, k := range statusKeys {
-		v, ok := st.counts.ByStatus[k]
-		if !ok && st.counts.BySubtype != nil {
-			v, ok = st.counts.BySubtype[k]
-		}
-		if !ok {
-			continue
-		}
-		seen[k] = struct{}{}
-		lines = append(lines, formatStatusRow(k, v, tk))
-	}
-	extras := make([]string, 0)
-	addExtras := func(src map[string]int) {
-		for k := range src {
-			if _, hit := seen[k]; hit {
-				continue
-			}
-			extras = append(extras, k)
-		}
-	}
-	addExtras(st.counts.ByStatus)
-	addExtras(st.counts.BySubtype)
-	sort.Strings(extras)
-	for _, k := range extras {
-		v, ok := st.counts.ByStatus[k]
-		if !ok {
-			v = st.counts.BySubtype[k]
-		}
-		lines = append(lines, formatStatusRow(k, v, tk))
-	}
-	return strings.Join(lines, "\n")
-}
-
-// renderDeltaRow assembles the "+47 ↑ (7d)   +3 → (1d)" line.
-// Returns empty when neither window has a comparable previous
-// roll — typical for the first session before the cache has
-// accumulated history.
-func (m Model) renderDeltaRow(cacheKey string, tk shared.Tokens) string {
-	d7 := dashboard.DeltaFor(m.deps.Cache, cacheKey, m.now(), 7)
-	d1 := dashboard.DeltaFor(m.deps.Cache, cacheKey, m.now(), 1)
-	if !d7.Compared && !d1.Compared {
-		return ""
-	}
-	parts := []string{}
-	if d7.Compared {
-		parts = append(parts, formatDeltaCell(d7, "7d", tk))
-	}
-	if d1.Compared {
-		parts = append(parts, formatDeltaCell(d1, "1d", tk))
-	}
-	return strings.Join(parts, "   ")
-}
-
-// formatDeltaCell stamps "+47 ↑ (7d)" with the arrow + sign tinted
-// by direction. Flat (Diff == 0) uses → in muted; positive uses ↑
-// in accent; negative uses ↓ in warning to draw the eye (an
-// admin's "wait, why are users going down?" trigger).
-func formatDeltaCell(d dashboard.Delta, label string, tk shared.Tokens) string {
-	arrow := "→"
-	style := tk.Muted
-	sign := ""
-	switch {
-	case d.Diff > 0:
-		arrow = "↑"
-		style = tk.Accent
-		sign = "+"
-	case d.Diff < 0:
-		arrow = "↓"
-		style = tk.Warning
-		// strconv handles the leading minus.
-	}
-	num := sign + formatThousands(d.Diff)
-	return style.Render(num+" "+arrow) + tk.Muted.Render(" ("+label+")")
-}
-
-// renderTrendSparkline produces the per-card 14-day sparkline. The
-// caller pads to the card width so the trend reads as a horizontal
-// band sitting flush with the Δ row above.
-func (m Model) renderTrendSparkline(cacheKey string, tk shared.Tokens) string {
-	d := dashboard.DeltaFor(m.deps.Cache, cacheKey, m.now(), 7)
-	if len(d.Sparkline) < 2 {
-		return ""
-	}
-	bar := dashboard.RenderSparkline(d.Sparkline)
-	return tk.Muted.Render("trend ") + tk.Accent.Render(bar)
-}
-
-func formatStatusRow(label string, count int, tk shared.Tokens) string {
-	labelCell := shared.PadOrTruncateVisible(strings.ToLower(label), 16)
-	val := formatThousands(count)
-	pad := 8 - shared.VisibleWidth(val)
-	if pad < 0 {
-		pad = 0
-	}
-	return tk.Muted.Render(labelCell) + strings.Repeat(" ", pad) + tk.FG.Render(val)
-}
 
 // renderPlaceholder is the temporary card body for Activity /
 // Posture / Health / Events until Phase 4-5 lands. Reads visually
@@ -1237,12 +970,6 @@ func (m Model) renderRow(width int, tk shared.Tokens, cards ...string) string {
 // cardLabel maps a CardID back to a short label for the status row.
 func cardLabel(c CardID) string {
 	switch c {
-	case CardUsers:
-		return "Users"
-	case CardGroups:
-		return "Groups"
-	case CardApps:
-		return "Apps"
 	case CardActivity:
 		return "Activity"
 	case CardPosture:
@@ -1295,17 +1022,6 @@ func (m Model) FocusedCard() CardID { return m.focus }
 
 // CardCount returns the number of focusable cards.
 func (m Model) CardCount() int { return len(cardOrder) }
-
-// CardCountsFor exposes the cached counts for a card so tests +
-// future overlays can read the live numbers without poking the
-// model's unexported state.
-func (m Model) CardCountsFor(id CardID) (dashboard.Counts, bool) {
-	st := m.cards[id]
-	if st == nil || !st.hasCounts {
-		return dashboard.Counts{}, false
-	}
-	return st.counts, true
-}
 
 // --- formatting helpers ------------------------------------------------------
 

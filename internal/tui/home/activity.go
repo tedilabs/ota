@@ -8,22 +8,38 @@ import (
 )
 
 // ActivityMetrics is the per-window aggregation the Activity card
-// renders. Captured for both the 24h and 7d windows in parallel so
-// the card surfaces "spike now vs typical week" at a glance.
+// renders. The dashboard pivoted (2026-06) to System-Log-derived
+// metrics — every count surfaced here comes from a single
+// /api/v1/logs query, so it never burns the management rate-limit
+// category that the per-resource screens (users/groups/apps) need.
 type ActivityMetrics struct {
-	WindowLabel    string // "24h" or "7d"
-	WindowSince    time.Time
-	SignIns        int
-	FailedSignIns  int
-	AccountLocks   int
-	MFAResets      int
-	AdminActions   int
-	UserCreates    int
-	UserDeletes    int
+	WindowLabel string // "1h", "6h", or "24h" — see windowLabel.
+	WindowSince time.Time
+
+	// Identity surface — sign-in + lockout activity.
+	SignIns       int
+	FailedSignIns int
+	AccountLocks  int
+	MFAResets     int
+
+	// Admin surface — sensitive write ops by user actors.
+	AdminActions    int
+	APITokenWrites  int // create / delete / revoke
+	RoleChanges     int // user.role.{add,remove} + group.role.{add,remove}
+	PolicyMutations int // policy.lifecycle.* + policy.rule.{update,delete}
+
+	// Lifecycle surface — user / app create-update-delete pulse.
+	UserCreates       int
+	UserDeletes       int
+	UserSuspends      int
+	UserReactivates   int
+	AppAssignAdds     int // application.user_membership.add
+	AppAssignRemoves  int // application.user_membership.remove
+	AppConfigChanges  int // application.lifecycle.{deactivate,delete}
+
 	// HourlyBuckets is the 24-bucket sign-in series for sparkline
 	// rendering (newest bucket = the hour up to now). Populated only
-	// for the 24h window; 7d aggregations leave it nil since the
-	// sparkline already lives on the count cards.
+	// for the 24h window.
 	HourlyBuckets []int
 }
 
@@ -91,10 +107,43 @@ func countActivity(ctx context.Context, port domain.LogsPort, now time.Time, w a
 			out.AccountLocks++
 		case "user.mfa.factor.reset_all":
 			out.MFAResets++
+
+		// Lifecycle.
 		case "user.lifecycle.create":
 			out.UserCreates++
 		case "user.lifecycle.delete.initiated":
 			out.UserDeletes++
+		case "user.lifecycle.suspend":
+			out.UserSuspends++
+		case "user.lifecycle.reactivate", "user.lifecycle.unsuspend":
+			out.UserReactivates++
+
+		// App membership churn — surfaces sudden access spikes /
+		// access drops that often pair with offboarding.
+		case "application.user_membership.add":
+			out.AppAssignAdds++
+		case "application.user_membership.remove":
+			out.AppAssignRemoves++
+		case "application.lifecycle.deactivate",
+			"application.lifecycle.delete":
+			out.AppConfigChanges++
+
+		// Admin surface — token + role + policy writes.
+		case "system.api_token.create",
+			"system.api_token.delete",
+			"system.api_token.revoke":
+			out.APITokenWrites++
+		case "user.role.add",
+			"user.role.remove",
+			"group.role.add",
+			"group.role.remove":
+			out.RoleChanges++
+		case "policy.lifecycle.create",
+			"policy.lifecycle.update",
+			"policy.lifecycle.delete",
+			"policy.rule.update",
+			"policy.rule.delete":
+			out.PolicyMutations++
 		}
 		// Admin actions: anything where actor.type is User and the
 		// eventType is a system / lifecycle write op. We approximate

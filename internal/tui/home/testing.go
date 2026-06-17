@@ -2,8 +2,6 @@ package home
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/tedilabs/ota/internal/dashboard"
 )
 
 // Test helpers — exported wrappers over the unexported msg types so
@@ -22,10 +20,10 @@ func PostureLoadedForTest(m PostureMetrics) tea.Msg {
 	return postureLoadedMsg{metrics: m}
 }
 
-// UsersLoadedForTest constructs an internal cardLoadedMsg for the
-// Users card so tests can render the count surface without a Users
-// port. Phase 2-onward cards (Groups / Apps) get analogous helpers
-// when they're needed.
-func UsersLoadedForTest(c dashboard.Counts) tea.Msg {
-	return cardLoadedMsg{card: CardUsers, counts: c}
+// ActivityLoadedForTest constructs an internal activity-loaded msg
+// so tests can render the Activity card without a real LogsPort.
+// `window` should match the currently selected window label (e.g.,
+// "1h", "6h", "24h") or the msg is ignored as stale.
+func ActivityLoadedForTest(window string, m ActivityMetrics, sampled bool) tea.Msg {
+	return activityLoadedMsg{window: window, metrics: m, sampled: sampled}
 }

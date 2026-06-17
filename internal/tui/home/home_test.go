@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tedilabs/ota/internal/dashboard"
 	"github.com/tedilabs/ota/internal/tui/home"
 	"github.com/tedilabs/ota/internal/tui/shared"
 )
@@ -33,45 +32,35 @@ func runMsg(t *testing.T, m home.Model, msg tea.Msg) home.Model {
 func Test_Home_FocusCycle_TabWrapsAfterLastCard(t *testing.T) {
 	t.Parallel()
 	m := home.New(home.Deps{Width: 200, Height: 60, OrgURL: "https://acme.okta.com"})
-	require.Equal(t, home.CardUsers, m.FocusedCard(),
-		"precondition: default focus is Users")
+	require.Equal(t, home.CardActivity, m.FocusedCard(),
+		"precondition: default focus is Activity (headline card after the Option A pivot)")
 
 	for i := 0; i < m.CardCount(); i++ {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 		m = updated.(home.Model)
 	}
-	assert.Equal(t, home.CardUsers, m.FocusedCard(),
-		"Tab through every card must wrap back to Users")
+	assert.Equal(t, home.CardActivity, m.FocusedCard(),
+		"Tab through every card must wrap back to Activity")
 }
 
-func Test_Home_EnterOnCard_EmitsOpenScreenMsg(t *testing.T) {
+func Test_Home_EnterOnActivity_OpensLogsScreen(t *testing.T) {
 	t.Parallel()
 	m := home.New(home.Deps{Width: 200, Height: 60})
-
-	// Focus the Apps card — 3rd in the order.
-	for i := 0; i < 2; i++ {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-		m = updated.(home.Model)
-	}
-	require.Equal(t, home.CardApps, m.FocusedCard())
+	require.Equal(t, home.CardActivity, m.FocusedCard(),
+		"precondition: Activity card is the default focus")
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	require.NotNil(t, cmd, "Enter on a drillable card must return a Cmd")
+	require.NotNil(t, cmd, "Enter on Activity must return a Cmd")
 	msg := cmd()
 	open, ok := msg.(shared.OpenScreenMsg)
-	require.True(t, ok, "Enter on Apps must emit shared.OpenScreenMsg")
-	assert.Equal(t, "apps", open.Target)
+	require.True(t, ok, "Enter on Activity must emit shared.OpenScreenMsg")
+	assert.Equal(t, "logs", open.Target,
+		"Activity drills into the Logs screen so the operator can investigate the spike")
 }
 
 func Test_Home_ActivityWindowToggle_CyclesThrough_1h_6h_24h(t *testing.T) {
 	t.Parallel()
 	m := home.New(home.Deps{Width: 200, Height: 60})
-
-	// Move focus to the Activity card (4th card — Users / Groups / Apps / Activity).
-	for i := 0; i < 3; i++ {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-		m = updated.(home.Model)
-	}
 	require.Equal(t, home.CardActivity, m.FocusedCard())
 
 	// Default window is 1h (cheap-by-default — wider windows
@@ -177,23 +166,33 @@ func Test_Home_PostureCard_RendersAfterPostureLoadedMsg(t *testing.T) {
 		"posture card must surface invalid group rules row")
 }
 
-func Test_Home_CountCard_RendersAfterCardLoadedMsg(t *testing.T) {
+func Test_Home_ActivityCard_RendersAfterActivityLoadedMsg(t *testing.T) {
 	t.Parallel()
-	cacheDir := t.TempDir()
-	cache, err := dashboard.New(cacheDir, "https://acme.okta.com")
-	require.NoError(t, err)
-	m := home.New(home.Deps{Width: 200, Height: 60, Cache: cache, OrgURL: "https://acme.okta.com"})
+	m := home.New(home.Deps{Width: 200, Height: 60, OrgURL: "https://acme.okta.com"})
 
-	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
-	m = runMsg(t, m, home.UsersLoadedForTest(dashboard.Counts{
-		Total:      12438,
-		ByStatus:   map[string]int{"ACTIVE": 11802, "SUSPENDED": 412, "LOCKED_OUT": 94},
-		ObservedAt: now,
-	}))
+	require.Contains(t, m.View(), "Tab to fetch",
+		"Activity card pre-msg renders the lazy-fetch hint")
+
+	m = runMsg(t, m, home.ActivityLoadedForTest("1h", home.ActivityMetrics{
+		WindowLabel:     "1h",
+		WindowSince:     time.Now().Add(-time.Hour),
+		SignIns:         4321,
+		FailedSignIns:   17,
+		AccountLocks:    2,
+		APITokenWrites:  1,
+		RoleChanges:     3,
+		PolicyMutations: 5,
+		UserCreates:     6,
+		AppAssignAdds:   42,
+	}, false))
 
 	view := m.View()
-	assert.Contains(t, view, "12,438",
-		"Users card must format the total with thousands separator")
-	assert.Contains(t, view, "11,802",
-		"Users card must list ACTIVE breakdown")
+	assert.Contains(t, view, "4,321",
+		"Activity card must format Sign-ins with thousands separator")
+	assert.Contains(t, view, "Failed sign-ins",
+		"Activity card must surface the Failed sign-ins row")
+	assert.Contains(t, view, "API token writes",
+		"Activity card must surface the admin-surface API token row")
+	assert.Contains(t, view, "App assign",
+		"Activity card must surface the app-assignment lifecycle rows")
 }
