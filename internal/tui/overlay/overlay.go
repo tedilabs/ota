@@ -17,7 +17,6 @@ import (
 // paletteHints lists the commands rendered as hints below the input buffer
 // (REQ-U02 AC-1).
 var paletteHints = []string{
-	":home",
 	":users", ":groups", ":grouprules", ":policies", ":logs",
 	":apps", ":authenticators",
 	":network-zones", ":authorization-servers", ":api-tokens", ":administrators",
@@ -370,8 +369,6 @@ func truncateAscii(s string, width int) string {
 // the bare "Help" label so the overlay still has a recognisable header.
 func helpTitle(screen string) string {
 	switch screen {
-	case "home":
-		return "Help · Home Dashboard"
 	case "users":
 		return "Help · Users List"
 	case "user-detail":
@@ -483,17 +480,6 @@ func navigationHelpEntries() []helpEntry {
 // that bind extra keys.
 func screenSpecificHelpEntries(screen string) []helpEntry {
 	switch screen {
-	case "home":
-		return []helpEntry{
-			{"Tab / Shift-Tab", "cycle focus (also kicks the lazy fetch)"},
-			{"j / k", "next / previous card (or event row when Events focused)"},
-			{"g / G", "first / last card (or first / last event)"},
-			{"Enter", "drill into the focused card's resource"},
-			{"Enter (Events)", "open Logs scoped to the highlighted event's actor"},
-			{"R", "refresh every already-loaded card"},
-			{"t", "cycle Activity window (1h → 6h → 24h)"},
-			{"≈", "prefix = single-page sample, real total is higher"},
-		}
 	case "users":
 		return []helpEntry{
 			{"Enter / d", "open detail (all attributes)"},

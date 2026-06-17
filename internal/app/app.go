@@ -12,7 +12,6 @@ import (
 
 	"github.com/tedilabs/ota/internal/apilog"
 	"github.com/tedilabs/ota/internal/clock"
-	"github.com/tedilabs/ota/internal/dashboard"
 	"github.com/tedilabs/ota/internal/domain"
 	"github.com/tedilabs/ota/internal/keys"
 	"github.com/tedilabs/ota/internal/oktastatus"
@@ -27,7 +26,6 @@ import (
 	"github.com/tedilabs/ota/internal/tui/admins"
 	"github.com/tedilabs/ota/internal/tui/apitokens"
 	"github.com/tedilabs/ota/internal/tui/authservers"
-	"github.com/tedilabs/ota/internal/tui/home"
 	"github.com/tedilabs/ota/internal/tui/shared"
 	"github.com/tedilabs/ota/internal/tui/users"
 	"github.com/tedilabs/ota/internal/tui/zones"
@@ -39,11 +37,8 @@ type Screen int
 
 const (
 	// ScreenUsers stays at iota 0 so the zero-value InitialScreen
-	// (used by the existing test scaffolding) still resolves to the
-	// Users list. The real `ota` binary's wire.go explicitly sets
-	// InitialScreen = ScreenHome, so operators boot into the
-	// dashboard while tests keep their pre-Home behaviour
-	// unchanged.
+	// resolves to the Users list — the boot default for both the
+	// real `ota` binary and the existing test scaffolding.
 	ScreenUsers Screen = iota
 	ScreenGroups
 	ScreenRules
@@ -55,7 +50,6 @@ const (
 	ScreenAuthorizationServers
 	ScreenAPITokens
 	ScreenAdministrators
-	ScreenHome
 	ScreenUserDetail
 	ScreenGroupDetail
 	ScreenRuleDetail
@@ -66,8 +60,6 @@ const (
 // String returns the screen's `:command` form (or a detail-view label).
 func (s Screen) String() string {
 	switch s {
-	case ScreenHome:
-		return "home"
 	case ScreenUsers:
 		return "users"
 	case ScreenGroups:
@@ -149,46 +141,6 @@ func (m *Model) popNav() (Screen, bool) {
 // surfacing the legacy "nothing to close" toast.
 func (m Model) canPopNav() bool { return len(m.navStack) > 1 }
 
-// broadcastHealth pushes a fresh HealthSnapshot into the home
-// screen so its Health card can re-render with the latest tenant-
-// status / rate-limit signals. No-op when the home screen isn't
-// instantiated (operator hasn't visited it this session).
-func (m *Model) broadcastHealth() {
-	child, ok := m.screens[ScreenHome]
-	if !ok {
-		return
-	}
-	var rls []domain.RateLimitSnapshot
-	if m.deps.RateLimit != nil {
-		rls = m.deps.RateLimit.Snapshots()
-	}
-	snap := home.HealthSnapshot{
-		OktaStatus:  m.oktaStatus,
-		RateLimits:  rls,
-		LastFetchAt: m.healthLastFetch(),
-		ObservedAt:  m.now(),
-	}
-	if m.deps.APIRecorder != nil {
-		snap.APIRecorderCount = len(m.deps.APIRecorder.Snapshot())
-	}
-	updated, _ := child.Update(home.UpdateHealthMsg{Snapshot: snap})
-	m.screens[ScreenHome] = updated
-}
-
-// healthLastFetch returns the freshest LastUpdated stamp from any
-// list/detail screen — used by Health card's "Last fetch: 2s ago".
-func (m Model) healthLastFetch() time.Time {
-	var newest time.Time
-	for _, child := range m.screens {
-		if st, ok := child.(LastUpdatedStater); ok {
-			t := st.LastUpdated()
-			if t.After(newest) {
-				newest = t
-			}
-		}
-	}
-	return newest
-}
 
 // now returns the model's logical wall clock.
 func (m Model) now() time.Time {
@@ -325,11 +277,6 @@ type Deps struct {
 	// HTTP round-trip; the `~` overlay reads its in-memory snapshot
 	// to render the timeline. Nil disables the overlay.
 	APIRecorder *apilog.Recorder
-
-	// DashboardCache backs the home screen's per-card snapshot
-	// persisted across sessions. Nil falls back to in-memory only
-	// (tests and harnesses with no UserCacheDir).
-	DashboardCache *dashboard.Cache
 
 	// LogsRefreshInterval / DefaultRefreshInterval drive the auto-refresh
 	// tickers (issue #177 v0.1.16). Logs default 5s, every other list
@@ -557,7 +504,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// surfaces the unreachable state rather than a stale
 		// "operational" reading.
 		m.oktaStatus = msg.snap
-		m.broadcastHealth()
 		return m, scheduleOktaStatusTickCmd(m.deps.OktaStatusEndpoint, msg.snap.Indicator)
 	case openCmdPaletteMsg:
 		m.overlay = OverlayPalette
@@ -678,10 +624,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case shared.OpenScreenMsg:
-		// Drill-down emitted by a child screen (today: the home
-		// dashboard's card Enter). Push onto the nav stack — Esc on
-		// the destination walks back to wherever the operator came
-		// from rather than silently dropping the trail.
+		// Cross-screen drill-down (e.g., logs → users). Push onto
+		// the nav stack so Esc on the destination walks back to
+		// wherever the operator came from rather than silently
+		// dropping the trail.
 		if s, ok := screenFromName(msg.Target); ok {
 			m.pushNav(s)
 			m.overlay = OverlayNone
@@ -798,9 +744,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // codes (u/g/gr/l).
 func screenFromName(name string) (Screen, bool) {
 	switch strings.ToLower(name) {
-	case "home", "dashboard":
-		// `h` intentionally NOT aliased — already routes to help.
-		return ScreenHome, true
 	case "user", "users", "u":
 		return ScreenUsers, true
 	case "group", "groups", "g":
@@ -1898,27 +1841,6 @@ func (m Model) ensureScreen(s Screen) (Model, tea.Cmd) {
 // resource via :cmd (issue #113).
 func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 	switch s {
-	case ScreenHome:
-		mdl := home.New(home.Deps{
-			Users:           m.deps.UsersPort,
-			Groups:          m.deps.GroupsPort,
-			GroupRules:      m.deps.GroupRulesPort,
-			Policies:        m.deps.PoliciesPort,
-			Apps:            m.deps.AppsPort,
-			Authenticators:  m.deps.AuthenticatorsPort,
-			Logs:            m.deps.LogsPort,
-			APITokens:       m.deps.APITokensPort,
-			Administrators:  m.deps.AdministratorsPort,
-			OrgURL:          m.deps.OrgURL,
-			Clock:           m.deps.Clock,
-			Logger:          m.deps.Logger,
-			Keys:            m.deps.Keys,
-			Width:           m.width,
-			Height:          m.height,
-			RefreshInterval: m.deps.DefaultRefreshInterval,
-			Cache:           m.deps.DashboardCache,
-		})
-		return mdl, mdl.Init()
 	case ScreenUsers:
 		mdl := users.NewListModel(users.Deps{
 			Port:            m.deps.UsersPort,
@@ -2316,7 +2238,6 @@ func paletteCommandPool() []string {
 		"bookmark-app",
 		"swa-app",
 		"scim-app",
-		"home",
 		"authenticator",
 		// Read-only resource surfaces added in v0.2.5+. Each has a
 		// matching screenFromName branch + Spec under

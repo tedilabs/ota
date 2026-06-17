@@ -15,7 +15,6 @@ import (
 	"github.com/tedilabs/ota/internal/app"
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/config"
-	"github.com/tedilabs/ota/internal/dashboard"
 	"github.com/tedilabs/ota/internal/keys"
 	"github.com/tedilabs/ota/internal/logger"
 	"github.com/tedilabs/ota/internal/okta"
@@ -79,13 +78,6 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 	clk := clock.Real()
 	apiLogDir, _ := defaultAPILogDir()
 	apiRecorder, _ := apilog.New(apiLogDir, apilog.DefaultRingSize)
-	// Dashboard cache lives next to the apilog cache; both are
-	// per-user, per-tenant, and survive restarts.
-	dashboardDir, _ := defaultDashboardDir()
-	dashboardCache, _ := dashboard.New(dashboardDir, profile.OrgURL)
-	if dashboardCache != nil {
-		dashboardCache.PruneHistoryOlderThan(clk.Now(), 60)
-	}
 	httpCli := &http.Client{Transport: apiRecorder.Transport(http.DefaultTransport)}
 	oktaClient, err := okta.NewClient(ctx, okta.Config{
 		OrgURL:     profile.OrgURL,
@@ -134,7 +126,6 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 		APITokensPort:            oktaClient.APITokens(),
 		AdministratorsPort:       oktaClient.Administrators(),
 		APIRecorder:              apiRecorder,
-		DashboardCache:           dashboardCache,
 		LogsRefreshInterval: time.Duration(cfg.Refresh.LogsSeconds) *
 			time.Second,
 		DefaultRefreshInterval: time.Duration(cfg.Refresh.DefaultSeconds) *
@@ -143,11 +134,6 @@ func Wire(ctx context.Context, in WireInput) (app.Model, config.Config, error) {
 		// override via cfg.OktaStatusEndpoint when self-hosted Okta
 		// orgs run a different statuspage (rare).
 		OktaStatusEndpoint: oktastatus.DefaultEndpoint,
-		// 2026-05-04: boot into the Okta-admin-style dashboard
-		// instead of the Users list. Operators that want the old
-		// behavior can `:users` immediately on boot — that
-		// repushes Users on top of the nav stack.
-		InitialScreen: app.ScreenHome,
 	})
 	return model, cfg, nil
 }
@@ -169,16 +155,6 @@ func defaultAPILogDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(base, "ota", "api"), nil
-}
-
-// defaultDashboardDir mirrors defaultAPILogDir for the home
-// screen's snapshot cache.
-func defaultDashboardDir() (string, error) {
-	base, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, "ota", "dashboard"), nil
 }
 
 func pickProfile(cfg config.Config, override string) (string, config.Profile, error) {
