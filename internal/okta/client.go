@@ -263,6 +263,58 @@ func (c *Client) doPost(ctx context.Context, urlStr string, body []byte) (*http.
 	return nil, lastErr
 }
 
+// doPut performs a PUT with a JSON body — used by strict-replace
+// endpoints (Groups profile, Group Rules, Policies). Same auth,
+// rate-limit observation, and 429 retry semantics as doPost.
+// Caller owns the returned response body and MUST close it.
+func (c *Client) doPut(ctx context.Context, urlStr string, body []byte) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		var rdr io.Reader
+		if len(body) > 0 {
+			rdr = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, urlStr, rdr)
+		if err != nil {
+			return nil, fmt.Errorf("okta: build request: %w", err)
+		}
+		req.Header.Set("Authorization", "SSWS "+c.token.reveal())
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", c.ua)
+		if len(body) > 0 {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("okta: %w", errors.Join(domain.ErrNetwork, err))
+		}
+
+		c.monitor.Observe(resp)
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			rle := errormap.FromResponse(resp)
+			if attempt < c.maxRetries {
+				var detail *domain.RateLimitedError
+				if errors.As(rle, &detail) && detail.RetryAfter > 0 {
+					if err := c.sleepRespectingCtx(ctx, detail.RetryAfter); err != nil {
+						return nil, err
+					}
+				}
+				lastErr = rle
+				continue
+			}
+			return nil, rle
+		}
+
+		if resp.StatusCode >= 400 {
+			return nil, errormap.FromResponse(resp)
+		}
+		return resp, nil
+	}
+	return nil, lastErr
+}
+
 // doDelete performs a DELETE — used by hard-delete user / group-rule
 // endpoints (issue #187 / #188 v0.2.2). Same auth, rate-limit
 // observation, and 429 retry semantics as doGet / doPost.

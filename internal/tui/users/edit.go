@@ -3,12 +3,10 @@ package users
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
@@ -366,7 +364,7 @@ func (m EditModel) RenderModal(tk shared.Tokens, width, bodyBudget int) string {
 			Tokens: tk,
 		})
 	case EditStateLoading:
-		body := renderPlaceholderBody(tk, contentWidth, labelCol, inputCol)
+		body := form.RenderPlaceholderBody(tk, FieldSpecs(), contentWidth, labelCol, inputCol)
 		return shared.MountModal(shared.ModalIn{
 			Title:  "Edit User · Loading…",
 			Body:   body,
@@ -377,8 +375,11 @@ func (m EditModel) RenderModal(tk shared.Tokens, width, bodyBudget int) string {
 		})
 	}
 
-	// Editing / Saving / DiscardConfirm — render the live form.
-	body := m.renderFormBody(tk, contentWidth, labelCol, inputCol)
+	// Editing / Saving / DiscardConfirm — render the live form via
+	// the shared form.RenderFormBody helper so every edit screen
+	// produces identical chrome from the same Form snapshot.
+	body := form.RenderFormBody(tk, m.form, contentWidth, labelCol, inputCol,
+		m.state == EditStateEditing, maskPII)
 	footer := m.composeFooter(tk)
 	title := "Edit User  ·  " + m.loadedUser.Profile.Login
 
@@ -389,7 +390,7 @@ func (m EditModel) RenderModal(tk shared.Tokens, width, bodyBudget int) string {
 		// the end of the modal body. The QA-W01-1 regression test
 		// looks for "Discard" inside m.View(); this satisfies the
 		// AC-5.2 contract while keeping the layout simple.
-		strip := "\n" + buildDiscardStrip(tk, m.form.DirtyFields(), contentWidth, m.discardCursor)
+		strip := "\n" + form.BuildDiscardStrip(tk, m.form.DirtyFields(), contentWidth, m.discardCursor)
 		body = body + strip
 		footer = "<←/→> select  ·  <Enter> apply  ·  <Esc> keep editing"
 	}
@@ -404,198 +405,20 @@ func (m EditModel) RenderModal(tk shared.Tokens, width, bodyBudget int) string {
 	})
 }
 
-// renderFormBody composes section headers + field rows for the
-// editing / saving / discard-confirm states. Read-only fields render
-// as KindReadOnly rows; PII follows the form's shouldShowPII rules.
-func (m EditModel) renderFormBody(tk shared.Tokens, contentWidth, labelCol, inputCol int) string {
-	specs := m.form.Specs()
-	current := m.form.Current()
-	focusKey := m.form.FocusKey()
-	dirtyByKey := map[string]bool{}
-	for _, k := range m.form.DirtyFields() {
-		dirtyByKey[k] = true
-	}
-	inlineErrs := m.form.InlineErrors()
-
-	// Per-section dirty counts (clean sections get a Muted header).
-	dirtyBySection := map[string]int{}
-	for _, s := range specs {
-		if dirtyByKey[s.Key] {
-			dirtyBySection[s.Section]++
-		}
-	}
-
-	var b strings.Builder
-	currentSection := ""
-	for _, s := range specs {
-		if s.Section != "" && s.Section != currentSection {
-			if currentSection != "" {
-				b.WriteByte('\n')
-			}
-			b.WriteString(form.RenderSectionHeader(tk, s.Section, dirtyBySection[s.Section], contentWidth))
-			b.WriteByte('\n')
-			currentSection = s.Section
-		}
-		focused := (focusKey == s.Key) && m.state == EditStateEditing
-		readOnly := s.Kind == form.KindReadOnly
-		dirty := dirtyByKey[s.Key]
-		value := current[s.Key]
-		masked := false
-		if s.PII && !m.form.PIIAllUnmasked() && !focused {
-			value = maskPII(value)
-			masked = true
-		}
-		cursorPos := -1
-		if focused && !readOnly {
-			cursorPos = m.form.CursorPos()
-		}
-		row := form.RenderFieldRow(tk, form.FieldRowOpts{
-			Label:     s.Label,
-			Value:     value,
-			Focused:   focused,
-			Dirty:     dirty,
-			ReadOnly:  readOnly,
-			Masked:    masked,
-			InlineErr: inlineErrs[s.Key],
-			LabelCol:  labelCol,
-			InputCol:  inputCol,
-			CursorPos: cursorPos,
-		})
-		b.WriteString(row)
-		b.WriteByte('\n')
-	}
-
-	// Footer for non-field errors that came back from the server.
-	if extras := m.form.OtherErrors(); len(extras) > 0 {
-		b.WriteByte('\n')
-		for _, e := range extras {
-			b.WriteString("! " + e + "\n")
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// renderPlaceholderBody draws the SCR-012 loading skeleton — section
-// headers + underscore rows so the operator sees the chrome shape
-// before the GET resolves (AC-1.4).
-func renderPlaceholderBody(tk shared.Tokens, contentWidth, labelCol, inputCol int) string {
-	var b strings.Builder
-	currentSection := ""
-	placeholder := strings.Repeat("_", inputCol)
-	for _, s := range FieldSpecs() {
-		if s.Section != "" && s.Section != currentSection {
-			if currentSection != "" {
-				b.WriteByte('\n')
-			}
-			b.WriteString(form.RenderSectionHeader(tk, s.Section, 0, contentWidth))
-			b.WriteByte('\n')
-			currentSection = s.Section
-		}
-		row := form.RenderFieldRow(tk, form.FieldRowOpts{
-			Label:    s.Label,
-			Value:    placeholder,
-			LabelCol: labelCol,
-			InputCol: inputCol,
-		})
-		b.WriteString(row)
-		b.WriteByte('\n')
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// composeFooter picks the single-line footer per state (D-W22).
-func (m EditModel) composeFooter(tk shared.Tokens) string {
+// composeFooter delegates to the lifted form.ComposeFooter helper —
+// every edit screen uses the same footer wording so the keymap hint
+// is consistent across resources.
+func (m EditModel) composeFooter(_ shared.Tokens) string {
+	var st form.FooterState
 	switch m.state {
 	case EditStateSaving:
-		return "Saving…  ·  Ctrl+C to abort (preserves draft)"
+		st = form.FooterStateSaving
 	case EditStateDiscardConfirm:
-		dirty := m.form.Dirty()
-		return fmt.Sprintf("%d changes  ·  y discard  ·  n / Esc keep", dirty)
+		st = form.FooterStateDiscardConfirm
+	default:
+		st = form.FooterStateEditing
 	}
-	dirty := m.form.Dirty()
-	// statusMsg surfaces transient outcomes ("Updated …" toast,
-	// "Fix the highlighted field" hint). When present, it leads.
-	if m.statusMsg != "" {
-		return m.statusMsg + "  ·  Ctrl+S save  ·  Esc cancel"
-	}
-	if dirty <= 0 {
-		return "No changes  ·  Ctrl+S save  ·  Esc cancel  ·  Tab next"
-	}
-	noun := "changes"
-	if dirty == 1 {
-		noun = "change"
-	}
-	return fmt.Sprintf("%d %s  ·  Ctrl+S save  ·  Esc cancel  ·  Tab next  ·  Alt+m PII", dirty, noun)
-}
-
-// buildDiscardStrip emits the prominent confirm strip appended to
-// the modal body in EditStateDiscardConfirm. Headline names what's
-// at stake; the picker row renders side-by-side options with the
-// `cursor` index highlighted so the operator picks with the arrow
-// keys instead of remembering a y/N letter prompt.
-//
-// cursor: 0 = Discard and exit, 1 = Keep editing (safe default).
-func buildDiscardStrip(tk shared.Tokens, dirtyKeys []string, width, cursor int) string {
-	headline := "─ Unsaved changes "
-	if w := width - len([]rune(headline)); w > 0 {
-		headline += strings.Repeat("─", w)
-	}
-	if tk.Warning.GetForeground() != nil {
-		headline = tk.Warning.Render(headline)
-	}
-	var b strings.Builder
-	b.WriteString(headline)
-	if n := len(dirtyKeys); n > 0 {
-		limit := n
-		if limit > 5 {
-			limit = 5
-		}
-		b.WriteString("\n  Modified: " + strings.Join(dirtyKeys[:limit], ", "))
-		if n > limit {
-			b.WriteString(fmt.Sprintf("  … and %d more", n-limit))
-		}
-	}
-	// Side-by-side picker row. Highlighted option gets the reverse-
-	// video treatment + a leading `▸` so it stays visible under
-	// NO_COLOR / monochrome too.
-	discard := pickerOption(tk, "Discard and exit", cursor == 0, tk.Danger)
-	keep := pickerOption(tk, "Keep editing", cursor == 1, tk.Success)
-	b.WriteString("\n\n  " + discard + "     " + keep)
-	return b.String()
-}
-
-// pickerOption renders one of the discard-confirm options. The
-// highlighted entry uses reverse video + an arrow prefix so it's
-// identifiable in monochrome terminals; the inactive one stays
-// muted.
-func pickerOption(tk shared.Tokens, label string, active bool, tone lipglossStyle) string {
-	if active {
-		body := "▸ " + label + " "
-		hi := lipglossReverse(tone)
-		if tone.GetForeground() != nil {
-			return hi.Render(body)
-		}
-		return body
-	}
-	body := "  " + label + " "
-	if tk.Muted.GetForeground() != nil {
-		return tk.Muted.Render(body)
-	}
-	return body
-}
-
-// lipglossStyle is an alias for lipgloss.Style so the helper signature
-// reads naturally without an extra import line in this file.
-type lipglossStyle = lipgloss.Style
-
-// lipglossReverse returns a copy of style with reverse-video enabled.
-// Kept tiny + inline so the discard picker doesn't grow a new file.
-func lipglossReverse(style lipglossStyle) lipglossStyle {
-	out := style.Reverse(true).Bold(true)
-	if fg := style.GetForeground(); fg != nil {
-		out = out.Foreground(fg)
-	}
-	return out
+	return form.ComposeFooter(st, m.form.Dirty(), m.statusMsg)
 }
 
 // maskPII produces the form's display masking. Mirrors form.maskString
