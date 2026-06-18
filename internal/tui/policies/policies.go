@@ -222,6 +222,19 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailRulesLoaded = true
 		}
 		return m, nil
+	case shared.PolicyUpdatedMsg:
+		// Post-edit cache patch — replace the row + the open detail
+		// with the server-echoed Policy.
+		for i := range m.policies {
+			if m.policies[i].ID == msg.Policy.ID {
+				m.policies[i] = msg.Policy
+				break
+			}
+		}
+		if m.opened && m.detail.ID == msg.Policy.ID {
+			m.detail = msg.Policy
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -300,6 +313,10 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 					policyDetailLines(m.detail, !m.detailShowRaw,
 						m.detailRules, m.detailRulesLoaded, m.detailRulesErr),
 					"Policy Detail")
+			case "e":
+				if m.detail.ID != "" {
+					return m, OpenPolicyEditCmd(m.detail.ID)
+				}
 			}
 		}
 		// Eat any remaining keys while detail is open so list-mode
@@ -362,6 +379,14 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detail = m.policies[m.cursor]
 				m.opened = true
 				return m, openPolicyRulesCmd(m.deps.Port, m.detail.ID)
+			}
+		case "e":
+			// Policy metadata edit form. v0.2 scope: name /
+			// description / priority / status. Rule editing is
+			// deferred — operators use the Okta console for that.
+			m.ggChord.Reset()
+			if m.cursor >= 0 && m.cursor < len(m.policies) {
+				return m, OpenPolicyEditCmd(m.policies[m.cursor].ID)
 			}
 		}
 	}

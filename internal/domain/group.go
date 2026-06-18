@@ -34,3 +34,15 @@ type GroupProfile struct {
 	Name        string
 	Description string
 }
+
+// GroupProfileUpdate carries the full replacement profile a Group
+// edit submits. Okta's PUT /api/v1/groups/{id} is strict-replace —
+// the wire body must include every profile field, even those the
+// operator didn't change. The screen rebuilds this struct from the
+// loaded snapshot + the form's dirty diff so unchanged fields aren't
+// dropped. Only OKTA_GROUP types accept profile updates; the screen
+// guards on Type before opening the form.
+type GroupProfileUpdate struct {
+	Name        string
+	Description string
+}

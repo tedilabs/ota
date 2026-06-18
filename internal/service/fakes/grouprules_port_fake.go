@@ -17,6 +17,9 @@ type GroupRulesPortFake struct {
 	ActivateFunc   func(ctx context.Context, ruleID string) error
 	DeactivateFunc func(ctx context.Context, ruleID string) error
 	DeleteFunc     func(ctx context.Context, ruleID string) error
+	// Rule edit — UpdateRule delegates here. Default echoes the
+	// update for screens that only care about UX round-trip.
+	UpdateRuleFunc func(ctx context.Context, ruleID string, update domain.GroupRuleUpdate) (domain.GroupRule, error)
 }
 
 func NewGroupRulesPort(t *testing.T) *GroupRulesPortFake {
@@ -62,4 +65,18 @@ func (f *GroupRulesPortFake) Delete(ctx context.Context, ruleID string) error {
 		return nil
 	}
 	return f.DeleteFunc(ctx, ruleID)
+}
+
+func (f *GroupRulesPortFake) UpdateRule(ctx context.Context, ruleID string, update domain.GroupRuleUpdate) (domain.GroupRule, error) {
+	f.t.Helper()
+	if f.UpdateRuleFunc == nil {
+		return domain.GroupRule{
+			ID:             ruleID,
+			Name:           update.Name,
+			Status:         domain.GroupRuleStatusInactive,
+			Expression:     update.Expression,
+			TargetGroupIDs: update.TargetGroupIDs,
+		}, nil
+	}
+	return f.UpdateRuleFunc(ctx, ruleID, update)
 }

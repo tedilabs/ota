@@ -97,6 +97,14 @@ type GroupsPort interface {
 	// box (issue #189 v0.2.2). Distinct from AppCount which
 	// only returns the cardinality for the Groups list column.
 	ListApps(ctx context.Context, groupID string) ([]App, error)
+
+	// UpdateProfile replaces the group's profile (strict-replace —
+	// Okta's PUT /api/v1/groups/{id} requires every profile field
+	// in the body). Returns the server-echoed Group so the caller
+	// can patch its cache. Only OKTA_GROUP types accept this call;
+	// callers must guard on Type before invoking. Errors mirror
+	// UsersPort.UpdateProfile.
+	UpdateProfile(ctx context.Context, groupID string, profile GroupProfileUpdate) (Group, error)
 }
 
 // GroupRulesPort is the outbound boundary for Okta Group Rules.
@@ -110,6 +118,13 @@ type GroupRulesPort interface {
 	Activate(ctx context.Context, ruleID string) error
 	// Deactivate transitions a rule to INACTIVE.
 	Deactivate(ctx context.Context, ruleID string) error
+
+	// UpdateRule replaces the rule's editable fields (name +
+	// expression + target groups). Okta requires the rule to be
+	// INACTIVE / INVALID before accepting the PUT; the screen
+	// re-checks status before emitting OpenRuleEditMsg. Returns the
+	// server-echoed GroupRule so the cache can patch.
+	UpdateRule(ctx context.Context, ruleID string, update GroupRuleUpdate) (GroupRule, error)
 	// Delete removes a rule permanently. Okta requires the rule to
 	// be INACTIVE — callers should chain Deactivate when needed.
 	Delete(ctx context.Context, ruleID string) error
@@ -120,6 +135,13 @@ type PoliciesPort interface {
 	List(ctx context.Context, q PoliciesQuery) (Iterator[Policy], error)
 	Get(ctx context.Context, id string) (Policy, error)
 	Rules(ctx context.Context, policyID string) ([]PolicyRule, error)
+
+	// UpdatePolicy replaces the policy's editable metadata (name,
+	// description, priority, status). Strict-replace semantics —
+	// the screen reads unchanged fields from the loaded snapshot.
+	// System policies refuse status/priority changes; Okta returns
+	// 400 / 403 (errormap translates).
+	UpdatePolicy(ctx context.Context, policyID string, update PolicyUpdate) (Policy, error)
 }
 
 // AppsPort is the outbound boundary for Okta Applications. Powers

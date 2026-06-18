@@ -17,6 +17,10 @@ type GroupsPortFake struct {
 	AppCountFunc func(ctx context.Context, id string) (int, error)
 	// v0.2.2 #189 — ListApps powers the Group Detail Apps box.
 	ListAppsFunc func(ctx context.Context, groupID string) ([]domain.App, error)
+	// Group profile edit — UpdateProfile delegates here. nil
+	// defaults to a no-op echoing the supplied profile, so screens
+	// that don't exercise mutation don't have to wire a func.
+	UpdateProfileFunc func(ctx context.Context, groupID string, profile domain.GroupProfileUpdate) (domain.Group, error)
 }
 
 func NewGroupsPort(t *testing.T) *GroupsPortFake {
@@ -62,4 +66,18 @@ func (f *GroupsPortFake) ListApps(ctx context.Context, groupID string) ([]domain
 		return nil, nil
 	}
 	return f.ListAppsFunc(ctx, groupID)
+}
+
+func (f *GroupsPortFake) UpdateProfile(ctx context.Context, groupID string, profile domain.GroupProfileUpdate) (domain.Group, error) {
+	f.t.Helper()
+	if f.UpdateProfileFunc == nil {
+		// Default: echo back a Group whose Profile reflects the new
+		// values. Lets screens validate the round-trip without wiring
+		// a func when the test only cares about UX.
+		return domain.Group{ID: groupID, Profile: domain.GroupProfile{
+			Name:        profile.Name,
+			Description: profile.Description,
+		}}, nil
+	}
+	return f.UpdateProfileFunc(ctx, groupID, profile)
 }

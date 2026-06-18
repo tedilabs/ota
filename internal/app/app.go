@@ -60,6 +60,17 @@ const (
 	// `:edit` palette. Pops on save success / clean-Esc / discard
 	// confirm.
 	ScreenUserEdit
+	// ScreenGroupEdit hosts the Groups profile edit form. Same
+	// lifecycle as ScreenUserEdit; pushed only when the target group
+	// is OKTA_GROUP (APP_GROUP / BUILT_IN are upstream-managed).
+	ScreenGroupEdit
+	// ScreenRuleEdit hosts the Group Rule edit form. Pushed only
+	// when the target rule is INACTIVE or INVALID (Okta refuses
+	// edits on ACTIVE rules with a 400).
+	ScreenRuleEdit
+	// ScreenPolicyEdit hosts the Policy edit form. v0.2 scope:
+	// metadata only (name / description / priority / status).
+	ScreenPolicyEdit
 )
 
 // String returns the screen's `:command` form (or a detail-view label).
@@ -99,6 +110,12 @@ func (s Screen) String() string {
 		return "log-detail"
 	case ScreenUserEdit:
 		return "user-edit"
+	case ScreenGroupEdit:
+		return "group-edit"
+	case ScreenRuleEdit:
+		return "rule-edit"
+	case ScreenPolicyEdit:
+		return "policy-edit"
 	}
 	return "unknown"
 }
@@ -423,6 +440,16 @@ type Model struct {
 	// handler immediately before pushNav(ScreenUserEdit) so buildScreen
 	// has the right ID. Cleared after the EditModel is built.
 	editTargetID string
+
+	// groupEditTargetID parallels editTargetID for ScreenGroupEdit.
+	groupEditTargetID string
+
+	// ruleEditTargetID parallels for ScreenRuleEdit.
+	ruleEditTargetID string
+
+	// policyEditTargetID parallels for ScreenPolicyEdit (added in
+	// the same multi-resource edit-form round).
+	policyEditTargetID string
 }
 
 // New constructs the App Shell. The initial screen is materialized eagerly
@@ -772,6 +799,98 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updated, tea.Batch(cmd, refreshScreenCmd())
 		}
 		return m, refreshScreenCmd()
+	case shared.OpenGroupEditMsg:
+		// Groups edit form entry — push ScreenGroupEdit and let
+		// buildScreen build a fresh EditModel that fires the initial
+		// GET. Existing edit frame discarded so a re-entry never
+		// lands on a stale form.
+		delete(m.screens, ScreenGroupEdit)
+		m.groupEditTargetID = msg.ID
+		m.pushNav(ScreenGroupEdit)
+		m.overlay = OverlayNone
+		var cmd tea.Cmd
+		m, cmd = m.ensureScreen(ScreenGroupEdit)
+		return m, cmd
+	case shared.GroupEditDiscardedMsg:
+		// Discard-and-exit on the Groups edit form — drop the cached
+		// model and pop back to the previous surface.
+		delete(m.screens, ScreenGroupEdit)
+		m.groupEditTargetID = ""
+		if m.canPopNav() {
+			prev, _ := m.popNav()
+			updated, cmd := m.ensureScreen(prev)
+			return updated, cmd
+		}
+		return m, nil
+	case shared.GroupUpdatedMsg:
+		// Broadcast the post-save Group snapshot to the list / detail
+		// so its cache stays in sync, then pop the edit frame.
+		if child, ok := m.screens[ScreenGroups]; ok {
+			updated, _ := child.Update(msg)
+			m.screens[ScreenGroups] = updated
+		}
+		if m.canPopNav() {
+			prev, _ := m.popNav()
+			updated, cmd := m.ensureScreen(prev)
+			return updated, tea.Batch(cmd, refreshScreenCmd())
+		}
+		return m, refreshScreenCmd()
+	case shared.OpenRuleEditMsg:
+		delete(m.screens, ScreenRuleEdit)
+		m.ruleEditTargetID = msg.ID
+		m.pushNav(ScreenRuleEdit)
+		m.overlay = OverlayNone
+		var cmd tea.Cmd
+		m, cmd = m.ensureScreen(ScreenRuleEdit)
+		return m, cmd
+	case shared.RuleEditDiscardedMsg:
+		delete(m.screens, ScreenRuleEdit)
+		m.ruleEditTargetID = ""
+		if m.canPopNav() {
+			prev, _ := m.popNav()
+			updated, cmd := m.ensureScreen(prev)
+			return updated, cmd
+		}
+		return m, nil
+	case shared.RuleUpdatedMsg:
+		if child, ok := m.screens[ScreenRules]; ok {
+			updated, _ := child.Update(msg)
+			m.screens[ScreenRules] = updated
+		}
+		if m.canPopNav() {
+			prev, _ := m.popNav()
+			updated, cmd := m.ensureScreen(prev)
+			return updated, tea.Batch(cmd, refreshScreenCmd())
+		}
+		return m, refreshScreenCmd()
+	case shared.OpenPolicyEditMsg:
+		delete(m.screens, ScreenPolicyEdit)
+		m.policyEditTargetID = msg.ID
+		m.pushNav(ScreenPolicyEdit)
+		m.overlay = OverlayNone
+		var cmd tea.Cmd
+		m, cmd = m.ensureScreen(ScreenPolicyEdit)
+		return m, cmd
+	case shared.PolicyEditDiscardedMsg:
+		delete(m.screens, ScreenPolicyEdit)
+		m.policyEditTargetID = ""
+		if m.canPopNav() {
+			prev, _ := m.popNav()
+			updated, cmd := m.ensureScreen(prev)
+			return updated, cmd
+		}
+		return m, nil
+	case shared.PolicyUpdatedMsg:
+		if child, ok := m.screens[ScreenPolicies]; ok {
+			updated, _ := child.Update(msg)
+			m.screens[ScreenPolicies] = updated
+		}
+		if m.canPopNav() {
+			prev, _ := m.popNav()
+			updated, cmd := m.ensureScreen(prev)
+			return updated, tea.Batch(cmd, refreshScreenCmd())
+		}
+		return m, refreshScreenCmd()
 	case shared.OpenLogsMsg:
 		// #F2 / #F4 v0.2.5 — `l` shortcut from any resource. Switch
 		// to Logs and forward an OpenForFilterMsg so the screen
@@ -885,6 +1004,9 @@ func screenFromName(name string) (Screen, bool) {
 		// "no user selected" toast fires).
 		"edit", "e":
 		return ScreenUserEdit, true
+	case "group-edit", "group_edit", "groupedit",
+		"edit-group", "edit_group", "editgroup":
+		return ScreenGroupEdit, true
 	}
 	return 0, false
 }
@@ -1089,13 +1211,15 @@ func (m Model) composeBody() string {
 		// "are you sure?" prompts.
 		return m.composeModalOverDimmedBody(m.renderQuitConfirmModal(activeTokens()))
 	}
-	if m.active == ScreenUserEdit {
-		// REQ-W01 v2 redesign (`_workspace/edit-form-users/redesign/
-		// 03_tui_design_v2.md`, D-W17/D-W18) — render SCR-012 as a
-		// centered modal over a dimmed backdrop of the previous
-		// screen, replacing the v1.3 full-screen take-over. Width
-		// fixes at 74 cells with a clamp for ≤80-col terminals.
-		if edit, ok := m.screens[ScreenUserEdit].(users.EditModel); ok {
+	// v2 modal pattern — any active screen that implements
+	// ModalRenderer renders as a centered modal over a dimmed
+	// backdrop of the previous screen. Currently consumed by every
+	// edit form (Users, Groups, Rules, Policies); future write
+	// surfaces opt in by implementing the same interface so the
+	// modal routing scales without per-resource composeBody
+	// branches.
+	if child, ok := m.screens[m.active]; ok {
+		if mr, ok := child.(ModalRenderer); ok {
 			width := 74
 			if capW := clampWidth(m.width) - 8; capW > 0 && capW < width {
 				width = capW
@@ -1104,7 +1228,7 @@ func (m Model) composeBody() string {
 				width = 60
 			}
 			bodyBudget := clampBodyLines(m.height) - 4
-			modal := edit.RenderModal(activeTokens(), width, bodyBudget)
+			modal := mr.RenderModal(activeTokens(), width, bodyBudget)
 			return m.composeModalOverScreenDimmed(modal, m.previousScreenForBackdrop())
 		}
 	}
@@ -1596,6 +1720,21 @@ func (m Model) escIsCritical() bool {
 // EscapeBlocksPop runs BEFORE pop and short-circuits it entirely.
 type escapeBlocksPopStater interface {
 	EscapeBlocksPop() bool
+}
+
+// ModalRenderer is implemented by screens that render as a centered
+// modal over a dimmed backdrop instead of as a full-screen body. The
+// App Shell's composeBody routes through this interface — any screen
+// that implements RenderModal automatically opts into the v2 popup
+// pattern, no per-resource composeBody branches required.
+//
+// width is the modal's outer cell count (already clamped to the
+// chrome's content rectangle); bodyBudget is the max body line count
+// before the chrome footer takes over. The implementation returns
+// the full MountModal string (rounded border + title + body +
+// footer).
+type ModalRenderer interface {
+	RenderModal(tk shared.Tokens, width, bodyBudget int) string
 }
 
 // visualActiveStater is implemented by detail surfaces that own a
@@ -2211,9 +2350,94 @@ func (m Model) buildScreen(s Screen) (tea.Model, tea.Cmd) {
 			Height: m.height,
 		})
 		return mdl, mdl.Init()
+	case ScreenGroupEdit:
+		// Groups profile edit — same lifecycle contract as
+		// ScreenUserEdit. Type guard happens upstream (list / detail
+		// only emits OpenGroupEditMsg for OKTA_GROUP).
+		svc := m.groupEditService()
+		if svc == nil {
+			return nil, nil
+		}
+		mdl := groups.NewEditModel(groups.EditDeps{
+			Svc:     svc,
+			GroupID: m.groupEditTargetID,
+			Clock:   m.deps.Clock,
+			Logger:  m.deps.Logger,
+			Width:   m.width,
+			Height:  m.height,
+		})
+		return mdl, mdl.Init()
+	case ScreenRuleEdit:
+		// Group rule edit — Status guard (INACTIVE / INVALID) happens
+		// upstream at the list / detail key handler.
+		svc := m.ruleEditService()
+		if svc == nil {
+			return nil, nil
+		}
+		mdl := rules.NewEditModel(rules.EditDeps{
+			Svc:    svc,
+			RuleID: m.ruleEditTargetID,
+			Clock:  m.deps.Clock,
+			Logger: m.deps.Logger,
+			Width:  m.width,
+			Height: m.height,
+		})
+		return mdl, mdl.Init()
+	case ScreenPolicyEdit:
+		// Policy edit — metadata only (no per-rule editing in v0.2).
+		svc := m.policyEditService()
+		if svc == nil {
+			return nil, nil
+		}
+		mdl := policies.NewEditModel(policies.EditDeps{
+			Svc:      svc,
+			PolicyID: m.policyEditTargetID,
+			Clock:    m.deps.Clock,
+			Logger:   m.deps.Logger,
+			Width:    m.width,
+			Height:   m.height,
+		})
+		return mdl, mdl.Init()
 	}
 	// Detail views are populated by drill-down handlers; not auto-built.
 	return nil, nil
+}
+
+// groupEditService mirrors userEditService — prefer the pre-built
+// Bundle, fall back to a port-only constructor for tests.
+func (m Model) groupEditService() *service.GroupsService {
+	if m.deps.Services != nil && m.deps.Services.Groups != nil {
+		return m.deps.Services.Groups
+	}
+	if m.deps.GroupsPort == nil {
+		return nil
+	}
+	return service.NewGroupsService(m.deps.GroupsPort, m.deps.GroupRulesPort,
+		service.WithClock(m.deps.Clock), service.WithLogger(m.deps.Logger))
+}
+
+// ruleEditService mirrors groupEditService for the rule edit form.
+func (m Model) ruleEditService() *service.GroupRulesService {
+	if m.deps.Services != nil && m.deps.Services.Rules != nil {
+		return m.deps.Services.Rules
+	}
+	if m.deps.GroupRulesPort == nil {
+		return nil
+	}
+	return service.NewGroupRulesService(m.deps.GroupRulesPort, m.deps.GroupsPort,
+		service.WithClock(m.deps.Clock), service.WithLogger(m.deps.Logger))
+}
+
+// policyEditService mirrors ruleEditService for the Policy edit form.
+func (m Model) policyEditService() *service.PoliciesService {
+	if m.deps.Services != nil && m.deps.Services.Policies != nil {
+		return m.deps.Services.Policies
+	}
+	if m.deps.PoliciesPort == nil {
+		return nil
+	}
+	return service.NewPoliciesService(m.deps.PoliciesPort,
+		service.WithClock(m.deps.Clock), service.WithLogger(m.deps.Logger))
 }
 
 // userEditService returns the UsersService the EditModel saves through.

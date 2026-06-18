@@ -98,6 +98,9 @@ func (p *seededGroupsPort) AppCount(_ context.Context, _ string) (int, error) {
 func (p *seededGroupsPort) ListApps(_ context.Context, _ string) ([]domain.App, error) {
 	return nil, nil
 }
+func (p *seededGroupsPort) UpdateProfile(_ context.Context, _ string, _ domain.GroupProfileUpdate) (domain.Group, error) {
+	return domain.Group{}, nil
+}
 
 // --- Apps --------------------------------------------------------------
 

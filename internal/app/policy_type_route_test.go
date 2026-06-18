@@ -32,6 +32,9 @@ func (p *ptPoliciesPort) Get(_ context.Context, _ string) (domain.Policy, error)
 func (p *ptPoliciesPort) Rules(_ context.Context, _ string) ([]domain.PolicyRule, error) {
 	return nil, nil
 }
+func (p *ptPoliciesPort) UpdatePolicy(_ context.Context, _ string, _ domain.PolicyUpdate) (domain.Policy, error) {
+	return domain.Policy{}, nil
+}
 
 type ptPolicyIter struct{ rem []domain.Policy }
 

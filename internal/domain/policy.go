@@ -52,6 +52,20 @@ type Policy struct {
 	Raw json.RawMessage
 }
 
+// PolicyUpdate carries the editable Policy fields. Okta's PUT
+// /api/v1/policies/{id} is strict-replace — the screen rebuilds
+// this struct from the loaded snapshot + the form's dirty diff so
+// unchanged fields aren't dropped. System policies (Status,
+// Priority restrictions vary by type) need PM judgement; this
+// scope: name + description + status + priority. Edits to the
+// underlying rule configuration are deferred.
+type PolicyUpdate struct {
+	Name        string
+	Description string
+	Priority    int
+	Status      PolicyStatus
+}
+
 // PolicyRule is a rule inside a policy (priority-ordered).
 type PolicyRule struct {
 	ID          string

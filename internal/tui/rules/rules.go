@@ -312,6 +312,18 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.failedAt[msg.TargetID] = m.now()
 		return m, shared.ScheduleHighlightTickCmd(rulesHighlightTickMsg{})
+	case shared.RuleUpdatedMsg:
+		// Post-edit cache patch.
+		for i := range m.rules {
+			if m.rules[i].ID == msg.Rule.ID {
+				m.rules[i] = msg.Rule
+				break
+			}
+		}
+		if m.opened && m.detail.ID == msg.Rule.ID {
+			m.detail = msg.Rule
+		}
+		return m, nil
 	case groupNamesLoadedMsg:
 		if m.groupNames == nil {
 			m.groupNames = map[string]string{}
@@ -486,6 +498,14 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 				m.detailCursor = shared.BodyCursor{}
+			case "e":
+				// Rule edit — same guard as the list `e` handler.
+				if m.detail.Status == domain.GroupRuleStatusActive {
+					return m, toastCmd("deactivate the rule before editing")
+				}
+				if m.detail.ID != "" {
+					return m, OpenRuleEditCmd(m.detail.ID)
+				}
 			}
 			return m, nil
 		}
@@ -602,6 +622,19 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detail = *sel
 			m.opened = true
 			return m, nil
+		case "e":
+			// Rule edit — INACTIVE / INVALID only. ACTIVE rules have
+			// to be deactivated first (Okta refuses the PUT with 400);
+			// surface a toast so the operator knows to flip the
+			// status first.
+			sel := m.selected()
+			if sel == nil {
+				return m, nil
+			}
+			if sel.Status == domain.GroupRuleStatusActive {
+				return m, toastCmd("deactivate the rule before editing")
+			}
+			return m, OpenRuleEditCmd(sel.ID)
 		}
 	}
 	if msg.Type == tea.KeyEnter {
@@ -1361,6 +1394,14 @@ func openGroupDetailCmd(id string) tea.Cmd {
 // filter expression (#F2 / #F4 v0.2.5).
 func openLogsForCmd(filter string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenLogsMsg{Filter: filter} }
+}
+
+// toastCmd emits an info-level transient toast (e.g., "deactivate
+// the rule before editing").
+func toastCmd(text string) tea.Cmd {
+	return func() tea.Msg {
+		return shared.ToastMsg{Level: shared.ToastInfo, Text: text}
+	}
 }
 
 var (

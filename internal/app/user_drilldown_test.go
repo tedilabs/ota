@@ -98,6 +98,9 @@ func (p *drilldownGroupsPort) AppCount(_ context.Context, _ string) (int, error)
 func (p *drilldownGroupsPort) ListApps(_ context.Context, _ string) ([]domain.App, error) {
 	return nil, nil
 }
+func (p *drilldownGroupsPort) UpdateProfile(_ context.Context, _ string, _ domain.GroupProfileUpdate) (domain.Group, error) {
+	return domain.Group{}, nil
+}
 
 type emptyGroupsIter struct{}
 

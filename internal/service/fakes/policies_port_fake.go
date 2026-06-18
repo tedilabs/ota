@@ -11,9 +11,10 @@ import (
 type PoliciesPortFake struct {
 	t *testing.T
 
-	ListFunc  func(ctx context.Context, q domain.PoliciesQuery) (domain.Iterator[domain.Policy], error)
-	GetFunc   func(ctx context.Context, id string) (domain.Policy, error)
-	RulesFunc func(ctx context.Context, policyID string) ([]domain.PolicyRule, error)
+	ListFunc         func(ctx context.Context, q domain.PoliciesQuery) (domain.Iterator[domain.Policy], error)
+	GetFunc          func(ctx context.Context, id string) (domain.Policy, error)
+	RulesFunc        func(ctx context.Context, policyID string) ([]domain.PolicyRule, error)
+	UpdatePolicyFunc func(ctx context.Context, policyID string, update domain.PolicyUpdate) (domain.Policy, error)
 }
 
 func NewPoliciesPort(t *testing.T) *PoliciesPortFake {
@@ -43,4 +44,18 @@ func (f *PoliciesPortFake) Rules(ctx context.Context, policyID string) ([]domain
 		f.t.Fatalf("PoliciesPortFake.Rules called but RulesFunc is not set")
 	}
 	return f.RulesFunc(ctx, policyID)
+}
+
+func (f *PoliciesPortFake) UpdatePolicy(ctx context.Context, policyID string, update domain.PolicyUpdate) (domain.Policy, error) {
+	f.t.Helper()
+	if f.UpdatePolicyFunc == nil {
+		return domain.Policy{
+			ID:          policyID,
+			Name:        update.Name,
+			Description: update.Description,
+			Priority:    update.Priority,
+			Status:      update.Status,
+		}, nil
+	}
+	return f.UpdatePolicyFunc(ctx, policyID, update)
 }

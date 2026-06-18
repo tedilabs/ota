@@ -357,6 +357,20 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.failedAt[msg.TargetID] = m.now()
 		return m, shared.ScheduleHighlightTickCmd(groupsHighlightTickMsg{})
+	case shared.GroupUpdatedMsg:
+		// Post-edit cache patch — replace the row in m.groups with
+		// the server-echoed snapshot so the list reflects the change
+		// without a refetch. Detail surface gets the same patch.
+		for i := range m.groups {
+			if m.groups[i].ID == msg.Group.ID {
+				m.groups[i] = msg.Group
+				break
+			}
+		}
+		if m.opened && m.detail.ID == msg.Group.ID {
+			m.detail = msg.Group
+		}
+		return m, nil
 	case groupMembersLoadedMsg:
 		// Only accept if it matches the currently-open group — a stale
 		// fetch from a previously-opened detail must not overwrite.
@@ -614,6 +628,16 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detailRawReturn = GroupDetailTab(newReturn)
 				m.detailCursor = shared.BodyCursor{}
 			}
+			if runes == "e" {
+				// Profile edit form — OKTA_GROUP only (same guard as
+				// the list-row `e` handler).
+				if m.detail.Type != domain.GroupTypeOkta {
+					return m, toastCmd("only OKTA_GROUP supports edit; " + string(m.detail.Type) + " is upstream-managed")
+				}
+				if m.detail.ID != "" {
+					return m, OpenGroupEditCmd(m.detail.ID)
+				}
+			}
 			return m, nil
 		}
 		return m, nil
@@ -730,6 +754,19 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.opened = true
 			m.resetExtras()
 			return m, m.fetchExtrasOnOpen()
+		case "e":
+			// Profile edit form — OKTA_GROUP only. APP_GROUP and
+			// BUILT_IN are upstream-managed; surface a toast so the
+			// operator understands why nothing happened instead of
+			// silently no-op.
+			sel := m.selected()
+			if sel == nil {
+				return m, nil
+			}
+			if sel.Type != domain.GroupTypeOkta {
+				return m, toastCmd("only OKTA_GROUP supports edit; " + string(sel.Type) + " is upstream-managed")
+			}
+			return m, OpenGroupEditCmd(sel.ID)
 		}
 	}
 	if msg.Type == tea.KeyEnter {
@@ -1657,6 +1694,14 @@ func openUserDetailCmd(id string) tea.Cmd {
 
 func openAppDetailCmd(id string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenAppDetailMsg{ID: id} }
+}
+
+// toastCmd builds an info-level shared.ToastMsg the App Shell
+// renders in the chrome's right-anchored toast slot.
+func toastCmd(text string) tea.Cmd {
+	return func() tea.Msg {
+		return shared.ToastMsg{Level: shared.ToastInfo, Text: text}
+	}
 }
 
 // openLogsForCmd asks the App Shell to open Logs scoped to a server

@@ -497,12 +497,14 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "groups":
 		return []helpEntry{
 			{"Enter / d", "open detail (all attributes)"},
+			{"e", "edit profile (OKTA_GROUP only)"},
 			{"l", "open Logs scoped to this group"},
 			{"Shift+N", "sort by NAME"},
 		}
 	case "grouprules", "rules":
 		return []helpEntry{
 			{"Enter / d", "open detail (all attributes)"},
+			{"e", "edit rule (INACTIVE / INVALID only)"},
 			{"l", "open Logs scoped to this rule"},
 			{"Shift+S", "sort by STATUS (INVALID first)"},
 			{"Shift+N", "sort by NAME"},
@@ -510,6 +512,7 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "policies":
 		return []helpEntry{
 			{"Enter", "pick type / open detail"},
+			{"e", "edit policy metadata (name / priority / status)"},
 			{"Esc", "back · close detail · close picker"},
 			{"r", "toggle rich ↔ raw JSON in detail"},
 			{":okta-sign-on", "jump to Okta Sign-On policies"},

@@ -58,6 +58,39 @@ type UserUpdatedMsg struct{ User domain.User }
 // single "back" gesture rather than two distinct decisions.
 type UserEditDiscardedMsg struct{}
 
+// OpenGroupEditMsg is the entry-point message for the Groups edit
+// form (parallel to OpenUserEditMsg). The App Shell pushes
+// ScreenGroupEdit onto the nav stack and forwards the group ID to
+// the new EditModel. Only OKTA_GROUP types support edit — the
+// list / detail key handler guards on Type before emitting this.
+type OpenGroupEditMsg struct{ ID string }
+
+// GroupUpdatedMsg broadcasts the post-save Group snapshot so the
+// Groups list / detail patches its cache with the last authoritative
+// profile without an extra GET.
+type GroupUpdatedMsg struct{ Group domain.Group }
+
+// GroupEditDiscardedMsg parallels UserEditDiscardedMsg — emitted on
+// "Discard and exit", consumed by the App Shell to popNav the
+// ScreenGroupEdit frame.
+type GroupEditDiscardedMsg struct{}
+
+// OpenRuleEditMsg / RuleUpdatedMsg / RuleEditDiscardedMsg are the
+// Group Rule edit-form counterparts of the Users / Groups messages.
+// The list/detail key handler emits OpenRuleEditMsg after a Status
+// check (only INACTIVE / INVALID rules accept edits).
+type OpenRuleEditMsg struct{ ID string }
+type RuleUpdatedMsg struct{ Rule domain.GroupRule }
+type RuleEditDiscardedMsg struct{}
+
+// OpenPolicyEditMsg / PolicyUpdatedMsg / PolicyEditDiscardedMsg are
+// the Policy edit-form counterparts. System policies refuse status /
+// priority changes — the upstream 400 surfaces as an inline error;
+// no client-side guard.
+type OpenPolicyEditMsg struct{ ID string }
+type PolicyUpdatedMsg struct{ Policy domain.Policy }
+type PolicyEditDiscardedMsg struct{}
+
 // OpenStatusPickerMsg is the entry-point message for the user status
 // picker. Emitted by the Users list / detail when the operator
 // presses `s` with a user selected. The App Shell uses the embedded

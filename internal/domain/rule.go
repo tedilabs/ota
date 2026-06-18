@@ -27,3 +27,14 @@ type GroupRule struct {
 	Created        time.Time
 	LastUpdated    time.Time
 }
+
+// GroupRuleUpdate carries the editable rule fields. Okta requires
+// the rule to be INACTIVE / INVALID before the PUT — the screen
+// guards on Status before opening the form. Strict-replace
+// semantics: every field must be supplied (the screen reads
+// unchanged fields from the loaded snapshot).
+type GroupRuleUpdate struct {
+	Name           string
+	Expression     string
+	TargetGroupIDs []string
+}
