@@ -412,6 +412,52 @@ func (f Form) Diff() map[string]string {
 	return out
 }
 
+// Specs returns the canonical FieldSpec catalog (read-only). Used by
+// the v2 modal renderer to iterate fields without reaching into
+// internal state.
+func (f Form) Specs() []FieldSpec {
+	out := make([]FieldSpec, len(f.specs))
+	copy(out, f.specs)
+	return out
+}
+
+// Current returns a snapshot of the live (not snapshot) field values
+// keyed by FieldSpec.Key. Used by the v2 modal renderer; the caller
+// must not mutate.
+func (f Form) Current() map[string]string {
+	out := make(map[string]string, len(f.current))
+	for k, v := range f.current {
+		out[k] = v
+	}
+	return out
+}
+
+// InlineErrors returns a copy of the per-field inline error map
+// (server / client errors that mapped to a FieldSpec.Key). Empty when
+// no errors are pending.
+func (f Form) InlineErrors() map[string]string {
+	out := make(map[string]string, len(f.inlineErr))
+	for k, v := range f.inlineErr {
+		out[k] = v
+	}
+	return out
+}
+
+// OtherErrors returns server errors that did not match any FieldSpec
+// key — surfaced under the field block in the modal body.
+func (f Form) OtherErrors() []string {
+	if len(f.otherErrs) == 0 {
+		return nil
+	}
+	out := make([]string, len(f.otherErrs))
+	copy(out, f.otherErrs)
+	return out
+}
+
+// PIIAllUnmasked reports the Alt+m global unmask toggle. The v2 modal
+// renderer reads this to decide whether to mask non-focused PII rows.
+func (f Form) PIIAllUnmasked() bool { return f.piiAllUnmasked }
+
 // SetSaving toggles the read-only saving state — input disabled,
 // "Saving" rendered in the footer.
 func (f Form) SetSaving(on bool) Form {

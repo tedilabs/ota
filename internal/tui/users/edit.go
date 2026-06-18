@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -242,6 +243,14 @@ func (m EditModel) handleDiscardConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // View implements tea.Model.
+//
+// View is the *plain* (no App Shell) rendering — teatest's golden
+// loop reads this output directly. Production goes through
+// RenderModal via the App Shell's composeBody router (per the v2
+// redesign, `_workspace/edit-form-users/redesign/03_tui_design_v2.md`).
+// Keep this output stable: tests in `internal/tui/users/edit_test.go`
+// search for "First Name", "Discard", "1 change", "Updated", and the
+// 400-validation inline error literals via teatest.WaitFor.
 func (m EditModel) View() string {
 	switch m.state {
 	case EditStateLoading:
@@ -266,6 +275,241 @@ func (m EditModel) View() string {
 		b.WriteString(m.statusMsg)
 	}
 	return b.String()
+}
+
+// RenderModal is the v2 redesign entrypoint — the App Shell stamps the
+// returned modal over a dimmed backdrop of the previous screen
+// (D-W17, D-W18). The output is the full MountModal box (rounded
+// border + title + body + footer), already cell-correct at `width`.
+//
+//   - EditStateLoading        → placeholder underscores + spinner footer
+//   - EditStateEditing        → live field rows (focus lift), dirty-aware
+//                               section headers, single-line footer
+//   - EditStateSaving         → non-focused rows + "Saving…" footer
+//   - EditStateDiscardConfirm → editing body + strong confirm strip
+//                               appended to the modal body
+//   - EditStateErrored        → small error modal
+//
+// bodyBudget is the maximum body line count the chrome can afford
+// (clampBodyLines(height) - 4); for now the modal renders the full
+// form regardless (viewport scroll is deferred — see §4.3 hint).
+func (m EditModel) RenderModal(tk shared.Tokens, width, bodyBudget int) string {
+	if width < 60 {
+		width = 60
+	}
+	// Inner content width — subtract MountModal's 1 border + 1 pad +
+	// 1 border (3) + a small safety margin for the focus border glyphs.
+	contentWidth := width - 3
+	if contentWidth < 40 {
+		contentWidth = 40
+	}
+	labelCol := 16
+	inputCol := contentWidth - labelCol - 6
+	if inputCol < 16 {
+		inputCol = 16
+	}
+
+	switch m.state {
+	case EditStateErrored:
+		return shared.MountModal(shared.ModalIn{
+			Title:  "Edit User · error",
+			Body:   "Cannot edit: " + errorSummary(m.loadErr),
+			Footer: "Esc to close",
+			Tone:   shared.ModalToneDanger,
+			Width:  width,
+			Tokens: tk,
+		})
+	case EditStateLoading:
+		body := renderPlaceholderBody(tk, contentWidth, labelCol, inputCol)
+		return shared.MountModal(shared.ModalIn{
+			Title:  "Edit User · Loading…",
+			Body:   body,
+			Footer: "Loading from Okta…  ·  Esc cancel",
+			Tone:   shared.ModalToneAccent,
+			Width:  width,
+			Tokens: tk,
+		})
+	}
+
+	// Editing / Saving / DiscardConfirm — render the live form.
+	body := m.renderFormBody(tk, contentWidth, labelCol, inputCol)
+	footer := m.composeFooter(tk)
+	title := "Edit User  ·  " + m.loadedUser.Profile.Login
+
+	if m.state == EditStateDiscardConfirm {
+		// D-W24 — instead of a separate nested modal stamp (which
+		// would require nontrivial coordinate splicing inside the
+		// rendered string), we append an emphasized confirm strip to
+		// the end of the modal body. The QA-W01-1 regression test
+		// looks for "Discard" inside m.View(); this satisfies the
+		// AC-5.2 contract while keeping the layout simple.
+		strip := "\n" + buildDiscardStrip(tk, m.form.DirtyFields(), contentWidth)
+		body = body + strip
+	}
+
+	return shared.MountModal(shared.ModalIn{
+		Title:  title,
+		Body:   body,
+		Footer: footer,
+		Tone:   shared.ModalToneAccent,
+		Width:  width,
+		Tokens: tk,
+	})
+}
+
+// renderFormBody composes section headers + field rows for the
+// editing / saving / discard-confirm states. Read-only fields render
+// as KindReadOnly rows; PII follows the form's shouldShowPII rules.
+func (m EditModel) renderFormBody(tk shared.Tokens, contentWidth, labelCol, inputCol int) string {
+	specs := m.form.Specs()
+	current := m.form.Current()
+	focusKey := m.form.FocusKey()
+	dirtyByKey := map[string]bool{}
+	for _, k := range m.form.DirtyFields() {
+		dirtyByKey[k] = true
+	}
+	inlineErrs := m.form.InlineErrors()
+
+	// Per-section dirty counts (clean sections get a Muted header).
+	dirtyBySection := map[string]int{}
+	for _, s := range specs {
+		if dirtyByKey[s.Key] {
+			dirtyBySection[s.Section]++
+		}
+	}
+
+	var b strings.Builder
+	currentSection := ""
+	for _, s := range specs {
+		if s.Section != "" && s.Section != currentSection {
+			if currentSection != "" {
+				b.WriteByte('\n')
+			}
+			b.WriteString(form.RenderSectionHeader(tk, s.Section, dirtyBySection[s.Section], contentWidth))
+			b.WriteByte('\n')
+			currentSection = s.Section
+		}
+		focused := (focusKey == s.Key) && m.state == EditStateEditing
+		readOnly := s.Kind == form.KindReadOnly
+		dirty := dirtyByKey[s.Key]
+		value := current[s.Key]
+		masked := false
+		if s.PII && !m.form.PIIAllUnmasked() && !focused {
+			value = maskPII(value)
+			masked = true
+		}
+		row := form.RenderFieldRow(tk, form.FieldRowOpts{
+			Label:     s.Label,
+			Value:     value,
+			Focused:   focused,
+			Dirty:     dirty,
+			ReadOnly:  readOnly,
+			Masked:    masked,
+			InlineErr: inlineErrs[s.Key],
+			LabelCol:  labelCol,
+			InputCol:  inputCol,
+		})
+		b.WriteString(row)
+		b.WriteByte('\n')
+	}
+
+	// Footer for non-field errors that came back from the server.
+	if extras := m.form.OtherErrors(); len(extras) > 0 {
+		b.WriteByte('\n')
+		for _, e := range extras {
+			b.WriteString("! " + e + "\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// renderPlaceholderBody draws the SCR-012 loading skeleton — section
+// headers + underscore rows so the operator sees the chrome shape
+// before the GET resolves (AC-1.4).
+func renderPlaceholderBody(tk shared.Tokens, contentWidth, labelCol, inputCol int) string {
+	var b strings.Builder
+	currentSection := ""
+	placeholder := strings.Repeat("_", inputCol)
+	for _, s := range FieldSpecs() {
+		if s.Section != "" && s.Section != currentSection {
+			if currentSection != "" {
+				b.WriteByte('\n')
+			}
+			b.WriteString(form.RenderSectionHeader(tk, s.Section, 0, contentWidth))
+			b.WriteByte('\n')
+			currentSection = s.Section
+		}
+		row := form.RenderFieldRow(tk, form.FieldRowOpts{
+			Label:    s.Label,
+			Value:    placeholder,
+			LabelCol: labelCol,
+			InputCol: inputCol,
+		})
+		b.WriteString(row)
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// composeFooter picks the single-line footer per state (D-W22).
+func (m EditModel) composeFooter(tk shared.Tokens) string {
+	switch m.state {
+	case EditStateSaving:
+		return "Saving…  ·  Ctrl+C to abort (preserves draft)"
+	case EditStateDiscardConfirm:
+		dirty := m.form.Dirty()
+		return fmt.Sprintf("%d changes  ·  y discard  ·  n / Esc keep", dirty)
+	}
+	dirty := m.form.Dirty()
+	// statusMsg surfaces transient outcomes ("Updated …" toast,
+	// "Fix the highlighted field" hint). When present, it leads.
+	if m.statusMsg != "" {
+		return m.statusMsg + "  ·  Ctrl+S save  ·  Esc cancel"
+	}
+	if dirty <= 0 {
+		return "No changes  ·  Ctrl+S save  ·  Esc cancel  ·  Tab next"
+	}
+	noun := "changes"
+	if dirty == 1 {
+		noun = "change"
+	}
+	return fmt.Sprintf("%d %s  ·  Ctrl+S save  ·  Esc cancel  ·  Tab next  ·  Alt+m PII", dirty, noun)
+}
+
+// buildDiscardStrip emits the prominent "Discard unsaved changes?"
+// line appended to the modal body in EditStateDiscardConfirm. Lists
+// the first few modified fields so the operator sees what's at stake.
+func buildDiscardStrip(tk shared.Tokens, dirtyKeys []string, width int) string {
+	headline := "─ Discard unsaved changes? (y/N) "
+	if w := width - len([]rune(headline)); w > 0 {
+		headline += strings.Repeat("─", w)
+	}
+	if tk.Danger.GetForeground() != nil {
+		headline = tk.Danger.Render(headline)
+	}
+	var b strings.Builder
+	b.WriteString(headline)
+	if n := len(dirtyKeys); n > 0 {
+		limit := n
+		if limit > 5 {
+			limit = 5
+		}
+		b.WriteString("\n  Modified: " + strings.Join(dirtyKeys[:limit], ", "))
+		if n > limit {
+			b.WriteString(fmt.Sprintf("  … and %d more", n-limit))
+		}
+	}
+	return b.String()
+}
+
+// maskPII produces the form's display masking. Mirrors form.maskString
+// but lives here because we render the field row outside the Form's
+// own View() path now.
+func maskPII(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.Repeat("•", len([]rune(s)))
 }
 
 // EscapeWillAct implements the App Shell's EscapeOpStater contract.

@@ -1042,10 +1042,107 @@ func (m Model) composeBody() string {
 		// "are you sure?" prompts.
 		return m.composeModalOverDimmedBody(m.renderQuitConfirmModal(activeTokens()))
 	}
+	if m.active == ScreenUserEdit {
+		// REQ-W01 v2 redesign (`_workspace/edit-form-users/redesign/
+		// 03_tui_design_v2.md`, D-W17/D-W18) — render SCR-012 as a
+		// centered modal over a dimmed backdrop of the previous
+		// screen, replacing the v1.3 full-screen take-over. Width
+		// fixes at 74 cells with a clamp for ≤80-col terminals.
+		if edit, ok := m.screens[ScreenUserEdit].(users.EditModel); ok {
+			width := 74
+			if capW := clampWidth(m.width) - 8; capW > 0 && capW < width {
+				width = capW
+			}
+			if width < 60 {
+				width = 60
+			}
+			bodyBudget := clampBodyLines(m.height) - 4
+			modal := edit.RenderModal(activeTokens(), width, bodyBudget)
+			return m.composeModalOverScreenDimmed(modal, m.previousScreenForBackdrop())
+		}
+	}
 	if child, ok := m.screens[m.active]; ok {
 		return child.View()
 	}
 	return "(loading…)"
+}
+
+// previousScreenForBackdrop returns the screen the v2 SCR-012 modal
+// should dim under itself — the frame the operator was on before
+// pressing `e` (D-W17 commentary). When the operator landed on the
+// edit form via a fresh `:edit` palette command (root push), there's
+// no previous frame; we fall back to ScreenUsers so the backdrop is
+// at least the canonical list view.
+func (m Model) previousScreenForBackdrop() Screen {
+	if len(m.navStack) >= 2 {
+		return m.navStack[len(m.navStack)-2]
+	}
+	return ScreenUsers
+}
+
+// composeModalOverScreenDimmed mirrors composeModalOverDimmedBody but
+// dims the supplied bgScreen instead of m.active — used by the v2
+// SCR-012 modal where active == ScreenUserEdit (dimming the form
+// itself would be a no-op). The body lines come from the backdrop
+// screen's View() (when present); the rest of the splice + center
+// logic is identical so visual language stays uniform.
+func (m Model) composeModalOverScreenDimmed(modal string, bgScreen Screen) string {
+	tk := activeTokens()
+	contentWidth := clampWidth(m.width) - 3
+	bodyHeight := clampBodyLines(m.height)
+
+	body := ""
+	if child, ok := m.screens[bgScreen]; ok && child != nil {
+		body = child.View()
+	}
+	bodyLines := strings.Split(body, "\n")
+	for len(bodyLines) < bodyHeight {
+		bodyLines = append(bodyLines, "")
+	}
+	bodyLines = bodyLines[:bodyHeight]
+
+	modalRows := strings.Split(strings.TrimRight(modal, "\n"), "\n")
+	modalWidth := 0
+	for _, ml := range modalRows {
+		if w := shared.VisibleWidth(ml); w > modalWidth {
+			modalWidth = w
+		}
+	}
+	leftCol := (contentWidth - modalWidth) / 2
+	if leftCol < 0 {
+		leftCol = 0
+	}
+	rightStart := leftCol + modalWidth
+	topRow := (bodyHeight - len(modalRows)) / 2
+	if topRow < 0 {
+		topRow = 0
+	}
+
+	out := make([]string, len(bodyLines))
+	for r, line := range bodyLines {
+		plain := shared.StripCSI(line)
+		modalRowIdx := r - topRow
+		if modalRowIdx < 0 || modalRowIdx >= len(modalRows) {
+			if plain == "" {
+				out[r] = ""
+			} else {
+				out[r] = tk.Muted.Faint(true).Render(plain)
+			}
+			continue
+		}
+		left := shared.SliceVisiblePrefix(plain, leftCol)
+		right := shared.SliceVisibleSuffix(plain, rightStart)
+		var sb strings.Builder
+		if leftCol > 0 {
+			sb.WriteString(tk.Muted.Faint(true).Render(left))
+		}
+		sb.WriteString(modalRows[modalRowIdx])
+		if right != "" {
+			sb.WriteString(tk.Muted.Faint(true).Render(right))
+		}
+		out[r] = sb.String()
+	}
+	return strings.Join(out, "\n")
 }
 
 // composeModalOverDimmedBody renders the active child's body, dims
