@@ -38,6 +38,13 @@ type FieldRowOpts struct {
 	InlineErr string
 	LabelCol  int
 	InputCol  int
+	// CursorPos is the byte position the caret should stamp at within
+	// Value. Used only when Focused && !ReadOnly. Negative values
+	// disable cursor rendering (matches Form.CursorPos() == -1).
+	// A position equal to len(Value) renders the caret as an
+	// inserted-after-end block so the operator sees where the next
+	// keystroke lands.
+	CursorPos int
 }
 
 // RenderFieldRow lays out a single field line per D-W20.
@@ -101,6 +108,11 @@ func RenderFieldRow(tk shared.Tokens, opts FieldRowOpts) string {
 	valuePadded := padRight(value, opts.InputCol)
 	var valueStyled string
 	switch {
+	case opts.Focused && !opts.ReadOnly && opts.CursorPos >= 0:
+		// Stamp a reverse-video caret onto the focused row so the
+		// operator can track edit position. Works in NO_COLOR /
+		// monochrome (reverse is an SGR attribute, not a color).
+		valueStyled = stampCursor(tk, valuePadded, opts.CursorPos, opts.Dirty)
 	case opts.Dirty:
 		valueStyled = styled(tk.Header.Bold(true), valuePadded)
 	case opts.ReadOnly:
@@ -172,4 +184,48 @@ func styled(s lipgloss.Style, body string) string {
 		return s.Render(body)
 	}
 	return body
+}
+
+// stampCursor splices a reverse-video caret onto padded at byte
+// position pos. The character at pos (or a synthetic space when pos
+// lands at the padded value's end-of-text) is rendered with
+// `lipgloss.NewStyle().Reverse(true)` so the operator can locate the
+// edit caret. Surrounding cells follow the field's normal styling
+// (Dirty → Header bold, otherwise FG).
+func stampCursor(tk shared.Tokens, padded string, pos int, dirty bool) string {
+	if pos < 0 {
+		pos = 0
+	}
+	runes := []rune(padded)
+	if pos > len(runes) {
+		pos = len(runes)
+	}
+	// `padded` was right-padded to InputCol, so cursor always has at
+	// least one cell to land on (the trailing space). Defensive:
+	// extend if pos lands beyond the padded length.
+	if pos >= len(runes) {
+		runes = append(runes, ' ')
+	}
+	left := string(runes[:pos])
+	caret := string(runes[pos])
+	right := string(runes[pos+1:])
+
+	base := tk.FG
+	if dirty {
+		base = tk.Header.Bold(true)
+	}
+	caretStyle := lipgloss.NewStyle().Reverse(true)
+	if base.GetForeground() != nil {
+		caretStyle = caretStyle.Foreground(base.GetForeground())
+	}
+
+	out := ""
+	if left != "" {
+		out += styled(base, left)
+	}
+	out += caretStyle.Render(caret)
+	if right != "" {
+		out += styled(base, right)
+	}
+	return out
 }

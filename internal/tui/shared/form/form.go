@@ -458,6 +458,19 @@ func (f Form) OtherErrors() []string {
 // renderer reads this to decide whether to mask non-focused PII rows.
 func (f Form) PIIAllUnmasked() bool { return f.piiAllUnmasked }
 
+// CursorPos returns the focused field's text-edit cursor as a byte
+// position into the field's current value. Returns -1 when no
+// editable field is focused (read-only or out-of-range) so the
+// renderer can skip cursor stamping for that row. Used by
+// RenderFieldRow to lift the caret onto the focused row.
+func (f Form) CursorPos() int {
+	st := f.focusedState()
+	if st == nil {
+		return -1
+	}
+	return st.cursor
+}
+
 // SetSaving toggles the read-only saving state — input disabled,
 // "Saving" rendered in the footer.
 func (f Form) SetSaving(on bool) Form {

@@ -398,6 +398,10 @@ func (m EditModel) renderFormBody(tk shared.Tokens, contentWidth, labelCol, inpu
 			value = maskPII(value)
 			masked = true
 		}
+		cursorPos := -1
+		if focused && !readOnly {
+			cursorPos = m.form.CursorPos()
+		}
 		row := form.RenderFieldRow(tk, form.FieldRowOpts{
 			Label:     s.Label,
 			Value:     value,
@@ -408,6 +412,7 @@ func (m EditModel) renderFormBody(tk shared.Tokens, contentWidth, labelCol, inpu
 			InlineErr: inlineErrs[s.Key],
 			LabelCol:  labelCol,
 			InputCol:  inputCol,
+			CursorPos: cursorPos,
 		})
 		b.WriteString(row)
 		b.WriteByte('\n')
