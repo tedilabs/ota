@@ -16,6 +16,7 @@ package form
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -96,16 +97,33 @@ func RenderFieldRow(tk shared.Tokens, opts FieldRowOpts) string {
 	// Value column.
 	value := opts.Value
 	trail := ""
+	// Reserve plain-text cell width for the trail so the (read-only)
+	// / (masked) markers fit inside the modal — otherwise the trail
+	// overflows the contentWidth and MountModal truncates the right
+	// edge silently. Plain markers measured separately from the
+	// styled trail so the budget reservation stays accurate even
+	// after lipgloss decoration.
+	trailPlain := ""
 	if opts.ReadOnly {
+		trailPlain = "  (read-only)"
 		trail = "  " + styled(tk.Muted, "(read-only)")
 	} else if opts.Masked {
+		trailPlain = "  (masked)"
 		trail = "  " + styled(tk.Muted, "(masked)")
 	}
 
 	// inputCol budget governs the *cell width* visible in the value
-	// box. We pad/truncate to InputCol so dirty + (read-only)/(masked)
-	// markers align across rows.
-	valuePadded := padRight(value, opts.InputCol)
+	// column. Subtract the trail's plain-text width so trail markers
+	// land inside the modal instead of being clipped at the right
+	// edge.
+	valueBudget := opts.InputCol
+	if w := visibleWidth(trailPlain); w > 0 {
+		valueBudget -= w
+		if valueBudget < 4 {
+			valueBudget = 4
+		}
+	}
+	valuePadded := padRight(value, valueBudget)
 	var valueStyled string
 	switch {
 	case opts.Focused && !opts.ReadOnly && opts.CursorPos >= 0:
@@ -192,23 +210,41 @@ func styled(s lipgloss.Style, body string) string {
 // `lipgloss.NewStyle().Reverse(true)` so the operator can locate the
 // edit caret. Surrounding cells follow the field's normal styling
 // (Dirty → Header bold, otherwise FG).
+//
+// `pos` is a BYTE offset (matching Form.CursorPos). Translating it to
+// a rune index keeps CJK / emoji input correctly aligned — slicing
+// `padded[:pos]` directly is safe because Form keeps the cursor at
+// a rune boundary, but the caret cell width measured in runes is
+// what the rest of the splice needs.
 func stampCursor(tk shared.Tokens, padded string, pos int, dirty bool) string {
 	if pos < 0 {
 		pos = 0
 	}
-	runes := []rune(padded)
-	if pos > len(runes) {
-		pos = len(runes)
+	// Clamp to the padded value's byte length, then walk left if pos
+	// landed in the middle of a multi-byte rune (defensive — Form
+	// shouldn't put it there but we don't trust callers).
+	if pos > len(padded) {
+		pos = len(padded)
 	}
-	// `padded` was right-padded to InputCol, so cursor always has at
-	// least one cell to land on (the trailing space). Defensive:
-	// extend if pos lands beyond the padded length.
-	if pos >= len(runes) {
-		runes = append(runes, ' ')
+	for pos > 0 && pos < len(padded) && !utf8.RuneStart(padded[pos]) {
+		pos--
 	}
-	left := string(runes[:pos])
-	caret := string(runes[pos])
-	right := string(runes[pos+1:])
+
+	left := padded[:pos]
+	// Caret cell: the rune starting at pos, or a synthetic space when
+	// the cursor sits at end-of-text (padded was right-padded to
+	// InputCol so there's always at least one trailing space to land
+	// on; the explicit append covers the empty-padded edge case).
+	var caret string
+	var caretBytes int
+	if pos < len(padded) {
+		r, n := utf8.DecodeRuneInString(padded[pos:])
+		caret = string(r)
+		caretBytes = n
+	} else {
+		caret = " "
+	}
+	right := padded[pos+caretBytes:]
 
 	base := tk.FG
 	if dirty {
@@ -219,13 +255,13 @@ func stampCursor(tk shared.Tokens, padded string, pos int, dirty bool) string {
 		caretStyle = caretStyle.Foreground(base.GetForeground())
 	}
 
-	out := ""
+	var out strings.Builder
 	if left != "" {
-		out += styled(base, left)
+		out.WriteString(styled(base, left))
 	}
-	out += caretStyle.Render(caret)
+	out.WriteString(caretStyle.Render(caret))
 	if right != "" {
-		out += styled(base, right)
+		out.WriteString(styled(base, right))
 	}
-	return out
+	return out.String()
 }

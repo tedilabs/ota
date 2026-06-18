@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tedilabs/ota/internal/clock"
 	"github.com/tedilabs/ota/internal/domain"
@@ -81,6 +82,12 @@ type EditModel struct {
 	// saveErr stores the failure from UpdateProfile — drives the
 	// post-save inline error / toast rendering.
 	saveErr error
+
+	// discardCursor selects which discard-confirm option is
+	// highlighted. 0 = "Discard and exit" (destructive), 1 = "Keep
+	// editing" (safe default). Defaults to 1 on entry so a stray
+	// Enter doesn't destroy work.
+	discardCursor int
 }
 
 // NewEditModel constructs an EditModel.
@@ -212,6 +219,9 @@ func (m EditModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state = EditStateDiscardConfirm
+		// Seed the cursor on the safe option so a stray Enter keeps
+		// the operator's draft intact (AC-5.2 / D-W4).
+		m.discardCursor = 1
 		return m, nil
 	}
 	// Forward to form for everything else (Tab / chars / etc.).
@@ -222,24 +232,55 @@ func (m EditModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m EditModel) handleDiscardConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Arrow-key picker: ← / → / h / l / Tab move the cursor between
+	// the two options; Enter applies the highlighted one. Esc is a
+	// shortcut for "keep editing" (the safe default — D-W4).
+	// y / Y / n / N stay as muscle-memory accelerators.
+	//
+	// On confirm-discard the model emits shared.UserEditDiscardedMsg
+	// — the App Shell handles it by popping the ScreenUserEdit frame
+	// (popNav). EditModel can't pop nav on its own; the message is
+	// the routed handoff.
 	switch msg.Type {
 	case tea.KeyEsc:
-		// Esc on confirm = "no, keep editing" (D-W4).
 		m.state = EditStateEditing
 		return m, nil
+	case tea.KeyLeft, tea.KeyShiftTab:
+		m.discardCursor = 0
+		return m, nil
+	case tea.KeyRight, tea.KeyTab:
+		m.discardCursor = 1
+		return m, nil
 	case tea.KeyEnter:
-		// Enter = confirm discard.
-		return m, func() tea.Msg { return form.DiscardRequestedMsg{Confirmed: true} }
+		if m.discardCursor == 0 {
+			return m, discardAndExitCmd()
+		}
+		m.state = EditStateEditing
+		return m, nil
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
+		case "h":
+			m.discardCursor = 0
+			return m, nil
+		case "l":
+			m.discardCursor = 1
+			return m, nil
 		case "y", "Y":
-			return m, func() tea.Msg { return form.DiscardRequestedMsg{Confirmed: true} }
+			return m, discardAndExitCmd()
 		case "n", "N":
 			m.state = EditStateEditing
 			return m, nil
 		}
 	}
 	return m, nil
+}
+
+// discardAndExitCmd builds the Cmd that emits
+// shared.UserEditDiscardedMsg. The App Shell picks it up and pops
+// the user-edit frame so the operator lands back on the previous
+// screen with their draft thrown away.
+func discardAndExitCmd() tea.Cmd {
+	return func() tea.Msg { return shared.UserEditDiscardedMsg{} }
 }
 
 // View implements tea.Model.
@@ -268,7 +309,12 @@ func (m EditModel) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.form.View())
 	if m.state == EditStateDiscardConfirm {
-		b.WriteString("\n\nDiscard unsaved changes? (y/N)")
+		b.WriteString("\n\nUnsaved changes — pick: ")
+		if m.discardCursor == 0 {
+			b.WriteString("[▸ Discard and exit]    Keep editing")
+		} else {
+			b.WriteString("Discard and exit    [▸ Keep editing]")
+		}
 	}
 	if m.statusMsg != "" {
 		b.WriteString("\n\n")
@@ -343,8 +389,9 @@ func (m EditModel) RenderModal(tk shared.Tokens, width, bodyBudget int) string {
 		// the end of the modal body. The QA-W01-1 regression test
 		// looks for "Discard" inside m.View(); this satisfies the
 		// AC-5.2 contract while keeping the layout simple.
-		strip := "\n" + buildDiscardStrip(tk, m.form.DirtyFields(), contentWidth)
+		strip := "\n" + buildDiscardStrip(tk, m.form.DirtyFields(), contentWidth, m.discardCursor)
 		body = body + strip
+		footer = "<←/→> select  ·  <Enter> apply  ·  <Esc> keep editing"
 	}
 
 	return shared.MountModal(shared.ModalIn{
@@ -481,16 +528,20 @@ func (m EditModel) composeFooter(tk shared.Tokens) string {
 	return fmt.Sprintf("%d %s  ·  Ctrl+S save  ·  Esc cancel  ·  Tab next  ·  Alt+m PII", dirty, noun)
 }
 
-// buildDiscardStrip emits the prominent "Discard unsaved changes?"
-// line appended to the modal body in EditStateDiscardConfirm. Lists
-// the first few modified fields so the operator sees what's at stake.
-func buildDiscardStrip(tk shared.Tokens, dirtyKeys []string, width int) string {
-	headline := "─ Discard unsaved changes? (y/N) "
+// buildDiscardStrip emits the prominent confirm strip appended to
+// the modal body in EditStateDiscardConfirm. Headline names what's
+// at stake; the picker row renders side-by-side options with the
+// `cursor` index highlighted so the operator picks with the arrow
+// keys instead of remembering a y/N letter prompt.
+//
+// cursor: 0 = Discard and exit, 1 = Keep editing (safe default).
+func buildDiscardStrip(tk shared.Tokens, dirtyKeys []string, width, cursor int) string {
+	headline := "─ Unsaved changes "
 	if w := width - len([]rune(headline)); w > 0 {
 		headline += strings.Repeat("─", w)
 	}
-	if tk.Danger.GetForeground() != nil {
-		headline = tk.Danger.Render(headline)
+	if tk.Warning.GetForeground() != nil {
+		headline = tk.Warning.Render(headline)
 	}
 	var b strings.Builder
 	b.WriteString(headline)
@@ -504,7 +555,47 @@ func buildDiscardStrip(tk shared.Tokens, dirtyKeys []string, width int) string {
 			b.WriteString(fmt.Sprintf("  … and %d more", n-limit))
 		}
 	}
+	// Side-by-side picker row. Highlighted option gets the reverse-
+	// video treatment + a leading `▸` so it stays visible under
+	// NO_COLOR / monochrome too.
+	discard := pickerOption(tk, "Discard and exit", cursor == 0, tk.Danger)
+	keep := pickerOption(tk, "Keep editing", cursor == 1, tk.Success)
+	b.WriteString("\n\n  " + discard + "     " + keep)
 	return b.String()
+}
+
+// pickerOption renders one of the discard-confirm options. The
+// highlighted entry uses reverse video + an arrow prefix so it's
+// identifiable in monochrome terminals; the inactive one stays
+// muted.
+func pickerOption(tk shared.Tokens, label string, active bool, tone lipglossStyle) string {
+	if active {
+		body := "▸ " + label + " "
+		hi := lipglossReverse(tone)
+		if tone.GetForeground() != nil {
+			return hi.Render(body)
+		}
+		return body
+	}
+	body := "  " + label + " "
+	if tk.Muted.GetForeground() != nil {
+		return tk.Muted.Render(body)
+	}
+	return body
+}
+
+// lipglossStyle is an alias for lipgloss.Style so the helper signature
+// reads naturally without an extra import line in this file.
+type lipglossStyle = lipgloss.Style
+
+// lipglossReverse returns a copy of style with reverse-video enabled.
+// Kept tiny + inline so the discard picker doesn't grow a new file.
+func lipglossReverse(style lipglossStyle) lipglossStyle {
+	out := style.Reverse(true).Bold(true)
+	if fg := style.GetForeground(); fg != nil {
+		out = out.Foreground(fg)
+	}
+	return out
 }
 
 // maskPII produces the form's display masking. Mirrors form.maskString

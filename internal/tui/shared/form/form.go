@@ -3,11 +3,34 @@ package form
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tedilabs/ota/internal/domain"
 )
+
+// lastRuneWidth returns the byte length of the final UTF-8 rune in s,
+// or 0 when s is empty. Used by the text-edit cursor so Backspace /
+// Left walk by full runes — CJK and emoji input no longer leave the
+// cursor inside a multi-byte sequence.
+func lastRuneWidth(s string) int {
+	if s == "" {
+		return 0
+	}
+	_, n := utf8.DecodeLastRuneInString(s)
+	return n
+}
+
+// firstRuneWidth returns the byte length of the leading UTF-8 rune in
+// s. Symmetric pair to lastRuneWidth for Delete / Right.
+func firstRuneWidth(s string) int {
+	if s == "" {
+		return 0
+	}
+	_, n := utf8.DecodeRuneInString(s)
+	return n
+}
 
 // FieldKind classifies the validation and rendering treatment a field
 // receives.
@@ -160,7 +183,9 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 	switch km.Type {
 	case tea.KeyRunes:
 		// Plain printable runes append at the cursor. Empty Alt
-		// (handled above) was already filtered.
+		// (handled above) was already filtered. cursor is byte index;
+		// rune-aware traversal below keeps it at a rune boundary so
+		// `val[:cursor]` is safe to slice for CJK / emoji input.
 		ins := string(km.Runes)
 		val = val[:st.cursor] + ins + val[st.cursor:]
 		st.cursor += len(ins)
@@ -169,14 +194,14 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 		st.cursor++
 	case tea.KeyBackspace:
 		if st.cursor > 0 {
-			// Naive backspace by 1 byte (ASCII-aware; runes handled
-			// in v0.2 when textinput swap lands).
-			val = val[:st.cursor-1] + val[st.cursor:]
-			st.cursor--
+			step := lastRuneWidth(val[:st.cursor])
+			val = val[:st.cursor-step] + val[st.cursor:]
+			st.cursor -= step
 		}
 	case tea.KeyDelete:
 		if st.cursor < len(val) {
-			val = val[:st.cursor] + val[st.cursor+1:]
+			step := firstRuneWidth(val[st.cursor:])
+			val = val[:st.cursor] + val[st.cursor+step:]
 		}
 	case tea.KeyHome:
 		st.cursor = 0
@@ -184,11 +209,11 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 		st.cursor = len(val)
 	case tea.KeyLeft:
 		if st.cursor > 0 {
-			st.cursor--
+			st.cursor -= lastRuneWidth(val[:st.cursor])
 		}
 	case tea.KeyRight:
 		if st.cursor < len(val) {
-			st.cursor++
+			st.cursor += firstRuneWidth(val[st.cursor:])
 		}
 	default:
 		return f, nil

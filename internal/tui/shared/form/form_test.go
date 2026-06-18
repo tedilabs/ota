@@ -200,6 +200,43 @@ func Test_Form_SetSaving_RendersSavingFooter(t *testing.T) {
 		"REQ-W01 AC-4.3: SetSaving(true) must surface a saving footer (Phase 6 wires spinner)")
 }
 
+// Backspace must walk one rune backward — not one byte. A 3-byte
+// hangul jamo composition (가) used to leave the cursor inside the
+// UTF-8 sequence, corrupting subsequent edits + the on-screen caret.
+func Test_Form_Backspace_WalksByRune_ForCJK(t *testing.T) {
+	t.Parallel()
+	f := form.New(testSpecs(), testInitial())
+	// Focus is firstName ("Alice"). Move to end, type "가" (3 bytes),
+	// then Backspace once. Result must be the original "Alice" — not
+	// some half-eaten rune like "Aliceê·".
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("가")})
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+
+	assert.Equal(t, "Alice", f.Current()["firstName"],
+		"backspace must walk one full rune, not one byte — CJK / emoji edits stay safe")
+	assert.Equal(t, 0, f.Dirty(),
+		"reverting back to the snapshot via rune-aware backspace must clear dirty")
+}
+
+// Left arrow must walk one rune backward too — otherwise the cursor
+// lands inside a multi-byte sequence and the next keystroke corrupts
+// the value.
+func Test_Form_LeftRight_WalkByRune_ForCJK(t *testing.T) {
+	t.Parallel()
+	f := form.New(testSpecs(), testInitial())
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("가나")})
+	// CursorPos should be 6 bytes (2 runes × 3 bytes each).
+	require.Equal(t, 6+5, f.CursorPos(), "cursor sits at end of 'Alice가나' (5 ASCII + 6 hangul bytes)")
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	assert.Equal(t, 5+3, f.CursorPos(),
+		"left arrow must walk back exactly one rune (3 bytes), not one byte")
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyRight})
+	assert.Equal(t, 5+6, f.CursorPos(),
+		"right arrow must walk forward exactly one rune (3 bytes)")
+}
+
 // D-W2 / AC-2 — read-only fields (login) MUST NOT appear in Diff even
 // after a synthetic edit attempt. Phase 6 ensures Update routes
 // keystrokes only to editable focus.
