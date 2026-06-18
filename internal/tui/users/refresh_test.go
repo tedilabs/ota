@@ -148,6 +148,8 @@ func (p *refreshTickPort) ResetFactors(_ context.Context, _ string) error { retu
 func (p *refreshTickPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *refreshTickPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *refreshTickPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *refreshTickPort) Suspend(_ context.Context, _ string) error   { return nil }
+func (p *refreshTickPort) Unsuspend(_ context.Context, _ string) error { return nil }
 func (p *refreshTickPort) Delete(_ context.Context, _ string) error { return nil }
 func (p *refreshTickPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
 	return domain.User{}, nil

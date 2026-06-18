@@ -45,6 +45,8 @@ func (p *actionMenuPort) ResetFactors(_ context.Context, _ string) error { retur
 func (p *actionMenuPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *actionMenuPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *actionMenuPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *actionMenuPort) Suspend(_ context.Context, _ string) error   { return nil }
+func (p *actionMenuPort) Unsuspend(_ context.Context, _ string) error { return nil }
 func (p *actionMenuPort) Delete(_ context.Context, _ string) error { return nil }
 func (p *actionMenuPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
 	return domain.User{}, nil

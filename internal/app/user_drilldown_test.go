@@ -53,6 +53,8 @@ func (p *drilldownUsersPort) ResetFactors(_ context.Context, _ string) error { r
 func (p *drilldownUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *drilldownUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *drilldownUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *drilldownUsersPort) Suspend(_ context.Context, _ string) error   { return nil }
+func (p *drilldownUsersPort) Unsuspend(_ context.Context, _ string) error { return nil }
 func (p *drilldownUsersPort) Delete(_ context.Context, _ string) error { return nil }
 func (p *drilldownUsersPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
 	return domain.User{}, nil

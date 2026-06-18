@@ -50,6 +50,15 @@ type OpenUserEditMsg struct{ ID string }
 // without an extra fetch.
 type UserUpdatedMsg struct{ User domain.User }
 
+// OpenStatusPickerMsg is the entry-point message for the user status
+// picker. Emitted by the Users list / detail when the operator
+// presses `s` with a user selected. The App Shell uses the embedded
+// User snapshot to compute valid lifecycle transitions and opens
+// OverlayStatusPicker. Carrying the whole User (not just an ID)
+// lets the picker render the current status badge in its title
+// without an extra fetch.
+type OpenStatusPickerMsg struct{ User domain.User }
+
 // OpenLogsMsg switches the active screen to Logs and pre-fills the
 // server-side `filter=` parameter with `Filter` (an Okta System Log
 // filter expression, e.g., `target.id eq "00uABC"`) so the operator

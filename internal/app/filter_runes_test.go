@@ -46,6 +46,8 @@ func (p *filterRunesPort) ResetFactors(_ context.Context, _ string) error { retu
 func (p *filterRunesPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *filterRunesPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *filterRunesPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *filterRunesPort) Suspend(_ context.Context, _ string) error   { return nil }
+func (p *filterRunesPort) Unsuspend(_ context.Context, _ string) error { return nil }
 func (p *filterRunesPort) Delete(_ context.Context, _ string) error { return nil }
 func (p *filterRunesPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
 	return domain.User{}, nil

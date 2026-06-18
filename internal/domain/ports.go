@@ -58,6 +58,17 @@ type UsersPort interface {
 	// Deactivate first when the operator confirms a hard delete.
 	Delete(ctx context.Context, userID string) error
 
+	// Suspend transitions an ACTIVE user into SUSPENDED — blocks
+	// sign-in but keeps assignments + group membership + factors
+	// intact. Reversible via Unsuspend (distinct from
+	// Deactivate / Activate which destroy and re-provision state).
+	// Used by the status picker to flip the lifecycle from a single
+	// keypress.
+	Suspend(ctx context.Context, userID string) error
+	// Unsuspend transitions a SUSPENDED user back to ACTIVE. No-op
+	// (Okta returns 200) on users already in another state.
+	Unsuspend(ctx context.Context, userID string) error
+
 	// UpdateProfile applies a partial-merge profile patch
 	// (REQ-W01 / D-T4). Returns the updated User (server echo) so
 	// the caller can patch its list/detail cache with the last-write

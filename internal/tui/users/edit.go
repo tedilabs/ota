@@ -661,6 +661,14 @@ func openUserEditCmd(id string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenUserEditMsg{ID: id} }
 }
 
+// openStatusPickerCmd is emitted on `s` from the Users list / detail
+// when the operator wants to flip the selected user's lifecycle
+// state. Carries the whole User so the picker can render the
+// current status badge in its title without another fetch.
+func openStatusPickerCmd(u domain.User) tea.Cmd {
+	return func() tea.Msg { return shared.OpenStatusPickerMsg{User: u} }
+}
+
 // fetchUserForEditCmd is the AC-1.3 single GET on entry.
 func fetchUserForEditCmd(svc *service.UsersService, id string) tea.Cmd {
 	return func() tea.Msg {

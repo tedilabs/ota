@@ -483,6 +483,8 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "users":
 		return []helpEntry{
 			{"Enter / d", "open detail (all attributes)"},
+			{"e", "edit profile form"},
+			{"s", "change status (pick from valid transitions)"},
 			{"l", "open Logs scoped to this user"},
 			{"Shift+S", "sort by STATUS"},
 			{"Shift+N", "sort by NAME (login)"},

@@ -609,6 +609,15 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, openUserEditCmd(id)
 				}
 				return m, nil
+			case "s":
+				// Status picker — `s` flips the open user's lifecycle
+				// state via the centered modal. App Shell maps the
+				// pick onto the existing destructive-action confirm
+				// flow so the operator re-confirms before the POST.
+				if m.detailUser.ID != "" {
+					return m, openStatusPickerCmd(m.detailUser)
+				}
+				return m, nil
 			case "r":
 				m.detailTab, m.detailRawReturn = shared.ToggleRawTab(m.detailTab, m.detailRawReturn)
 				m.detailLine = 0
@@ -836,6 +845,16 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			id = u.ID
 		}
 		return m, openUserEditCmd(id)
+	}
+
+	// `s` on a list row opens the status picker. Silent no-op when
+	// no cursor user is selected — the picker has no useful state
+	// without one (unlike `e` which still surfaces a load error).
+	if msg.Type == tea.KeyRunes && string(msg.Runes) == "s" {
+		if u := m.cursorUser(); u != nil && u.ID != "" {
+			return m, openStatusPickerCmd(*u)
+		}
+		return m, nil
 	}
 
 	// Vim navigation: `gg` jumps to top, `G` to bottom. Detected here

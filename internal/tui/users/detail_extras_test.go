@@ -50,6 +50,8 @@ func (p *extrasUsersPort) ResetFactors(_ context.Context, _ string) error { retu
 func (p *extrasUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *extrasUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *extrasUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *extrasUsersPort) Suspend(_ context.Context, _ string) error   { return nil }
+func (p *extrasUsersPort) Unsuspend(_ context.Context, _ string) error { return nil }
 func (p *extrasUsersPort) Delete(_ context.Context, _ string) error { return nil }
 func (p *extrasUsersPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
 	return domain.User{}, nil

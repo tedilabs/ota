@@ -73,6 +73,10 @@ func userActionLabel(k UserActionKind) string {
 		return "Expire password"
 	case UserActionDelete:
 		return "Delete user"
+	case UserActionSuspend:
+		return "Suspend user"
+	case UserActionUnsuspend:
+		return "Unsuspend user"
 	}
 	return ""
 }
@@ -162,6 +166,16 @@ func runUserActionCmd(port domain.UsersPort, action pendingUserAction) tea.Cmd {
 				return fail("delete failed", err)
 			}
 			return actionCompletedMsg{toast: toastInfo("deleted " + login)}
+		case UserActionSuspend:
+			if err := port.Suspend(ctx, action.User.ID); err != nil {
+				return fail("suspend failed", err)
+			}
+			return actionCompletedMsg{toast: toastInfo("suspended " + login)}
+		case UserActionUnsuspend:
+			if err := port.Unsuspend(ctx, action.User.ID); err != nil {
+				return fail("unsuspend failed", err)
+			}
+			return actionCompletedMsg{toast: toastInfo("unsuspended " + login)}
 		}
 		return nil
 	}

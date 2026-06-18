@@ -254,6 +254,8 @@ func (p *seededUsersPort) ResetFactors(_ context.Context, _ string) error { retu
 func (p *seededUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *seededUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *seededUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *seededUsersPort) Suspend(_ context.Context, _ string) error   { return nil }
+func (p *seededUsersPort) Unsuspend(_ context.Context, _ string) error { return nil }
 func (p *seededUsersPort) Delete(_ context.Context, _ string) error { return nil }
 func (p *seededUsersPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
 	return domain.User{}, nil

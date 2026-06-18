@@ -48,6 +48,8 @@ func (p *detailFixturePort) ResetFactors(_ context.Context, _ string) error { re
 func (p *detailFixturePort) Activate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *detailFixturePort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *detailFixturePort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *detailFixturePort) Suspend(_ context.Context, _ string) error   { return nil }
+func (p *detailFixturePort) Unsuspend(_ context.Context, _ string) error { return nil }
 func (p *detailFixturePort) Delete(_ context.Context, _ string) error { return nil }
 func (p *detailFixturePort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
 	return domain.User{}, nil

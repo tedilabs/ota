@@ -24,6 +24,11 @@ type UsersPortFake struct {
 	DeactivateFunc     func(ctx context.Context, userID string, sendEmail bool) error
 	ExpirePasswordFunc func(ctx context.Context, userID string) error
 	DeleteFunc         func(ctx context.Context, userID string) error
+	// Status picker — Suspend/Unsuspend lifecycle. Nil defaults to
+	// no-op so screens that don't exercise suspend transitions
+	// don't have to wire a func.
+	SuspendFunc   func(ctx context.Context, userID string) error
+	UnsuspendFunc func(ctx context.Context, userID string) error
 	// REQ-W01 — profile mutation Func. When nil, calls fail t.Fatalf.
 	UpdateProfileFunc func(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.User, error)
 }
@@ -127,6 +132,22 @@ func (f *UsersPortFake) ExpirePassword(ctx context.Context, userID string) error
 		return nil
 	}
 	return f.ExpirePasswordFunc(ctx, userID)
+}
+
+func (f *UsersPortFake) Suspend(ctx context.Context, userID string) error {
+	f.t.Helper()
+	if f.SuspendFunc == nil {
+		return nil
+	}
+	return f.SuspendFunc(ctx, userID)
+}
+
+func (f *UsersPortFake) Unsuspend(ctx context.Context, userID string) error {
+	f.t.Helper()
+	if f.UnsuspendFunc == nil {
+		return nil
+	}
+	return f.UnsuspendFunc(ctx, userID)
 }
 
 func (f *UsersPortFake) Delete(ctx context.Context, userID string) error {

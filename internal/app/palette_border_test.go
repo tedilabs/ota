@@ -49,6 +49,8 @@ func (p *borderUsersPort) ResetFactors(_ context.Context, _ string) error { retu
 func (p *borderUsersPort) Activate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *borderUsersPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *borderUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
+func (p *borderUsersPort) Suspend(_ context.Context, _ string) error   { return nil }
+func (p *borderUsersPort) Unsuspend(_ context.Context, _ string) error { return nil }
 func (p *borderUsersPort) Delete(_ context.Context, _ string) error { return nil }
 func (p *borderUsersPort) UpdateProfile(_ context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
 	return domain.User{}, nil

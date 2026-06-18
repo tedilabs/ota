@@ -74,6 +74,8 @@ func (p *qaEditPort) ResetFactors(_ context.Context, _ string) error       { ret
 func (p *qaEditPort) Activate(_ context.Context, _ string, _ bool) error   { return nil }
 func (p *qaEditPort) Deactivate(_ context.Context, _ string, _ bool) error { return nil }
 func (p *qaEditPort) ExpirePassword(_ context.Context, _ string) error     { return nil }
+func (p *qaEditPort) Suspend(_ context.Context, _ string) error   { return nil }
+func (p *qaEditPort) Unsuspend(_ context.Context, _ string) error { return nil }
 func (p *qaEditPort) Delete(_ context.Context, _ string) error             { return nil }
 func (p *qaEditPort) UpdateProfile(ctx context.Context, _ string, _ domain.UserProfilePatch) (domain.User, error) {
 	// Block until the test signals via close(saveHold), unless ctx

@@ -258,6 +258,33 @@ func (a *UsersAdapter) Deactivate(ctx context.Context, userID string, sendEmail 
 	return nil
 }
 
+// Suspend issues POST /api/v1/users/{id}/lifecycle/suspend — blocks
+// sign-in but preserves the user's assignments / membership / factors.
+// Reversible via Unsuspend. Okta returns 200 even when the user is
+// already SUSPENDED, so callers don't need to special-case the
+// response.
+func (a *UsersAdapter) Suspend(ctx context.Context, userID string) error {
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) + "/lifecycle/suspend")
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
+// Unsuspend issues POST /api/v1/users/{id}/lifecycle/unsuspend — flips
+// a SUSPENDED user back to ACTIVE. Idempotent.
+func (a *UsersAdapter) Unsuspend(ctx context.Context, userID string) error {
+	u := a.client.buildURL("/api/v1/users/" + url.PathEscape(userID) + "/lifecycle/unsuspend")
+	resp, err := a.client.doPost(ctx, u, nil)
+	if err != nil {
+		return err
+	}
+	drainAndClose(resp)
+	return nil
+}
+
 // ExpirePassword issues POST /api/v1/users/{id}/lifecycle/expire_password
 // — forces the next sign-in to require a password change. Distinct
 // from ResetPassword which immediately invalidates the credential.

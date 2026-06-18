@@ -184,6 +184,12 @@ const (
 	// OverlayActionConfirm because the pendingAction structure
 	// can't host a Form snapshot.
 	OverlayDiscardConfirm
+	// OverlayStatusPicker — bound to `s` from Users list / detail.
+	// Renders the valid lifecycle transitions for the selected user
+	// and routes the picked one through OverlayActionConfirm so the
+	// "are you sure?" guardrail stays consistent with `:deactivate`,
+	// `:delete`, etc.
+	OverlayStatusPicker
 )
 
 // Actioner is implemented by screens that publish a list of
@@ -213,6 +219,12 @@ const (
 	UserActionDeactivate
 	UserActionExpirePassword
 	UserActionDelete
+	// UserActionSuspend / UserActionUnsuspend back the status picker
+	// transitions ACTIVE↔SUSPENDED. Distinct from
+	// Deactivate/Activate (which DEPROVISION the user) — Suspend
+	// blocks sign-in while keeping every assignment intact.
+	UserActionSuspend
+	UserActionUnsuspend
 )
 
 // pendingUserAction is the (kind, target) pair the App Shell keeps in
@@ -349,6 +361,10 @@ type Model struct {
 	// actionMenu is the resource-specific action picker (issue #175).
 	// Non-nil only while overlay == OverlayActionMenu.
 	actionMenu *overlay.ActionMenuModel
+
+	// statusPicker is the user status picker overlay. Non-nil only
+	// while overlay == OverlayStatusPicker.
+	statusPicker *StatusPickerModel
 
 	// apiRecorderModel renders the global Okta API timeline overlay
 	// when overlay == OverlayAPIRecorder. Bound to the `~` keybinding;
@@ -711,6 +727,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m, cmd = m.ensureScreen(ScreenUserEdit)
 		return m, cmd
+	case shared.OpenStatusPickerMsg:
+		// Status picker — open the modal overlay with the user
+		// already attached. Short-circuit to a toast when the user
+		// is in a terminal state (no valid transitions) so the
+		// operator gets actionable feedback instead of an empty
+		// modal.
+		picker := NewStatusPickerModel(msg.User)
+		if picker.Empty() {
+			return m, toastCmdInfo("no status transitions for " + string(msg.User.Status))
+		}
+		m.statusPicker = &picker
+		m.overlay = OverlayStatusPicker
+		return m, nil
 	case shared.UserUpdatedMsg:
 		// REQ-W01 AC-4.5 — broadcast the post-save snapshot so the
 		// Users list / detail patches its cache with the server-echoed
@@ -1009,6 +1038,11 @@ func (m Model) composeBody() string {
 		// dim the body behind it so the operator's list context stays
 		// visible (just darkened).
 		return m.composeModalOverDimmedBody(m.actionMenu.View())
+	}
+	if m.overlay == OverlayStatusPicker && m.statusPicker != nil {
+		// Status picker — same dim+stamp treatment as the action menu.
+		// Enter routes the chosen transition into OverlayActionConfirm.
+		return m.composeModalOverDimmedBody(m.statusPicker.View())
 	}
 	if m.overlay == OverlayHelp && m.helpModel != nil {
 		// Issue #147: hand the help modal as much width as the chrome
@@ -2209,6 +2243,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay == OverlayActionMenu {
 		return m.handleActionMenuKey(msg)
 	}
+	if m.overlay == OverlayStatusPicker {
+		return m.handleStatusPickerKey(msg)
+	}
 	if m.overlay == OverlayAPIRecorder {
 		return m.handleAPIRecorderKey(msg)
 	}
@@ -2601,6 +2638,55 @@ func (m Model) handleActionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.actionMenu.Update(msg)
 		if mm, ok := updated.(overlay.ActionMenuModel); ok {
 			m.actionMenu = &mm
+		}
+		return m, cmd
+	}
+	return m, nil
+}
+
+// handleStatusPickerKey routes key input while OverlayStatusPicker is
+// open. Esc / `s` cancel; Enter routes the highlighted transition
+// into the destructive-action confirm gate (OverlayActionConfirm) so
+// the user re-confirms the lifecycle flip — every transition here
+// has an irreversible side effect (suspend, deprovision, delete).
+// j/k/↑/↓ advance the cursor inside the model.
+func (m Model) handleStatusPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.overlay = OverlayNone
+		m.statusPicker = nil
+		return m, nil
+	case tea.KeyEnter:
+		if m.statusPicker == nil {
+			m.overlay = OverlayNone
+			return m, nil
+		}
+		picked, ok := m.statusPicker.Selected()
+		user := m.statusPicker.user
+		m.overlay = OverlayNone
+		m.statusPicker = nil
+		if !ok {
+			return m, nil
+		}
+		// Hand off to the destructive-action confirm path so the
+		// operator gets the same "are you sure?" guardrail they'd
+		// see from :deactivate / :delete / `a` menu.
+		m.pendingAction = pendingUserAction{Kind: picked.Action, User: user}
+		m.pendingRule = pendingRuleAction{}
+		m.overlay = OverlayActionConfirm
+		return m, nil
+	case tea.KeyRunes:
+		if string(msg.Runes) == "s" {
+			// Toggle off — symmetric with `a` for the action menu.
+			m.overlay = OverlayNone
+			m.statusPicker = nil
+			return m, nil
+		}
+	}
+	if m.statusPicker != nil {
+		updated, cmd := m.statusPicker.Update(msg)
+		if sm, ok := updated.(StatusPickerModel); ok {
+			m.statusPicker = &sm
 		}
 		return m, cmd
 	}

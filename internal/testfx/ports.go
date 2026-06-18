@@ -58,6 +58,8 @@ func (p *seededUsersPort) Deactivate(_ context.Context, _ string, _ bool) error 
 }
 func (p *seededUsersPort) ExpirePassword(_ context.Context, _ string) error { return nil }
 func (p *seededUsersPort) Delete(_ context.Context, _ string) error         { return nil }
+func (p *seededUsersPort) Suspend(_ context.Context, _ string) error        { return nil }
+func (p *seededUsersPort) Unsuspend(_ context.Context, _ string) error      { return nil }
 
 // UpdateProfile is a no-op stub for chrome / palette / badge tests
 // that don't exercise REQ-W01. Tests asserting mutation behaviour
