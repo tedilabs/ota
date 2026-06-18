@@ -16,6 +16,7 @@
 
 | 날짜       | 버전         | 변경점 | 작성자       |
 |------------|--------------|--------|--------------|
+| **2026-06-18** | **1.3.1** | **SCR-012 v2 visual redesign (popup-over-dimmed-body).** v0.2.0 출시 후 사용자 피드백 *"디자인이 너무 구려"* + 명시 요구 (`종료 팝업 스타일 모달`) 대응. **Mount mode 변경**: 풀스크린 take-over → centered modal over dimmed body (Quit/Action confirm 패턴 재사용, D-W17). **모달 폭 74** (clamp `clampWidth-8`, min 60, D-W18). 본문 viewport scroll로 좁은 H 지원 (D-W19). **Focus lift 패턴**: `▎ Label  ┃ value           ┃` (Accent + bold + left bar + border 3채널, AC-8.4 강화, D-W20). **섹션 헤더 inline dirty 카운트** `─ Identity · 2* ─────` (D-W21). **단일 라인 footer** `state · actions` (D-W22). **`(read-only)` 텍스트** (emoji `🔒` 폐기, NO_COLOR 호환, D-W23). **DiscardConfirm은 nested modal** — outer 위 stamp, outer body dim (D-W24). **Loading은 placeholder 폼 + footer spinner** (D-W25). 갱신: §SCR-012 본문 in-place 교체(이전 안은 §SCR-012-deprecated로 보존), §3.7 (충돌 검사 무영향 명시), §11.2a (AC 충족 매트릭스 유지), §13 (#16~#24 결정 추가), §14 (OI-W6 → field diff preview, OI-W7 → bubbles/textinput 도입 검토). **AC 충족 100%** — PRD §5.6 AC-1~AC-10 전건 v1.3과 동일 충족(시각 표현만 교체). 신규 식별자: `EditModel.RenderModal(tk, width, bodyBudget)`, `App.composeModalOverScreenDimmed(modal, bgScreen)`, `App.previousScreenForBackdrop()`, `form.RenderFieldRow`/`form.RenderSectionHeader`/`form.StampNestedConfirm`. 기존 plain `View()`는 teatest 골든 호환을 위해 유지 (`renderPlain()`). | tui-designer-5 |
 | **2026-06-17** | **1.3.0-draft** | **REQ-W01 (Users Profile Edit Form) addendum.** **SCR-012 신규**: 11필드 4섹션 (Identity/Contact/Organization/Status) 폼, `e` 키 + `:edit` 진입, `Ctrl+S` 저장, `Esc` dirty 시 L1 confirm modal (OverlayDiscardConfirm), 11 textinput + viewport(좁은 H) + bubbles/spinner, PII form-context `Alt+m` 일괄 토글, errorCauses prefix 매칭으로 field-attached inline error, 4xx/5xx/429 변경값 보존(404 만 예외), navStack push (D-W16). 갱신: §0.2 (read-only 정책 정밀화), §3.4 (`:edit` 팔레트), §3.6 (`e` Detail 단축키), §3.7 (충돌 검사 `e`/`Ctrl+S`/`Alt+m`), §10.1 (L0/L1 Profile-Edit 매핑), §11.2a (REQ-W01 매핑 신설), §12.1/§12.3 (`e` 예약 해제 + 점유 명시), §13 (#9~#15 결정 추가), §14 (오픈 이슈 OI-W1/W2/W4 + Alt+m/Ctrl+S 호환성). 디자이너 권고: OI-W5 옵션 C (`internal/tui/shared/form/` 패키지), OI-W3 토스트 hint + `l` 가로채기. 신규 식별자: `ScreenUserEdit`, `OverlayDiscardConfirm`, `OpenUserEditMsg`, `UserUpdatedMsg`, `UsersPort.UpdateProfile`, `UserProfilePatch`. **하위 호환 100%** — 기존 SCR-010~SCR-905 화면·키맵·골든은 무변경. | tui-designer-4 |
 | 2026-04-24 | 0.1.0-draft  | 최초 초안 | tui-designer |
 | 2026-04-24 | 1.0.0        | pm MAJOR 4건 + okta MAJOR 2건 + MINOR 11건 전면 반영. team-lead M5 결정 (PRD §7.7이 에러 매핑 소스 오브 트루스) 반영. v1.0으로 승격. | tui-designer |
@@ -910,7 +911,9 @@ okta-expert m4 반영: vendorName 차이가 보이는 DUO 예시 추가.
 
 ---
 
-### SCR-012: User Edit Form (v0.2.0+, REQ-W01)
+### SCR-012: User Edit Form (v0.2.0+, REQ-W01) — **v2 redesign (2026-06-18)**
+
+> **v2 변경 요약 (v1.3 → v1.3.1):** v0.2.0 출시 후 사용자 피드백 *"디자인이 너무 구려"* + 명시 요구 (`종료 팝업 스타일 모달`) 대응. **Mount mode 교체** — 풀스크린 take-over → centered modal over dimmed body (Quit/Action confirm과 동일 패턴, `composeModalOverDimmedBody` 재사용, D-W17). **AC 충족 무변경** (PRD §5.6 AC-1~AC-10 전건 v1.3과 동일하게 충족). 시각 표현 + 인터랙션 디테일만 교체. 이전 안은 §SCR-012-deprecated에 보존.
 
 **목적:** 선택된 사용자의 standard profile 11개 필드를 키보드만으로 수정·저장. ota의 **첫 mutation 표면**이며 v0.2 후속 lifecycle write의 위젯 인프라(form / dirty / inline error / discard confirm) 모범 구현체. (PRD v1.1.0 §5.6 REQ-W01.)
 
@@ -919,47 +922,56 @@ okta-expert m4 반영: vendorName 차이가 보이는 DUO 예시 추가.
 - SCR-011 User Detail의 모든 탭에서 `e` (AC-1.2)
 - `:edit` / `:e` 팔레트 (활성 화면이 user 보유 시)
 - 진입 직후 `GET /api/v1/users/{id}` 1회로 latest snapshot 로드 (D-W7, AC-1.3). 리스트 캐시는 신뢰하지 않는다.
-- navStack push (D-W16, commit `b0794ad` 패턴) — ESC pop으로 직전 화면 복귀.
+- navStack push (D-W16, commit `b0794ad` 패턴) — ESC pop으로 직전 화면 복귀. v2에서도 navStack 유지하되 active 화면의 View는 modal로 렌더되고, **백드롭은 navStack top-1 화면**(`previousScreenForBackdrop()`)을 dimmed로 표시.
 
-**와이어프레임 (120x30, editing 상태):**
+**Modal style:** **popup over dimmed body** (D-W17). 폭 74 (`clampWidth-8` clamp, min 60, D-W18). 본문 viewport scroll로 H 좁은 터미널 지원 (D-W19). Quit confirm / Action confirm과 동일 시각 언어 — `composeModalOverScreenDimmed(modal, previousScreenForBackdrop())`.
+
+**와이어프레임 (120x30, editing-dirty 상태 — 좌측에 dimmed Users list 컨텍스트 보임):**
 ```
 ┌─ ota · acme.okta.com ·         prod         [RL: ok]        UTC   v0.2.0 ─┐
-│ Users › alice@acme.com › Edit                       3 changes  id: 00u…x8 │
+│ Users                                              42 of 1,205 · type=USER│
 ├────────────────────────────────────────────────────────────────────────────┤
-│                                                                            │
-│  ─ Identity ──────────────────────────────────────────────                │
-│    Login (read-only)   alice@acme.com                       🔒 :change-login │
-│  * First Name          [ Alicia_________________________ ]  ← cursor       │
-│    Last Name           [ Smith __________________________ ]                │
-│    Display Name        [ Alice Smith ____________________ ]                │
-│    Nickname            [ ali ____________________________ ]                │
-│                                                                            │
-│  ─ Contact ───────────────────────────────────────────────                │
-│  * Email               [ alice@acme.com _________________ ]                │
-│    Mobile Phone        [ +1-***-***-1234 ________________ ] (masked, Alt+m)│
-│    Secondary Email     [ a***@personal.com ______________ ] (masked, Alt+m)│
-│                                                                            │
-│  ─ Organization ──────────────────────────────────────────                │
-│  * Department          [ Eng → Platform__________________ ]                │
-│    Division            [ R&D ____________________________ ]                │
-│    Title               [ Senior SWE _____________________ ]                │
-│  * Employee Number     [ ENG-042 ________________________ ]                │
-│                                                                            │
-│  ─ Status (read-only) ────────────────────────────────────                │
-│    status              ● ACTIVE   (Use :activate/:deactivate to change)   │
-│                                                                            │
+│ ███ STATUS  LOGIN                       NAME              DEPT       █████ │
+│ ██████████████████ ╭───────────────────────────────────────────────╮ █████ │
+│ ██ ●ACT alice@…████│ Edit User  ·  alice@acme.com         3 changes│ █████ │
+│ ██ ●ACT bob@a…████ ├───────────────────────────────────────────────┤ █████ │
+│ ██ ●ACT charl…████ │                                               │ █████ │
+│ ██ ●ACT dave@…████ │  ─ Identity · 1* ────────────────────────────│ █████ │
+│ ██ ◐SUS evan@…████ │    Login         alice@acme.com (read-only)  │ █████ │
+│ ██ ●ACT frank…████ │ *▎ First Name  ┃ Alicia                    ┃ │ █████ │
+│ ██ ●ACT grace…████ │    Last Name     Smith                       │ █████ │
+│ ██ ●ACT henry…████ │    Display Name  Alice Smith                 │ █████ │
+│ ██ ●ACT ivy@a…████ │    Nickname      ali                         │ █████ │
+│ ██ ●ACT jane@…████ │                                               │ █████ │
+│ ██ ●ACT kevin…████ │  ─ Contact ──────────────────────────────────│ █████ │
+│ ██ ●ACT lily@…████ │    Email         alice@acme.com              │ █████ │
+│ ██ ◐SUS mike@…████ │    Mobile Phone  +1-***-***-1234   (masked)  │ █████ │
+│ ██ ●ACT nora@…████ │    Secondary     a***@personal.com  (masked) │ █████ │
+│ ██ ●ACT oscar…████ │                                               │ █████ │
+│ ██ ●ACT paul@…████ │  ─ Organization · 2* ────────────────────────│ █████ │
+│ ██ ●ACT quinn…████ │    Title         Senior SWE                  │ █████ │
+│ ██ ●ACT rita@…████ │    Division      R&D                         │ █████ │
+│ ██ ●ACT sam@a…████ │  * Department    Platform                    │ █████ │
+│ ██ ●ACT tina@…████ │  * Employee #    ENG-099                     │ █████ │
+│ ██████████████████ ├───────────────────────────────────────────────┤ █████ │
+│ ██████████████████ │ 3 changes · Ctrl+S save · Esc cancel · Tab → │ █████ │
+│ ██████████████████ ╰───────────────────────────────────────────────╯ █████ │
 ├────────────────────────────────────────────────────────────────────────────┤
-│ 3 changes · <Ctrl+S> save  <Tab> next  <Alt+m> toggle PII  <Esc> cancel    │
+│ <j k> nav  </> search  <Enter> detail  <e> edit  <R> refresh  <?>         │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**시각 규약 (NO_COLOR 호환):**
-- `*` 라벨 prefix: dirty 마커 (AC-9.2). NO_COLOR에서도 식별.
-- `🔒` 또는 ASCII fallback `[ro]`: read-only 행 (AC-2.5).
-- `▸ ` cursor prefix + 입력 박스 `tokens.Accent` 굵게: 포커스 표시 (AC-8.4의 색+굵기+prefix 3채널).
-- 좌측 padding 2, 라벨 18 cols, 입력 박스는 가용 폭 흡수 (좁은 모드는 라벨/입력 2줄 분할 — 80x24).
-- `(masked, Alt+m)` 트레일: PII 마스킹 상태 (AC-7.1). 언마스킹 시 `[M!]` 빨간 배지 (§7.2 기존 토큰 재사용).
-- 섹션 헤더 `─ <Name> ────`: `tokens.Header`, hr 스타일 divider.
+> **표기 규약**: `█` = dimmed body 셀 (실제는 lipgloss `Muted.Faint(true)` 처리된 직전 화면 콘텐츠). 와이어프레임의 폭이 모달 49 cells로 그려져 있으나, 실제 production은 폭 **74**. 가독성을 위한 단순화 표기.
+
+**시각 규약 (NO_COLOR 호환, v2 갱신):**
+- **Focus lift `▎ Label  ┃ value           ┃`**: focus 필드는 좌측 vertical bar `▎` + 라벨 bold + 입력 박스 좌우 보더 `┃`. 비-focus는 라벨 + 값만(박스 없음). AC-8.4의 3채널(색 + 굵기 + prefix) 강화. NO_COLOR에서도 `▎` `┃` 글리프로 식별. (D-W20)
+- **dirty 마커 `*`**: 라벨 좌측 (AC-9.2) + **섹션 헤더 inline 카운트** `─ Identity · 2* ─────` (clean 섹션은 카운트 표기 없음, D-W21).
+- **dirty 카운터 우측 정렬**: 타이틀 라인 우측에 `3 changes` (Accent). footer와 중복 표기로 정보 redundancy.
+- **`(read-only)` 텍스트 트레일** (D-W23): emoji `🔒`/ASCII fallback `[ro]` 폐기. NO_COLOR/Unicode 호환 최적화.
+- **PII 마스킹 트레일 `(masked)`**: AC-7.1 진입 시 표시. Alt+m hint는 footer에만 표시(중복 제거). 일괄 unmask 상태는 `[M!]` 배지 (기존 §7.2 토큰 유지).
+- **섹션 헤더 `─ <Name> ─────`**: clean은 Muted, dirty 있으면 Header bold + Accent 카운트.
+- **footer 단일 라인** (D-W22): `<state> · <action1> · <action2> · ...` 좌 → 우 = 정보 → 액션. 좁은 모드(W<90)는 `<Alt+m>` 생략.
+- **타이틀 prefix `Edit User · `**: 모달 식별. 사용자 식별자(login)는 `·` 우측. discard/saving 상태는 타이틀 라인 우측에 상태 트레일 추가.
 
 **필드 → API field 매핑 (D-W1 11필드 + login read-only):**
 
@@ -1068,81 +1080,133 @@ okta-expert m4 반영: vendorName 차이가 보이는 DUO 예시 추가.
 | saving | 429 | editing(rate-limited) + countdown |
 | saving | Ctrl+C | editing (변경값 보존) |
 
-**상태별 UI:**
+**상태별 UI (v2 — modal popup, 모달 본문 내부 표기):**
 
-**Loading:**
+**Loading (placeholder 폼 + footer spinner, D-W25):**
 ```
-│                   ⠋ Loading user…                                          │
-│                     GET /api/v1/users/00u…x8                               │
-│                     Press <Esc> to cancel                                  │
+╭───────────────────────────────────────────────╮
+│ Edit User  ·  Loading…                        │
+├───────────────────────────────────────────────┤
+│                                               │
+│  ─ Identity ─────────────────────────────────│
+│    Login         _____________________       │
+│    First Name    _____________________       │
+│    Last Name     _____________________       │
+│    ...                                        │
+│  ─ Contact ──────────────────────────────────│
+│    Email         _____________________       │
+│    ...                                        │
+│                                               │
+├───────────────────────────────────────────────┤
+│ ⠋ GET /api/v1/users/00u…x8 · Esc cancel       │
+╰───────────────────────────────────────────────╯
 ```
-- > 100ms 지연 시 표시 (그 미만은 placeholder 폼 즉시 표시).
-- Esc → abort + return to 직전 화면.
+- chrome (섹션 헤더 + placeholder underscore) **즉시 표시** — 사용자가 "이런 폼이 뜬다" 미리 인지 (AC-1.4).
+- 100ms+ 지연 시에만 footer spinner 표시 (이전은 spinner 생략).
+- Esc → abort + return to 직전 화면 (백드롭).
 
 **Editing + Validation Error:**
 ```
-│  * First Name          [ _______________________________ ]                │
-│  ! First Name is required                                                  │
-│                                                                            │
-│    Email *             [ alice@acme ____________________ ]                │
-│  ! Invalid email format                                                    │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 3 changes · ! fix 2 invalid fields  <Tab> next  <Esc> cancel               │
+╭───────────────────────────────────────────────╮
+│ Edit User  ·  alice@acme.com         3 changes│
+├───────────────────────────────────────────────┤
+│                                               │
+│  ─ Identity · 1* ────────────────────────────│
+│    Login         alice@acme.com (read-only)  │
+│ *▎ First Name  ┃                           ┃ │
+│    ! First Name is required                  │
+│    Last Name     Smith                       │
+│    ...                                        │
+│  ─ Contact · 1* ─────────────────────────────│
+│  *▎ Email      ┃ alice@acme                ┃ │
+│    ! Invalid email format                    │
+│    ...                                        │
+├───────────────────────────────────────────────┤
+│ ! 2 invalid · Ctrl+S retry · Esc cancel · Tab │
+╰───────────────────────────────────────────────╯
 ```
-- inline error는 해당 행 바로 아래, `! ` prefix + `tokens.Danger`.
-- AC-6.2: 사용자가 해당 필드 수정 시 즉시 클리어.
+- inline error는 필드 박스 바로 아래, 라벨 정렬 맞춤. `! ` prefix + `tokens.Danger`.
+- focus는 `Validate()` 후 첫 invalid 필드로 jump (form.Focus(firstInvalid)).
+- footer: `<! 2 invalid>`(Danger) · 액션 hint.
+- AC-6.2: 사용자가 해당 필드에 1글자라도 입력 → 즉시 inline error 클리어 (`delete(f.inlineErr, key)`).
 
-**Saving:**
+**Saving (입력 disabled, focus 보더 제거):**
 ```
-│  (모든 입력 박스 Blur + tokens.Muted dim)                                  │
-├────────────────────────────────────────────────────────────────────────────┤
-│ ⠋ Saving…   POST /api/v1/users/00u…x8     use <Ctrl+C> to abort           │
+╭───────────────────────────────────────────────╮
+│ Edit User  ·  alice@acme.com         3 changes│
+├───────────────────────────────────────────────┤
+│                                               │
+│  ─ Identity · 1* ────────────────────────────│
+│    Login         alice@acme.com (read-only)  │
+│  * First Name    Alicia                      │
+│    ...                                        │
+│  ─ Organization · 2* ────────────────────────│
+│  * Department    Platform                    │
+│  * Employee #    ENG-099                     │
+│                                               │
+├───────────────────────────────────────────────┤
+│ ⠋ Saving…  POST /api/v1/users/00u…x8          │
+│           Ctrl+C to abort (preserves draft)   │
+╰───────────────────────────────────────────────╯
 ```
-- Esc 비활성 + footer hint. (AC-4.3, AC-5.3)
+- 모든 필드 focus 보더 제거(`▎`+`┃` 사라짐) + Muted dim. dirty `*` 마커는 유지.
+- footer 2줄 — spinner + endpoint + abort hint. Esc 표기 없음 (AC-4.3, AC-5.3).
+- Ctrl+C만 SCR-012 라우팅 — 입력 보존 + state → editing 복귀.
 
 **Save Success:**
-- 폼 닫기 (popNav) → 직전 화면 (selected row 보존, DR-4)
+- 모달 닫기 (popNav) → 직전 화면 (selected row 보존, DR-4)
 - 토스트 (3초): `✓ Updated alice@acme.com` (tokens.Success)
 - OI-W3 채택 시: 토스트 본문 확장 `✓ Updated alice@acme.com · <l> view audit log` — 3초간 `l` 글로벌 키 가로채기로 `OpenLogsMsg{Filter: ...update_profile... and target.id eq "<userId>"}` 발송 (디자이너 권고 §10.2).
 
 **Save Failure — 400 Validation:**
-- AC-6.1: `errorCauses` prefix 매칭 `<field>: <msg>` → 해당 행 아래 inline error.
-- 매칭 실패 cause는 footer "Other errors:" 영역에 누적.
-- footer: `✗ Save failed — N field errors   <Ctrl+S> retry  <Esc> cancel`
+- AC-6.1: `errorCauses` prefix 매칭 `<field>: <msg>` → 해당 행 아래 inline error (Editing+Validation Error 화면과 동일 시각).
+- 매칭 실패 cause는 본문 최하단 "Other errors:" 영역에 누적.
+- footer: `! Save failed — N field errors · Ctrl+S retry · Esc cancel`
 
 **Save Failure — 403:**
-- footer + 토스트 양쪽: `✗ Insufficient permissions — 'Manage user profiles' required`
+- footer + 토스트 양쪽: `! Insufficient permissions — 'Manage user profiles' required`
 - 폼/변경값 보존. 운영자가 토큰 교체(ota 재시작) 후 같은 변경 재시도 가능.
 
 **Save Failure — 404:**
-- 폼 닫기 + 토스트 `✗ User no longer exists. Refreshing list.`
+- 모달 닫기 + 토스트 `! User no longer exists. Refreshing list.`
 - list refresh 자동 트리거 (RefreshScreenMsg 발송).
 
 **Save Failure — 429:**
-- footer 카운트다운: `⚠ Rate limited · retrying in 5s…   <Esc> abort retry`
+- footer 카운트다운: `⚠ Rate limited · retrying in 5s… · Esc abort retry`
 - `Retry-After` 헤더 기반. 카운트 0 → 자동 1회 재시도 (REQ-E01 AC-2 일관).
-- 재시도 실패 시 footer "Still rate limited. Retry manually with Ctrl+S or wait."
-- Esc는 자동 재시도만 취소 (폼 유지).
+- 재시도 실패 시 footer "Still rate limited. Ctrl+S to retry."
+- Esc는 자동 재시도만 취소 (모달 유지).
 
 **Save Failure — 5xx:**
-- footer: `✗ Okta service error (502) — try again later   <Ctrl+S> retry  <Esc>`
+- footer: `! Okta service error (502) — Ctrl+S retry · Esc cancel`
 - 자동 재시도 없음. 변경값 보존.
 
-**Discard confirm 모달 (OverlayDiscardConfirm — 신규):**
+**Discard confirm 모달 — nested over outer (D-W24):**
 ```
-       ╔════════════════════════════════════════╗
-       ║  Discard 3 unsaved changes?            ║
-       ╠════════════════════════════════════════╣
-       ║                                        ║
-       ║  Modified fields:                      ║
-       ║    • First Name                        ║
-       ║    • Department                        ║
-       ║    • Employee Number                   ║
-       ║                                        ║
-       ║  <y> discard · <n> keep editing · <Esc>║
-       ╚════════════════════════════════════════╝
+                    ╭───────────────────────────────────────────────╮
+                    │ ████ ████ █████ █  █████████████████ █████████│
+                    │ ███████████████████████ ██████████████████████│
+                    │ ████ █████████ ╭────────────────────────────╮ │
+                    │ ████ ██████████│  Discard 3 unsaved changes?│ │
+                    │ ████ ██████████├────────────────────────────┤ │
+                    │ ████ ██████████│  Modified fields:          │ │
+                    │ ████ ██████████│    • First Name            │ │
+                    │ ████ ██████████│    • Department            │ │
+                    │ ████ ██████████│    • Employee Number       │ │
+                    │ ████ ██████████│                            │ │
+                    │ ████ ██████████│  <y> discard  <n/Esc> keep │ │
+                    │ ████ ██████████╰────────────────────────────╯ │
+                    │ ████ █████████████████████████████████ ███████│
+                    │ ████ █████████████████████████████████ ███████│
+                    │                                               │
+                    ├───────────────────────────────────────────────┤
+                    │ 3 changes · Esc keep · y discard              │
+                    ╰───────────────────────────────────────────────╯
 ```
-- 디폴트 N (안전 우선, D-W4). Esc도 동일.
+- **Outer modal body 내부에 nested modal stamp** (`StampNestedConfirm(outer, nested)`). outer는 그대로 보이고, body 영역만 추가 dim. nested는 폭 40, 높이 가변.
+- default N — y만 명시. n/Esc는 keep editing (AC-5.2, D-W4 유지).
+- outer footer가 `Esc keep · y discard` 안내로 교체.
+- Modified fields 리스트는 최대 5개. 그 이상은 `… and N more`.
 - 위험 등급 L1 (§10.1 표 갱신). 변경값 소실은 다시 입력 가능하므로 L2 word-typing 불필요.
 
 **PII 마스킹 통합 (AC-7):**
