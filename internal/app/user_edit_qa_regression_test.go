@@ -252,6 +252,57 @@ func Test_AppShell_PaletteE_ResolvesScreenUserEdit(t *testing.T) {
 		"REQ-W01 AC-1.2 / TUI_DESIGN §3.4: :e palette short alias must resolve to ScreenUserEdit")
 }
 
+// Operator follow-up (2026-06-18) — pressing Enter on the highlighted
+// "Discard and exit" option must actually leave the edit screen. The
+// initial wiring emitted form.DiscardRequestedMsg which nothing
+// handled, so the form stayed open with the prompt visible. The
+// shared.UserEditDiscardedMsg + App Shell popNav wiring is the fix —
+// this test pins the contract.
+func Test_AppShell_DiscardAndExit_PopsNav(t *testing.T) {
+	t.Parallel()
+	m, _ := newQAAppModel(t)
+
+	updated, cmd := m.Update(shared.OpenUserEditMsg{ID: "00u_alice"})
+	m = updated.(app.Model)
+	for cmd != nil {
+		msg := cmd()
+		if msg == nil {
+			break
+		}
+		updated, cmd = m.Update(msg)
+		m = updated.(app.Model)
+	}
+	require.Equal(t, "user-edit", app.ActiveScreenName(m), "precondition: edit screen active")
+
+	// Dirty the form, then Esc to open the discard picker.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(app.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Z")})
+	m = updated.(app.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(app.Model)
+	require.Contains(t, m.View(), "Discard", "precondition: discard prompt visible")
+
+	// Left arrow → highlight "Discard and exit", Enter → confirm.
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(app.Model)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(app.Model)
+	// The Cmd returns shared.UserEditDiscardedMsg — drain it so the
+	// App Shell consumes the pop.
+	for cmd != nil {
+		msg := cmd()
+		if msg == nil {
+			break
+		}
+		updated, cmd = m.Update(msg)
+		m = updated.(app.Model)
+	}
+
+	assert.NotEqual(t, "user-edit", app.ActiveScreenName(m),
+		"Enter on 'Discard and exit' must pop the edit frame back to the previous screen")
+}
+
 // trim is a tiny helper for assertion messages on long Views.
 func trim(s string, n int) string {
 	if len(s) <= n {

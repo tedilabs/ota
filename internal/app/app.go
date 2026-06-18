@@ -740,6 +740,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusPicker = &picker
 		m.overlay = OverlayStatusPicker
 		return m, nil
+	case shared.UserEditDiscardedMsg:
+		// Operator picked "Discard and exit" on the unsaved-changes
+		// prompt. Drop the cached EditModel so a re-entry rebuilds
+		// from a fresh GET, then pop the nav frame back to whoever
+		// pushed us (list / detail).
+		delete(m.screens, ScreenUserEdit)
+		m.editTargetID = ""
+		if m.canPopNav() {
+			prev, _ := m.popNav()
+			updated, cmd := m.ensureScreen(prev)
+			return updated, cmd
+		}
+		return m, nil
 	case shared.UserUpdatedMsg:
 		// REQ-W01 AC-4.5 — broadcast the post-save snapshot so the
 		// Users list / detail patches its cache with the server-echoed

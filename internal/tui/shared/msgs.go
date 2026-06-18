@@ -50,6 +50,14 @@ type OpenUserEditMsg struct{ ID string }
 // without an extra fetch.
 type UserUpdatedMsg struct{ User domain.User }
 
+// UserEditDiscardedMsg is emitted by EditModel when the operator
+// confirms the discard option on the unsaved-changes prompt — i.e.,
+// they want to throw away every pending edit and exit the form.
+// The App Shell pops the ScreenUserEdit frame back to whichever
+// surface pushed it (list / detail) so Esc-then-Enter feels like a
+// single "back" gesture rather than two distinct decisions.
+type UserEditDiscardedMsg struct{}
+
 // OpenStatusPickerMsg is the entry-point message for the user status
 // picker. Emitted by the Users list / detail when the operator
 // presses `s` with a user selected. The App Shell uses the embedded
