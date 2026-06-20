@@ -274,6 +274,53 @@ type pendingRuleAction struct {
 	Rule domain.GroupRule
 }
 
+// PolicyActionKind / AppActionKind / AuthenticatorActionKind classify
+// the lifecycle action for the respective status pickers (Activate /
+// Deactivate). Symmetric with UserActionKind and RuleActionKind so
+// the action-confirm modal + runner pattern carries forward
+// uniformly across resources.
+type PolicyActionKind int
+
+const (
+	PolicyActionNone PolicyActionKind = iota
+	PolicyActionActivate
+	PolicyActionDeactivate
+)
+
+type AppActionKind int
+
+const (
+	AppActionNone AppActionKind = iota
+	AppActionActivate
+	AppActionDeactivate
+)
+
+type AuthenticatorActionKind int
+
+const (
+	AuthenticatorActionNone AuthenticatorActionKind = iota
+	AuthenticatorActionActivate
+	AuthenticatorActionDeactivate
+)
+
+// pending*Action is the (kind, target) pair the App Shell keeps in
+// flight while OverlayActionConfirm is open. Mutually exclusive with
+// the other pending* fields — the modal renders whichever is set.
+type pendingPolicyAction struct {
+	Kind   PolicyActionKind
+	Policy domain.Policy
+}
+
+type pendingAppAction struct {
+	Kind AppActionKind
+	App  domain.App
+}
+
+type pendingAuthenticatorAction struct {
+	Kind          AuthenticatorActionKind
+	Authenticator domain.Authenticator
+}
+
 // SelectedRuleStater is the Group Rule counterpart of
 // SelectedUserStater (issue #188 v0.2.2). Lets the App Shell read
 // the rule the action menu is targeting.
@@ -408,6 +455,14 @@ type Model struct {
 	// is set at any time; the confirmation modal renders whichever
 	// the operator triggered.
 	pendingRule pendingRuleAction
+
+	// pendingPolicy / pendingApp / pendingAuthenticator hold the
+	// status-picker dispatch payload for the respective resources.
+	// At most one pending* field is set at any time — the action
+	// confirm modal renders whichever the operator triggered.
+	pendingPolicy        pendingPolicyAction
+	pendingApp           pendingAppAction
+	pendingAuthenticator pendingAuthenticatorAction
 
 	// toast is the most recent ToastMsg awaiting render — shown as a
 	// color-coded floating band stamped on top of the body for the
@@ -760,9 +815,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// is in a terminal state (no valid transitions) so the
 		// operator gets actionable feedback instead of an empty
 		// modal.
-		picker := NewStatusPickerModel(msg.User)
+		picker := NewUserStatusPickerModel(msg.User)
 		if picker.Empty() {
 			return m, toastCmdInfo("no status transitions for " + string(msg.User.Status))
+		}
+		m.statusPicker = &picker
+		m.overlay = OverlayStatusPicker
+		return m, nil
+	case shared.OpenRuleStatusPickerMsg:
+		picker := NewRuleStatusPickerModel(msg.Rule)
+		if picker.Empty() {
+			return m, toastCmdInfo("no status transitions for " + string(msg.Rule.Status))
+		}
+		m.statusPicker = &picker
+		m.overlay = OverlayStatusPicker
+		return m, nil
+	case shared.OpenPolicyStatusPickerMsg:
+		picker := NewPolicyStatusPickerModel(msg.Policy)
+		if picker.Empty() {
+			if msg.Policy.System {
+				return m, toastCmdInfo("system policies cannot be deactivated")
+			}
+			return m, toastCmdInfo("no status transitions for " + string(msg.Policy.Status))
+		}
+		m.statusPicker = &picker
+		m.overlay = OverlayStatusPicker
+		return m, nil
+	case shared.OpenAppStatusPickerMsg:
+		picker := NewAppStatusPickerModel(msg.App)
+		if picker.Empty() {
+			return m, toastCmdInfo("no status transitions for " + string(msg.App.Status))
+		}
+		m.statusPicker = &picker
+		m.overlay = OverlayStatusPicker
+		return m, nil
+	case shared.OpenAuthenticatorStatusPickerMsg:
+		picker := NewAuthenticatorStatusPickerModel(msg.Authenticator)
+		if picker.Empty() {
+			return m, toastCmdInfo("no status transitions for " + string(msg.Authenticator.Status))
 		}
 		m.statusPicker = &picker
 		m.overlay = OverlayStatusPicker
@@ -1437,6 +1527,24 @@ func (m Model) renderActionConfirmModal(tk shared.Tokens) string {
 		if target == "" {
 			target = m.pendingAction.User.ID
 		}
+	case m.pendingPolicy.Kind != PolicyActionNone:
+		label = policyActionLabel(m.pendingPolicy.Kind)
+		target = m.pendingPolicy.Policy.Name
+		if target == "" {
+			target = m.pendingPolicy.Policy.ID
+		}
+	case m.pendingApp.Kind != AppActionNone:
+		label = appActionLabel(m.pendingApp.Kind)
+		target = m.pendingApp.App.Label
+		if target == "" {
+			target = m.pendingApp.App.ID
+		}
+	case m.pendingAuthenticator.Kind != AuthenticatorActionNone:
+		label = authenticatorActionLabel(m.pendingAuthenticator.Kind)
+		target = m.pendingAuthenticator.Authenticator.Name
+		if target == "" {
+			target = m.pendingAuthenticator.Authenticator.ID
+		}
 	default:
 		label = "Confirm action"
 		target = ""
@@ -1772,6 +1880,21 @@ func (m Model) composeChromeBadges() []shared.ChromeBadge {
 				Key:   "ACTION",
 				Value: userActionLabel(m.pendingAction.Kind),
 				Tone:  shared.BadgeDanger,
+			})
+		case m.pendingPolicy.Kind != PolicyActionNone:
+			out = append(out, shared.ChromeBadge{
+				Key: "ACTION", Value: policyActionLabel(m.pendingPolicy.Kind),
+				Tone: shared.BadgeDanger,
+			})
+		case m.pendingApp.Kind != AppActionNone:
+			out = append(out, shared.ChromeBadge{
+				Key: "ACTION", Value: appActionLabel(m.pendingApp.Kind),
+				Tone: shared.BadgeDanger,
+			})
+		case m.pendingAuthenticator.Kind != AuthenticatorActionNone:
+			out = append(out, shared.ChromeBadge{
+				Key: "ACTION", Value: authenticatorActionLabel(m.pendingAuthenticator.Kind),
+				Tone: shared.BadgeDanger,
 			})
 		}
 	}
@@ -2798,18 +2921,34 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch {
 		case confirmed:
-			// v0.2.2 #188 — pendingRule and pendingAction are
-			// mutually exclusive (openActionConfirm /
-			// openRuleActionConfirm clear the other). Fire the
-			// correct dispatcher based on which is set.
-			// Issue #192 v0.2.3 — chain a screen refresh after the
-			// action completes so the operator sees the new state
-			// without waiting for the next auto-tick.
+			// All pending* slots are mutually exclusive. Fire the
+			// dispatcher matching whichever is set; chain a screen
+			// refresh after the action completes so the operator
+			// sees the new state without waiting for the next
+			// auto-tick.
 			if m.pendingRule.Kind != RuleActionNone {
 				ra := m.pendingRule
 				m.pendingRule = pendingRuleAction{}
 				m.overlay = OverlayNone
 				return m, runRuleActionCmd(m.deps.GroupRulesPort, ra)
+			}
+			if m.pendingPolicy.Kind != PolicyActionNone {
+				pa := m.pendingPolicy
+				m.pendingPolicy = pendingPolicyAction{}
+				m.overlay = OverlayNone
+				return m, runPolicyActionCmd(m.deps.PoliciesPort, pa)
+			}
+			if m.pendingApp.Kind != AppActionNone {
+				aa := m.pendingApp
+				m.pendingApp = pendingAppAction{}
+				m.overlay = OverlayNone
+				return m, runAppActionCmd(m.deps.AppsPort, aa)
+			}
+			if m.pendingAuthenticator.Kind != AuthenticatorActionNone {
+				au := m.pendingAuthenticator
+				m.pendingAuthenticator = pendingAuthenticatorAction{}
+				m.overlay = OverlayNone
+				return m, runAuthenticatorActionCmd(m.deps.AuthenticatorsPort, au)
 			}
 			action := m.pendingAction
 			m.pendingAction = pendingUserAction{}
@@ -2818,6 +2957,9 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case cancelled:
 			m.pendingAction = pendingUserAction{}
 			m.pendingRule = pendingRuleAction{}
+			m.pendingPolicy = pendingPolicyAction{}
+			m.pendingApp = pendingAppAction{}
+			m.pendingAuthenticator = pendingAuthenticatorAction{}
 			m.overlay = OverlayNone
 		}
 	}
@@ -2899,17 +3041,40 @@ func (m Model) handleStatusPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		picked, ok := m.statusPicker.Selected()
-		user := m.statusPicker.user
+		surface := m.statusPicker.Surface()
+		target := m.statusPicker.Target()
 		m.overlay = OverlayNone
 		m.statusPicker = nil
 		if !ok {
 			return m, nil
 		}
 		// Hand off to the destructive-action confirm path so the
-		// operator gets the same "are you sure?" guardrail they'd
-		// see from :deactivate / :delete / `a` menu.
-		m.pendingAction = pendingUserAction{Kind: picked.Action, User: user}
+		// operator gets the same "are you sure?" guardrail every
+		// lifecycle flip already shares. Per-surface: clear every
+		// other pending* slot so the confirm modal renders only the
+		// chosen one.
+		m.pendingAction = pendingUserAction{}
 		m.pendingRule = pendingRuleAction{}
+		m.pendingPolicy = pendingPolicyAction{}
+		m.pendingApp = pendingAppAction{}
+		m.pendingAuthenticator = pendingAuthenticatorAction{}
+		switch surface {
+		case StatusPickerUser:
+			user, _ := target.(domain.User)
+			m.pendingAction = pendingUserAction{Kind: UserActionKind(picked.Action), User: user}
+		case StatusPickerRule:
+			rule, _ := target.(domain.GroupRule)
+			m.pendingRule = pendingRuleAction{Kind: RuleActionKind(picked.Action), Rule: rule}
+		case StatusPickerPolicy:
+			policy, _ := target.(domain.Policy)
+			m.pendingPolicy = pendingPolicyAction{Kind: PolicyActionKind(picked.Action), Policy: policy}
+		case StatusPickerApp:
+			app, _ := target.(domain.App)
+			m.pendingApp = pendingAppAction{Kind: AppActionKind(picked.Action), App: app}
+		case StatusPickerAuthenticator:
+			auth, _ := target.(domain.Authenticator)
+			m.pendingAuthenticator = pendingAuthenticatorAction{Kind: AuthenticatorActionKind(picked.Action), Authenticator: auth}
+		}
 		m.overlay = OverlayActionConfirm
 		return m, nil
 	case tea.KeyRunes:

@@ -100,6 +100,16 @@ type PolicyEditDiscardedMsg struct{}
 // without an extra fetch.
 type OpenStatusPickerMsg struct{ User domain.User }
 
+// OpenRuleStatusPickerMsg / OpenPolicyStatusPickerMsg /
+// OpenAppStatusPickerMsg / OpenAuthenticatorStatusPickerMsg are the
+// parallel entry-points for the other Active/Inactive resources.
+// Each carries the full snapshot so the picker can render the
+// title + current-status badge without a fetch.
+type OpenRuleStatusPickerMsg struct{ Rule domain.GroupRule }
+type OpenPolicyStatusPickerMsg struct{ Policy domain.Policy }
+type OpenAppStatusPickerMsg struct{ App domain.App }
+type OpenAuthenticatorStatusPickerMsg struct{ Authenticator domain.Authenticator }
+
 // OpenLogsMsg switches the active screen to Logs and pre-fills the
 // server-side `filter=` parameter with `Filter` (an Okta System Log
 // filter expression, e.g., `target.id eq "00uABC"`) so the operator

@@ -317,6 +317,13 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.detail.ID != "" {
 					return m, OpenPolicyEditCmd(m.detail.ID)
 				}
+			case "s":
+				// Status picker — system policies surface a toast
+				// upstream (the App Shell short-circuits empty
+				// transitions).
+				if m.detail.ID != "" {
+					return m, OpenPolicyStatusPickerCmd(m.detail)
+				}
 			}
 		}
 		// Eat any remaining keys while detail is open so list-mode
@@ -387,6 +394,14 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ggChord.Reset()
 			if m.cursor >= 0 && m.cursor < len(m.policies) {
 				return m, OpenPolicyEditCmd(m.policies[m.cursor].ID)
+			}
+		case "s":
+			// Status picker — emits OpenPolicyStatusPickerMsg with
+			// the full Policy snapshot. The App Shell short-circuits
+			// when transitions are empty (system policies).
+			m.ggChord.Reset()
+			if m.cursor >= 0 && m.cursor < len(m.policies) {
+				return m, OpenPolicyStatusPickerCmd(m.policies[m.cursor])
 			}
 		}
 	}

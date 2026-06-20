@@ -106,3 +106,6 @@ func Test_AppsWrapper_DirectTypeOpen_SkipsPicker(t *testing.T) {
 	assert.Contains(t, view, "Org2Org", "OIDC list must surface the OIDC app")
 	assert.NotContains(t, view, "Salesforce", "SAML app must NOT show in the OIDC list")
 }
+
+func (p *stubAppsPort) Activate(_ context.Context, _ string) error   { return nil }
+func (p *stubAppsPort) Deactivate(_ context.Context, _ string) error { return nil }

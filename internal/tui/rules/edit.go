@@ -373,6 +373,13 @@ func OpenRuleEditCmd(id string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenRuleEditMsg{ID: id} }
 }
 
+// OpenRuleStatusPickerCmd is emitted on `s` from the Rules list /
+// detail. Carries the full rule snapshot so the App Shell's picker
+// can render the current status badge in its title without a fetch.
+func OpenRuleStatusPickerCmd(r domain.GroupRule) tea.Cmd {
+	return func() tea.Msg { return shared.OpenRuleStatusPickerMsg{Rule: r} }
+}
+
 func fetchRuleForEditCmd(svc *service.GroupRulesService, id string) tea.Cmd {
 	return func() tea.Msg {
 		r, err := svc.Get(context.Background(), id)

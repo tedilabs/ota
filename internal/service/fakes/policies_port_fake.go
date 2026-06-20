@@ -15,6 +15,8 @@ type PoliciesPortFake struct {
 	GetFunc          func(ctx context.Context, id string) (domain.Policy, error)
 	RulesFunc        func(ctx context.Context, policyID string) ([]domain.PolicyRule, error)
 	UpdatePolicyFunc func(ctx context.Context, policyID string, update domain.PolicyUpdate) (domain.Policy, error)
+	ActivateFunc     func(ctx context.Context, policyID string) error
+	DeactivateFunc   func(ctx context.Context, policyID string) error
 }
 
 func NewPoliciesPort(t *testing.T) *PoliciesPortFake {
@@ -44,6 +46,22 @@ func (f *PoliciesPortFake) Rules(ctx context.Context, policyID string) ([]domain
 		f.t.Fatalf("PoliciesPortFake.Rules called but RulesFunc is not set")
 	}
 	return f.RulesFunc(ctx, policyID)
+}
+
+func (f *PoliciesPortFake) Activate(ctx context.Context, policyID string) error {
+	f.t.Helper()
+	if f.ActivateFunc == nil {
+		return nil
+	}
+	return f.ActivateFunc(ctx, policyID)
+}
+
+func (f *PoliciesPortFake) Deactivate(ctx context.Context, policyID string) error {
+	f.t.Helper()
+	if f.DeactivateFunc == nil {
+		return nil
+	}
+	return f.DeactivateFunc(ctx, policyID)
 }
 
 func (f *PoliciesPortFake) UpdatePolicy(ctx context.Context, policyID string, update domain.PolicyUpdate) (domain.Policy, error) {

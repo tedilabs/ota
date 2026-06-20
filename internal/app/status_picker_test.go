@@ -23,7 +23,7 @@ func Test_StatusPicker_TransitionsForActive(t *testing.T) {
 		Status:  domain.UserStatusActive,
 		Profile: domain.UserProfile{Login: "alice@acme.com"},
 	}
-	pick := app.NewStatusPickerModel(u)
+	pick := app.NewUserStatusPickerModel(u)
 	require.False(t, pick.Empty(), "ACTIVE must have transitions available")
 
 	view := pick.View()
@@ -45,7 +45,7 @@ func Test_StatusPicker_TransitionsForDeprovisioned(t *testing.T) {
 		Status:  domain.UserStatusDeprovisioned,
 		Profile: domain.UserProfile{Login: "bob@acme.com"},
 	}
-	pick := app.NewStatusPickerModel(u)
+	pick := app.NewUserStatusPickerModel(u)
 	require.False(t, pick.Empty(), "DEPROVISIONED must offer Activate + Delete")
 
 	view := pick.View()
@@ -61,7 +61,7 @@ func Test_StatusPicker_NavigatesWithJK(t *testing.T) {
 	u := domain.User{
 		Status: domain.UserStatusActive, // 3 transitions
 	}
-	pick := app.NewStatusPickerModel(u)
+	pick := app.NewUserStatusPickerModel(u)
 	require.Equal(t, 0, pick.Cursor(), "starts at index 0")
 
 	step := func(r rune) {
@@ -91,7 +91,60 @@ func Test_StatusPicker_NavigatesWithJK(t *testing.T) {
 func Test_StatusPicker_Empty_ForUnknownStatus(t *testing.T) {
 	t.Parallel()
 	u := domain.User{Status: domain.UserStatus("UNKNOWN_FOR_TEST")}
-	pick := app.NewStatusPickerModel(u)
+	pick := app.NewUserStatusPickerModel(u)
 	assert.True(t, pick.Empty(),
 		"unknown / unmanaged statuses surface as empty so the App Shell can toast instead of opening a blank modal")
+}
+
+// Multi-resource lock-in: every per-resource constructor populates a
+// non-empty transitions list for an Active resource and renders the
+// expected target status badge in the modal.
+
+func Test_StatusPicker_Rule_InactiveOffersActivate(t *testing.T) {
+	t.Parallel()
+	r := domain.GroupRule{ID: "0pr_x", Name: "engineers", Status: domain.GroupRuleStatusInactive}
+	pick := app.NewRuleStatusPickerModel(r)
+	require.False(t, pick.Empty())
+	view := pick.View()
+	assert.Contains(t, view, "ACTIVE", "INACTIVE rule should offer the ACTIVE flip")
+	assert.Contains(t, view, "engineers", "title carries the rule name")
+}
+
+func Test_StatusPicker_Policy_SystemReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	p := domain.Policy{ID: "00p_x", Name: "Default Sign-On",
+		Status: domain.PolicyStatusActive, System: true}
+	pick := app.NewPolicyStatusPickerModel(p)
+	assert.True(t, pick.Empty(),
+		"system policies refuse lifecycle flips upstream; the picker reports empty so the App Shell can toast")
+}
+
+func Test_StatusPicker_Policy_NormalActiveOffersDeactivate(t *testing.T) {
+	t.Parallel()
+	p := domain.Policy{ID: "00p_y", Name: "Custom", Status: domain.PolicyStatusActive}
+	pick := app.NewPolicyStatusPickerModel(p)
+	require.False(t, pick.Empty())
+	assert.Contains(t, pick.View(), "INACTIVE")
+}
+
+func Test_StatusPicker_App_InactiveOffersActivate(t *testing.T) {
+	t.Parallel()
+	a := domain.App{ID: "0oa_x", Label: "Salesforce", Status: domain.AppStatusInactive}
+	pick := app.NewAppStatusPickerModel(a)
+	require.False(t, pick.Empty())
+	view := pick.View()
+	assert.Contains(t, view, "ACTIVE", "INACTIVE app should offer the ACTIVE flip")
+	assert.Contains(t, view, "Salesforce")
+}
+
+func Test_StatusPicker_Authenticator_ActiveOffersDeactivate(t *testing.T) {
+	t.Parallel()
+	auth := domain.Authenticator{
+		ID:     "aut_x",
+		Name:   "okta_verify",
+		Status: domain.AuthenticatorStatusActive,
+	}
+	pick := app.NewAuthenticatorStatusPickerModel(auth)
+	require.False(t, pick.Empty())
+	assert.Contains(t, pick.View(), "INACTIVE")
 }

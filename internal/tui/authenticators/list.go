@@ -285,6 +285,10 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if id := m.detail.ID; id != "" {
 					return m, openLogsForCmd(`target.id eq "` + id + `"`)
 				}
+			case "s":
+				if m.detail.ID != "" {
+					return m, OpenAuthenticatorStatusPickerCmd(m.detail)
+				}
 			}
 			return m, nil
 		}
@@ -355,9 +359,20 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, openLogsForCmd(`target.id eq "` + id + `"`)
 				}
 			}
+		case "s":
+			// Status picker — org-wide ACTIVE ↔ INACTIVE flip.
+			if m.cursor >= 0 && m.cursor < len(rows) {
+				return m, OpenAuthenticatorStatusPickerCmd(rows[m.cursor])
+			}
 		}
 	}
 	return m, nil
+}
+
+// OpenAuthenticatorStatusPickerCmd is emitted on `s`. Carries the
+// full Authenticator snapshot.
+func OpenAuthenticatorStatusPickerCmd(a domain.Authenticator) tea.Cmd {
+	return func() tea.Msg { return shared.OpenAuthenticatorStatusPickerMsg{Authenticator: a} }
 }
 
 // openLogsForCmd asks the App Shell to open Logs scoped to a server

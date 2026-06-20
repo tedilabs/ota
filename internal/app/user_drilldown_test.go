@@ -292,3 +292,6 @@ func Test_AppShell_UserDetail_EnterOnApp_OpensAppDetail(t *testing.T) {
 	assert.Contains(t, view, "Salesforce",
 		"Apps screen must surface the resolved app's detail after drill-down")
 }
+
+func (p *drilldownAppsPort) Activate(_ context.Context, _ string) error   { return nil }
+func (p *drilldownAppsPort) Deactivate(_ context.Context, _ string) error { return nil }

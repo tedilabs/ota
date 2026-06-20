@@ -94,6 +94,40 @@ func ruleActionLabel(k RuleActionKind) string {
 	return ""
 }
 
+// policyActionLabel / appActionLabel / authenticatorActionLabel
+// produce the confirm-modal headline ("Activate policy for …",
+// "Deactivate app for …") for the per-resource status picker
+// dispatch paths. Symmetric with userActionLabel / ruleActionLabel.
+func policyActionLabel(k PolicyActionKind) string {
+	switch k {
+	case PolicyActionActivate:
+		return "Activate policy"
+	case PolicyActionDeactivate:
+		return "Deactivate policy"
+	}
+	return ""
+}
+
+func appActionLabel(k AppActionKind) string {
+	switch k {
+	case AppActionActivate:
+		return "Activate app"
+	case AppActionDeactivate:
+		return "Deactivate app"
+	}
+	return ""
+}
+
+func authenticatorActionLabel(k AuthenticatorActionKind) string {
+	switch k {
+	case AuthenticatorActionActivate:
+		return "Activate authenticator"
+	case AuthenticatorActionDeactivate:
+		return "Deactivate authenticator"
+	}
+	return ""
+}
+
 // actionCompletedMsg wraps the toast a successful action emits so
 // the App Shell can chain a screen refresh in the same Update pass
 // (issue #192 v0.2.3). The handler turns it into a ToastMsg AND a
@@ -215,6 +249,111 @@ func runRuleActionCmd(port domain.GroupRulesPort, action pendingRuleAction) tea.
 				return fail("delete rule failed", err)
 			}
 			return actionCompletedMsg{toast: toastInfo("deleted rule " + name)}
+		}
+		return nil
+	}
+}
+
+// runPolicyActionCmd dispatches the active pendingPolicy against the
+// PoliciesPort. Status picker only emits Activate / Deactivate
+// today; system policies refuse with 403 which surfaces as the
+// standard error toast.
+func runPolicyActionCmd(port domain.PoliciesPort, action pendingPolicyAction) tea.Cmd {
+	if port == nil {
+		return toastCmdInfo("PoliciesPort not wired — action skipped")
+	}
+	return func() tea.Msg {
+		ctx := context.Background()
+		name := action.Policy.Name
+		if name == "" {
+			name = action.Policy.ID
+		}
+		fail := func(msg string, err error) tea.Msg {
+			return actionFailedMsg{
+				toast:    toastErr(msg + ": " + err.Error()),
+				targetID: action.Policy.ID,
+			}
+		}
+		switch action.Kind {
+		case PolicyActionActivate:
+			if err := port.Activate(ctx, action.Policy.ID); err != nil {
+				return fail("activate policy failed", err)
+			}
+			return actionCompletedMsg{toast: toastInfo("activated policy " + name)}
+		case PolicyActionDeactivate:
+			if err := port.Deactivate(ctx, action.Policy.ID); err != nil {
+				return fail("deactivate policy failed", err)
+			}
+			return actionCompletedMsg{toast: toastInfo("deactivated policy " + name)}
+		}
+		return nil
+	}
+}
+
+// runAppActionCmd dispatches the active pendingApp against the
+// AppsPort.
+func runAppActionCmd(port domain.AppsPort, action pendingAppAction) tea.Cmd {
+	if port == nil {
+		return toastCmdInfo("AppsPort not wired — action skipped")
+	}
+	return func() tea.Msg {
+		ctx := context.Background()
+		label := action.App.Label
+		if label == "" {
+			label = action.App.ID
+		}
+		fail := func(msg string, err error) tea.Msg {
+			return actionFailedMsg{
+				toast:    toastErr(msg + ": " + err.Error()),
+				targetID: action.App.ID,
+			}
+		}
+		switch action.Kind {
+		case AppActionActivate:
+			if err := port.Activate(ctx, action.App.ID); err != nil {
+				return fail("activate app failed", err)
+			}
+			return actionCompletedMsg{toast: toastInfo("activated app " + label)}
+		case AppActionDeactivate:
+			if err := port.Deactivate(ctx, action.App.ID); err != nil {
+				return fail("deactivate app failed", err)
+			}
+			return actionCompletedMsg{toast: toastInfo("deactivated app " + label)}
+		}
+		return nil
+	}
+}
+
+// runAuthenticatorActionCmd dispatches the active pendingAuthenticator
+// against the AuthenticatorsPort. Org-wide change — the toast names
+// the factor (e.g., "activated authenticator okta_verify").
+func runAuthenticatorActionCmd(port domain.AuthenticatorsPort, action pendingAuthenticatorAction) tea.Cmd {
+	if port == nil {
+		return toastCmdInfo("AuthenticatorsPort not wired — action skipped")
+	}
+	return func() tea.Msg {
+		ctx := context.Background()
+		name := action.Authenticator.Name
+		if name == "" {
+			name = action.Authenticator.ID
+		}
+		fail := func(msg string, err error) tea.Msg {
+			return actionFailedMsg{
+				toast:    toastErr(msg + ": " + err.Error()),
+				targetID: action.Authenticator.ID,
+			}
+		}
+		switch action.Kind {
+		case AuthenticatorActionActivate:
+			if err := port.Activate(ctx, action.Authenticator.ID); err != nil {
+				return fail("activate authenticator failed", err)
+			}
+			return actionCompletedMsg{toast: toastInfo("activated authenticator " + name)}
+		case AuthenticatorActionDeactivate:
+			if err := port.Deactivate(ctx, action.Authenticator.ID); err != nil {
+				return fail("deactivate authenticator failed", err)
+			}
+			return actionCompletedMsg{toast: toastInfo("deactivated authenticator " + name)}
 		}
 		return nil
 	}

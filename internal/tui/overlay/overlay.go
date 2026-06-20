@@ -505,6 +505,7 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 		return []helpEntry{
 			{"Enter / d", "open detail (all attributes)"},
 			{"e", "edit rule (INACTIVE / INVALID only)"},
+			{"s", "change status (Activate / Deactivate)"},
 			{"l", "open Logs scoped to this rule"},
 			{"Shift+S", "sort by STATUS (INVALID first)"},
 			{"Shift+N", "sort by NAME"},
@@ -513,6 +514,7 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 		return []helpEntry{
 			{"Enter", "pick type / open detail"},
 			{"e", "edit policy metadata (name / priority / status)"},
+			{"s", "change status (Activate / Deactivate)"},
 			{"Esc", "back · close detail · close picker"},
 			{"r", "toggle rich ↔ raw JSON in detail"},
 			{":okta-sign-on", "jump to Okta Sign-On policies"},
@@ -523,6 +525,7 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "apps":
 		return []helpEntry{
 			{"Enter / d", "pick type / open detail"},
+			{"s", "change status (Activate / Deactivate)"},
 			{"Esc", "back · close detail · close picker"},
 			{"l", "open Logs scoped to this app"},
 			{"/", "filter apps by label / name / mode"},
@@ -557,6 +560,7 @@ func screenSpecificHelpEntries(screen string) []helpEntry {
 	case "authenticators":
 		return []helpEntry{
 			{"Enter / d", "open authenticator detail"},
+			{"s", "change status (Activate / Deactivate · org-wide)"},
 			{"l", "open Logs scoped to this authenticator"},
 			{"Tab / Shift-Tab", "cycle Pretty / JSON / YAML"},
 			{"r", "toggle to / from JSON tab"},

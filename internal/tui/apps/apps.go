@@ -458,6 +458,11 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, openLogsForAppCmd(`target.id eq "` + id + `"`)
 				}
 				return m, nil
+			case "s":
+				if m.detail.ID != "" {
+					return m, OpenAppStatusPickerCmd(m.detail)
+				}
+				return m, nil
 			}
 		}
 		return m, nil
@@ -510,9 +515,22 @@ func (m ListModel) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, openLogsForAppCmd(`target.id eq "` + id + `"`)
 				}
 			}
+		case "s":
+			// Status picker — ACTIVE ↔ INACTIVE.
+			m.ggChord.Reset()
+			if m.cursor >= 0 && m.cursor < len(rows) {
+				return m, OpenAppStatusPickerCmd(rows[m.cursor])
+			}
 		}
 	}
 	return m, nil
+}
+
+// OpenAppStatusPickerCmd is emitted on `s` from the Apps list /
+// detail. Carries the full App snapshot so the picker can render
+// the current status badge in its title without a fetch.
+func OpenAppStatusPickerCmd(a domain.App) tea.Cmd {
+	return func() tea.Msg { return shared.OpenAppStatusPickerMsg{App: a} }
 }
 
 // openLogsForAppCmd asks the App Shell to open Logs scoped to a

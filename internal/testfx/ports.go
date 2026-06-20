@@ -123,6 +123,8 @@ func (p *seededAppsPort) Get(_ context.Context, id string) (domain.App, error) {
 	}
 	return domain.App{}, domain.ErrNotFound
 }
+func (p *seededAppsPort) Activate(_ context.Context, _ string) error   { return nil }
+func (p *seededAppsPort) Deactivate(_ context.Context, _ string) error { return nil }
 
 // --- Generic slice iterator -------------------------------------------
 

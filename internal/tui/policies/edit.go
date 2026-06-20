@@ -378,6 +378,12 @@ func OpenPolicyEditCmd(id string) tea.Cmd {
 	return func() tea.Msg { return shared.OpenPolicyEditMsg{ID: id} }
 }
 
+// OpenPolicyStatusPickerCmd is emitted by the Policies list / detail
+// on `s`. Carries the full Policy snapshot.
+func OpenPolicyStatusPickerCmd(p domain.Policy) tea.Cmd {
+	return func() tea.Msg { return shared.OpenPolicyStatusPickerMsg{Policy: p} }
+}
+
 func fetchPolicyForEditCmd(svc *service.PoliciesService, id string) tea.Cmd {
 	return func() tea.Msg {
 		p, err := svc.Get(context.Background(), id)

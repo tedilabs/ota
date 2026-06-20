@@ -120,3 +120,6 @@ func Test_AppShell_PaletteRoutes_PerPolicyType(t *testing.T) {
 	assert.Contains(t, view, "Default Sign-On",
 		"policies list scoped to OKTA_SIGN_ON must surface seeded entries")
 }
+
+func (p *ptPoliciesPort) Activate(_ context.Context, _ string) error   { return nil }
+func (p *ptPoliciesPort) Deactivate(_ context.Context, _ string) error { return nil }

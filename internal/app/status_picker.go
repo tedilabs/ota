@@ -1,16 +1,22 @@
 package app
 
 // Status picker — modal that lists the valid target statuses for the
-// currently-selected user, mapped to a UserActionKind. Operator picks
-// one (j/k + Enter) and the App Shell hands off to the existing
-// destructive-action confirm flow (OverlayActionConfirm) so the
-// "are you sure?" guardrail stays consistent with `:deactivate`,
-// `:delete`, etc.
+// currently-selected resource and routes the operator's pick through
+// the existing destructive-action confirm flow (OverlayActionConfirm).
+// One picker model covers every resource with an Active/Inactive
+// lifecycle: Users, Group Rules, Policies, Apps, Authenticators.
 //
-// Transitions sourced from the Okta lifecycle state machine
-// (see _workspace/edit-form-users/02_okta_domain_input.md §4 and
-// docs/PRD.md §5.6 — REQ-W01 covered profile mutation, the status
-// picker is the parallel surface for lifecycle mutation).
+// Per-resource specifics:
+//   - the resource snapshot (`target` field) — used to populate the
+//     pendingXxxAction struct on Enter
+//   - StatusPickerSurface enum — drives the Enter dispatcher branch
+//   - title subject + current status badge — rendered in the modal
+//   - transitions list — per-resource lifecycle matrix
+//
+// The picker itself stays tiny — it owns a cursor + transitions
+// list + the render. Resource-specific logic lives in the
+// per-resource constructors and the App Shell's status picker
+// handlers.
 
 import (
 	"strings"
@@ -21,84 +27,283 @@ import (
 	"github.com/tedilabs/ota/internal/tui/shared"
 )
 
-// StatusTransition is one entry in the status picker menu — a target
-// status the operator can flip the user into, the UserActionKind that
-// performs the flip, and a one-line hint explaining the side effect
-// so the operator doesn't pick blind.
+// StatusPickerSurface classifies which resource a picker is targeting.
+// The App Shell's Enter handler reads this to pick the right pending*
+// action slot + dispatcher.
+type StatusPickerSurface int
+
+const (
+	StatusPickerUser StatusPickerSurface = iota
+	StatusPickerRule
+	StatusPickerPolicy
+	StatusPickerApp
+	StatusPickerAuthenticator
+)
+
+// StatusTransition is one entry in the picker menu — a target status
+// the operator can flip the resource into, the resource-specific
+// action kind (cast to int — the dispatcher casts back per surface),
+// and a one-line hint.
 type StatusTransition struct {
-	TargetStatus domain.UserStatus
-	Action       UserActionKind
-	Hint         string
+	TargetStatus string
+	// Action holds a resource-specific action kind cast to int.
+	// Surface (on the model) tells the dispatcher how to interpret it.
+	Action int
+	Hint   string
+	// ActionLabel is the human-readable verb ("Suspend user",
+	// "Activate policy"). The picker uses it for the row trailer so
+	// the operator picks the state first and reads the verb second.
+	ActionLabel string
 }
 
-// statusTransitionsFor returns the valid transitions for `current`.
-// Empty result means the user is in a terminal / unmanaged state and
-// the picker should render "(no transitions available)".
-func statusTransitionsFor(current domain.UserStatus) []StatusTransition {
+// StatusPickerModel is the generic picker. The same model serves
+// every resource — only the constructor populates a different
+// transitions list + surface tag.
+type StatusPickerModel struct {
+	surface      StatusPickerSurface
+	target       any    // the resource snapshot (domain.User / Rule / Policy / App / Authenticator)
+	titleSubject string // login / name / label — what the picker is about
+	currentBadge string // current status string for the title trailer
+
+	transitions []StatusTransition
+	cursor      int
+}
+
+// Surface exposes the picker's resource tag.
+func (m StatusPickerModel) Surface() StatusPickerSurface { return m.surface }
+
+// Target exposes the resource snapshot. Callers cast based on
+// Surface().
+func (m StatusPickerModel) Target() any { return m.target }
+
+// --- Per-resource constructors --------------------------------------
+
+// NewUserStatusPickerModel builds a picker for the user lifecycle.
+func NewUserStatusPickerModel(user domain.User) StatusPickerModel {
+	subj := user.Profile.Login
+	if subj == "" {
+		subj = user.ID
+	}
+	curr := string(user.Status)
+	if curr == "" {
+		curr = "—"
+	}
+	return StatusPickerModel{
+		surface:      StatusPickerUser,
+		target:       user,
+		titleSubject: subj,
+		currentBadge: curr,
+		transitions:  userTransitionsFor(user.Status),
+	}
+}
+
+// NewRuleStatusPickerModel builds a picker for a Group Rule.
+func NewRuleStatusPickerModel(rule domain.GroupRule) StatusPickerModel {
+	subj := rule.Name
+	if subj == "" {
+		subj = rule.ID
+	}
+	curr := string(rule.Status)
+	if curr == "" {
+		curr = "—"
+	}
+	return StatusPickerModel{
+		surface:      StatusPickerRule,
+		target:       rule,
+		titleSubject: subj,
+		currentBadge: curr,
+		transitions:  ruleTransitionsFor(rule.Status),
+	}
+}
+
+// NewPolicyStatusPickerModel builds a picker for a Policy. System
+// policies (marked SYS) refuse status flips upstream — the
+// transitions list returns empty so the App Shell surfaces a toast
+// instead of opening a useless modal.
+func NewPolicyStatusPickerModel(policy domain.Policy) StatusPickerModel {
+	subj := policy.Name
+	if subj == "" {
+		subj = policy.ID
+	}
+	curr := string(policy.Status)
+	if curr == "" {
+		curr = "—"
+	}
+	return StatusPickerModel{
+		surface:      StatusPickerPolicy,
+		target:       policy,
+		titleSubject: subj,
+		currentBadge: curr,
+		transitions:  policyTransitionsFor(policy.Status, policy.System),
+	}
+}
+
+// NewAppStatusPickerModel builds a picker for an App.
+func NewAppStatusPickerModel(app domain.App) StatusPickerModel {
+	subj := app.Label
+	if subj == "" {
+		subj = app.ID
+	}
+	curr := string(app.Status)
+	if curr == "" {
+		curr = "—"
+	}
+	return StatusPickerModel{
+		surface:      StatusPickerApp,
+		target:       app,
+		titleSubject: subj,
+		currentBadge: curr,
+		transitions:  appTransitionsFor(app.Status),
+	}
+}
+
+// NewAuthenticatorStatusPickerModel builds a picker for an
+// Authenticator. Org-wide change — the hint warns operators.
+func NewAuthenticatorStatusPickerModel(auth domain.Authenticator) StatusPickerModel {
+	subj := auth.Name
+	if subj == "" {
+		subj = auth.ID
+	}
+	curr := string(auth.Status)
+	if curr == "" {
+		curr = "—"
+	}
+	return StatusPickerModel{
+		surface:      StatusPickerAuthenticator,
+		target:       auth,
+		titleSubject: subj,
+		currentBadge: curr,
+		transitions:  authenticatorTransitionsFor(auth.Status),
+	}
+}
+
+// --- Per-resource transition matrices -------------------------------
+
+func userTransitionsFor(current domain.UserStatus) []StatusTransition {
 	switch current {
 	case domain.UserStatusStaged, domain.UserStatusProvisioned:
 		return []StatusTransition{
-			{domain.UserStatusActive, UserActionActivate, "complete activation; sends invite email"},
+			{string(domain.UserStatusActive), int(UserActionActivate),
+				"complete activation; sends invite email", userActionLabel(UserActionActivate)},
 		}
 	case domain.UserStatusActive:
 		return []StatusTransition{
-			{domain.UserStatusSuspended, UserActionSuspend, "block sign-in; keep groups / apps / factors"},
-			{domain.UserStatusDeprovisioned, UserActionDeactivate, "deprovision; revokes every session"},
-			{domain.UserStatusPasswordExpired, UserActionExpirePassword, "force password change at next sign-in"},
+			{string(domain.UserStatusSuspended), int(UserActionSuspend),
+				"block sign-in; keep groups / apps / factors", userActionLabel(UserActionSuspend)},
+			{string(domain.UserStatusDeprovisioned), int(UserActionDeactivate),
+				"deprovision; revokes every session", userActionLabel(UserActionDeactivate)},
+			{string(domain.UserStatusPasswordExpired), int(UserActionExpirePassword),
+				"force password change at next sign-in", userActionLabel(UserActionExpirePassword)},
 		}
 	case domain.UserStatusSuspended:
 		return []StatusTransition{
-			{domain.UserStatusActive, UserActionUnsuspend, "lift suspend; restore sign-in"},
-			{domain.UserStatusDeprovisioned, UserActionDeactivate, "deprovision; revokes every session"},
+			{string(domain.UserStatusActive), int(UserActionUnsuspend),
+				"lift suspend; restore sign-in", userActionLabel(UserActionUnsuspend)},
+			{string(domain.UserStatusDeprovisioned), int(UserActionDeactivate),
+				"deprovision; revokes every session", userActionLabel(UserActionDeactivate)},
 		}
 	case domain.UserStatusLockedOut:
 		return []StatusTransition{
-			{domain.UserStatusActive, UserActionUnlock, "clear lockout; restore sign-in"},
-			{domain.UserStatusDeprovisioned, UserActionDeactivate, "deprovision; revokes every session"},
+			{string(domain.UserStatusActive), int(UserActionUnlock),
+				"clear lockout; restore sign-in", userActionLabel(UserActionUnlock)},
+			{string(domain.UserStatusDeprovisioned), int(UserActionDeactivate),
+				"deprovision; revokes every session", userActionLabel(UserActionDeactivate)},
 		}
 	case domain.UserStatusPasswordExpired:
 		return []StatusTransition{
-			{domain.UserStatusDeprovisioned, UserActionDeactivate, "deprovision; revokes every session"},
+			{string(domain.UserStatusDeprovisioned), int(UserActionDeactivate),
+				"deprovision; revokes every session", userActionLabel(UserActionDeactivate)},
 		}
 	case domain.UserStatusDeprovisioned:
 		return []StatusTransition{
-			{domain.UserStatusActive, UserActionActivate, "re-provision; sends activation email"},
-			// Delete uses a synthetic "(deleted)" pseudo-status — the
-			// picker treats it as a terminal removal rather than a
-			// status flip. Status field uses empty string so the
-			// renderer falls back to the action label.
-			{domain.UserStatus(""), UserActionDelete, "permanent removal — irreversible"},
+			{string(domain.UserStatusActive), int(UserActionActivate),
+				"re-provision; sends activation email", userActionLabel(UserActionActivate)},
+			// Delete pseudo-transition — no target status badge.
+			{"", int(UserActionDelete),
+				"permanent removal — irreversible", userActionLabel(UserActionDelete)},
 		}
 	}
 	return nil
 }
 
-// StatusPickerModel renders the picker as a centered modal — the
-// same MountModal surface the Quit / Action menu / API recorder
-// overlays use. State is a cursor index; navigation is j/k/↑/↓
-// (Enter and Esc are handled by the App Shell so the chosen
-// transition routes into openActionConfirm).
-type StatusPickerModel struct {
-	user         domain.User
-	transitions  []StatusTransition
-	cursor       int
+func ruleTransitionsFor(current domain.GroupRuleStatus) []StatusTransition {
+	switch current {
+	case domain.GroupRuleStatusInactive, domain.GroupRuleStatusInvalid:
+		return []StatusTransition{
+			{string(domain.GroupRuleStatusActive), int(RuleActionActivate),
+				"evaluate expression and enable the rule", ruleActionLabel(RuleActionActivate)},
+		}
+	case domain.GroupRuleStatusActive:
+		return []StatusTransition{
+			{string(domain.GroupRuleStatusInactive), int(RuleActionDeactivate),
+				"stop evaluating; preserve definition", ruleActionLabel(RuleActionDeactivate)},
+		}
+	}
+	return nil
 }
 
-// NewStatusPickerModel constructs a picker around the user's current
-// status. The transitions are filled in eagerly so the App Shell can
-// short-circuit the open path when the status is terminal.
-func NewStatusPickerModel(user domain.User) StatusPickerModel {
-	return StatusPickerModel{
-		user:        user,
-		transitions: statusTransitionsFor(user.Status),
+func policyTransitionsFor(current domain.PolicyStatus, system bool) []StatusTransition {
+	if system {
+		// System policies refuse lifecycle flips — Okta returns 403.
+		// Return an empty list so the App Shell can short-circuit to
+		// a toast.
+		return nil
 	}
+	switch current {
+	case domain.PolicyStatusInactive:
+		return []StatusTransition{
+			{string(domain.PolicyStatusActive), int(PolicyActionActivate),
+				"resume policy evaluation", policyActionLabel(PolicyActionActivate)},
+		}
+	case domain.PolicyStatusActive:
+		return []StatusTransition{
+			{string(domain.PolicyStatusInactive), int(PolicyActionDeactivate),
+				"stop evaluating; preserve rules", policyActionLabel(PolicyActionDeactivate)},
+		}
+	}
+	return nil
 }
+
+func appTransitionsFor(current domain.AppStatus) []StatusTransition {
+	switch current {
+	case domain.AppStatusInactive:
+		return []StatusTransition{
+			{string(domain.AppStatusActive), int(AppActionActivate),
+				"enable assignments + sign-in", appActionLabel(AppActionActivate)},
+		}
+	case domain.AppStatusActive:
+		return []StatusTransition{
+			{string(domain.AppStatusInactive), int(AppActionDeactivate),
+				"block sign-in; preserve assignments", appActionLabel(AppActionDeactivate)},
+		}
+	}
+	return nil
+}
+
+func authenticatorTransitionsFor(current domain.AuthenticatorStatus) []StatusTransition {
+	switch current {
+	case domain.AuthenticatorStatusInactive:
+		return []StatusTransition{
+			{string(domain.AuthenticatorStatusActive), int(AuthenticatorActionActivate),
+				"enable factor org-wide for new enrollments", authenticatorActionLabel(AuthenticatorActionActivate)},
+		}
+	case domain.AuthenticatorStatusActive:
+		return []StatusTransition{
+			{string(domain.AuthenticatorStatusInactive), int(AuthenticatorActionDeactivate),
+				"disable factor; existing enrollments preserved", authenticatorActionLabel(AuthenticatorActionDeactivate)},
+		}
+	}
+	return nil
+}
+
+// --- Model lifecycle ------------------------------------------------
 
 // Init implements tea.Model.
 func (m StatusPickerModel) Init() tea.Cmd { return nil }
 
-// Update advances the cursor on j/k/↑/↓. Enter and Esc bubble up to
-// the App Shell — this model stays focused on selection state.
+// Update advances the cursor on j/k/↑/↓. Enter and Esc bubble up
+// to the App Shell so the dispatcher reads Selected() and routes
+// per Surface().
 func (m StatusPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	km, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -128,24 +333,15 @@ func (m StatusPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the centered modal — title shows the user identifier
-// + current status; body lists one row per valid transition with the
-// target status badge + hint trail.
+// View renders the centered modal — title shows the subject + current
+// badge; body lists one row per valid transition.
 func (m StatusPickerModel) View() string {
 	tk := shared.Dark()
-	login := m.user.Profile.Login
-	if login == "" {
-		login = m.user.ID
-	}
-	currentBadge := string(m.user.Status)
-	if currentBadge == "" {
-		currentBadge = "—"
-	}
-	title := "Change status · " + login + "  (current: " + currentBadge + ")"
+	title := "Change status · " + m.titleSubject + "  (current: " + m.currentBadge + ")"
 
 	var b strings.Builder
 	if len(m.transitions) == 0 {
-		b.WriteString(tk.Muted.Render("(no transitions available for " + currentBadge + ")"))
+		b.WriteString(tk.Muted.Render("(no transitions available for " + m.currentBadge + ")"))
 	} else {
 		for i, tr := range m.transitions {
 			prefix := "  "
@@ -190,19 +386,18 @@ func (m StatusPickerModel) Selected() (StatusTransition, bool) {
 	return m.transitions[m.cursor], true
 }
 
-// Empty reports whether there are no transitions for this status —
-// used by the App Shell to short-circuit the open with a toast.
+// Empty reports whether there are no transitions available — the
+// App Shell short-circuits with a toast in that case.
 func (m StatusPickerModel) Empty() bool { return len(m.transitions) == 0 }
 
-// statusActionLabel renders a row label like "→ SUSPENDED  (Suspend user)".
-// Target-status badge is the primary signal; the action verb is the
-// muted parenthetical so the operator picks the desired *state* and
-// only secondarily reads the *verb*.
+// statusActionLabel renders a row label like "→ SUSPENDED  (Suspend
+// user)". Target-status badge is the primary signal; the action verb
+// is the muted parenthetical so the operator picks the desired
+// *state* and only secondarily reads the *verb*.
 func statusActionLabel(tr StatusTransition) string {
-	target := string(tr.TargetStatus)
-	if target == "" {
+	if tr.TargetStatus == "" {
 		// Delete pseudo-transition — no target status.
-		return "✗ " + userActionLabel(tr.Action)
+		return "✗ " + tr.ActionLabel
 	}
-	return "→ " + target + "  (" + userActionLabel(tr.Action) + ")"
+	return "→ " + tr.TargetStatus + "  (" + tr.ActionLabel + ")"
 }

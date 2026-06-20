@@ -185,3 +185,6 @@ func Test_AppShell_AppsRoute_KeyNav(t *testing.T) {
 	assert.Contains(t, view, "Org2Org",
 		"OIDC list must surface the OIDC app")
 }
+
+func (p *appRouteAppsPort) Activate(_ context.Context, _ string) error   { return nil }
+func (p *appRouteAppsPort) Deactivate(_ context.Context, _ string) error { return nil }

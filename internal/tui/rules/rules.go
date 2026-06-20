@@ -506,6 +506,14 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.detail.ID != "" {
 					return m, OpenRuleEditCmd(m.detail.ID)
 				}
+			case "s":
+				// Status picker — Activate / Deactivate. The App
+				// Shell guards against the empty-transitions case
+				// (e.g., the rule already in a state with no valid
+				// move).
+				if m.detail.ID != "" {
+					return m, OpenRuleStatusPickerCmd(m.detail)
+				}
 			}
 			return m, nil
 		}
@@ -635,6 +643,12 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, toastCmd("deactivate the rule before editing")
 			}
 			return m, OpenRuleEditCmd(sel.ID)
+		case "s":
+			sel := m.selected()
+			if sel == nil || sel.ID == "" {
+				return m, nil
+			}
+			return m, OpenRuleStatusPickerCmd(*sel)
 		}
 	}
 	if msg.Type == tea.KeyEnter {

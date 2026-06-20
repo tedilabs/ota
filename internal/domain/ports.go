@@ -142,6 +142,13 @@ type PoliciesPort interface {
 	// System policies refuse status/priority changes; Okta returns
 	// 400 / 403 (errormap translates).
 	UpdatePolicy(ctx context.Context, policyID string, update PolicyUpdate) (Policy, error)
+
+	// Activate flips an INACTIVE policy to ACTIVE
+	// (POST /api/v1/policies/{id}/lifecycle/activate). System
+	// policies refuse with 403.
+	Activate(ctx context.Context, policyID string) error
+	// Deactivate flips an ACTIVE policy to INACTIVE.
+	Deactivate(ctx context.Context, policyID string) error
 }
 
 // AppsPort is the outbound boundary for Okta Applications. Powers
@@ -149,6 +156,13 @@ type PoliciesPort interface {
 type AppsPort interface {
 	List(ctx context.Context, q AppsQuery) (Iterator[App], error)
 	Get(ctx context.Context, id string) (App, error)
+
+	// Activate flips an INACTIVE app to ACTIVE
+	// (POST /api/v1/apps/{id}/lifecycle/activate). Returns 200 even
+	// when the app is already ACTIVE.
+	Activate(ctx context.Context, appID string) error
+	// Deactivate flips an ACTIVE app to INACTIVE. Idempotent.
+	Deactivate(ctx context.Context, appID string) error
 }
 
 // AuthenticatorsPort is the outbound boundary for Okta Authenticators
@@ -158,6 +172,15 @@ type AppsPort interface {
 type AuthenticatorsPort interface {
 	List(ctx context.Context) ([]Authenticator, error)
 	Get(ctx context.Context, id string) (Authenticator, error)
+
+	// Activate flips an INACTIVE authenticator to ACTIVE
+	// (POST /api/v1/authenticators/{id}/lifecycle/activate). Org-wide
+	// — every end user enrolling after the flip can use the factor.
+	Activate(ctx context.Context, authenticatorID string) error
+	// Deactivate flips ACTIVE to INACTIVE. Existing user enrollments
+	// remain on the user record but the factor is disabled for new
+	// sign-in challenges.
+	Deactivate(ctx context.Context, authenticatorID string) error
 }
 
 // NetworkZonesPort is the outbound boundary for Okta Network Zones
